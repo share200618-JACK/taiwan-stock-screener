@@ -158,9 +158,15 @@ tr:hover td{background:rgba(255,255,255,.015);}
     </div>
     <div class="fg" id="maxStocksGroup" style="display:none">
       <label class="fl">掃描股票數量</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+        <button class="ivb" onclick="setMaxStocks(100)">100 支</button>
+        <button class="ivb" onclick="setMaxStocks(300)">300 支</button>
+        <button class="ivb" onclick="setMaxStocks(500)">500 支</button>
+        <button class="ivb active" onclick="setMaxStocks(9999)">全部上市</button>
+      </div>
       <div style="display:flex;align-items:center;gap:8px;">
-        <input class="fi" type="number" id="maxStocks" value="100" min="10" max="300" step="10" style="width:80px">
-        <span style="font-size:.8rem;color:var(--dim)">支（越多越慢）</span>
+        <input class="fi" type="number" id="maxStocks" value="9999" min="10" max="9999" step="10" style="width:90px">
+        <span style="font-size:.75rem;color:var(--dim)">支（越多越慢，全部約 30~60 分鐘）</span>
       </div>
     </div>
 
@@ -339,6 +345,14 @@ function setMode(mode) {
   if (chartsRow) chartsRow.style.display = mode==='single' ? '' : 'none';
   const kdWrap = document.querySelector('.kd-wrap');
   if (kdWrap) kdWrap.style.display = mode==='single' ? '' : 'none';
+}
+
+function setMaxStocks(v) {
+  document.getElementById('maxStocks').value = v;
+  document.querySelectorAll('#maxStocksGroup .ivb').forEach(b => {
+    const m = b.getAttribute('onclick').match(/\d+/);
+    if (m) b.classList.toggle('active', parseInt(m[0]) === v);
+  });
 }
 
 // ── 讀取選股條件 ──────────────────────────────────
