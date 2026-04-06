@@ -153,6 +153,56 @@ def fetch_history_recent(code):
 # 條件評估
 # ══════════════════════════════════════════════════════
 
+def calc_atr(highs, lows, closes, period=14):
+    """計算 ATR（平均真實波幅）序列"""
+    atr_series = []
+    for i in range(len(closes)):
+        if i == 0:
+            atr_series.append(highs[i] - lows[i])
+            continue
+        tr = max(highs[i]-lows[i],
+                 abs(highs[i]-closes[i-1]),
+                 abs(lows[i]-closes[i-1]))
+        if i < period:
+            atr_series.append(sum(
+                max(highs[j]-lows[j], abs(highs[j]-closes[j-1]) if j>0 else highs[j]-lows[j],
+                    abs(lows[j]-closes[j-1]) if j>0 else 0)
+                for j in range(i+1)) / (i+1))
+        else:
+            atr_series.append(atr_series[-1]*(period-1)/period + tr/period)
+    return [round(v, 4) for v in atr_series]
+
+# 大盤指數快取
+_index_cache = {}
+
+def fetch_index_history(start_date, end_date):
+    """抓台股加權指數（Y9999）歷史資料"""
+    key = f"Y9999_{start_date[:7]}_{end_date[:7]}"
+    if key in _index_cache:
+        return _index_cache[key]
+    records = fetch_history_range("Y9999", start_date, end_date)
+    _index_cache[key] = records
+    return records
+
+def build_index_map(start_date, end_date):
+    """回傳 {date: {close, ma60}} 供回測用"""
+    records = fetch_index_history(start_date, end_date)
+    if not records:
+        return {}
+    closes = [r["close"] for r in records]
+    result = {}
+    for i, r in enumerate(records):
+        ma60 = sma(closes[max(0,i-59):i+1], 60)
+        ma20 = sma(closes[max(0,i-19):i+1], 20)
+        result[r["date"]] = {
+            "close": r["close"],
+            "ma20":  round(ma20, 2),
+            "ma60":  round(ma60, 2),
+            "above_ma60": r["close"] > ma60,
+            "above_ma20": r["close"] > ma20,
+        }
+    return result
+
 def eval_cond(s, c):
     if c.get("key") == "kdCross":
         mn = c.get("kdMin", 0)
@@ -203,7 +253,19 @@ def build_day_indicators(i, closes, highs, lows, vols, k_ser, d_ser, rsi_ser, da
 
 def run_single_backtest(records, conditions, start_date, end_date,
                         take_profit, stop_loss, hold_days, trailing_stop,
-                        ma_sell_period=0):
+                        ma_sell_period=0,
+                        use_market_filter=False,
+                        market_ma=60,
+                        use_atr_stop=False,
+                        atr_multiplier=2.0,
+                        partial_exit_pct=0,
+                        partial_exit_ratio=50):
+    """
+    優化版回測：
+    - use_market_filter: 大盤在 market_ma 均線之下不買入
+    - use_atr_stop:      用 ATR×atr_multiplier 作動態停損
+    - partial_exit_pct:  漲幅達 X% 先出 partial_exit_ratio% 倉位
+    """
     if not records: return [], []
     closes = [r["close"] for r in records]
     highs  = [r["high"]  for r in records]
@@ -212,51 +274,94 @@ def run_single_backtest(records, conditions, start_date, end_date,
     dates  = [r["date"]  for r in records]
     k_ser, d_ser = calc_kd_series(closes, highs, lows, 9)
     rsi_ser = calc_rsi_series(closes, 14)
+    atr_ser = calc_atr(highs, lows, closes, 14)
+
+    # 大盤資料
+    index_map = {}
+    if use_market_filter:
+        try:
+            index_map = build_index_map(start_date, end_date)
+            print(f"  [大盤] 載入 {len(index_map)} 筆指數資料")
+        except Exception as e:
+            print(f"  [大盤] 載入失敗: {e}")
 
     trades, daily_equity = [], []
-    position = None
-    capital  = 100.0
+    position  = None
+    capital   = 100.0
 
     for i, rec in enumerate(records):
         if rec["date"] < start_date: continue
         if rec["date"] > end_date:   break
-        day = build_day_indicators(i, closes, highs, lows, vols, k_ser, d_ser, rsi_ser, dates)
+        day = build_day_indicators(i, closes, highs, lows, vols,
+                                   k_ser, d_ser, rsi_ser, dates)
 
         if position:
-            buy_price  = position["buy_price"]
-            held       = i - position["buy_idx"]
-            cur_chg    = (closes[i] - buy_price) / buy_price * 100
+            buy_price    = position["buy_price"]
+            held         = i - position["buy_idx"]
+            cur_chg      = (closes[i] - buy_price) / buy_price * 100
             position["peak_price"] = max(position["peak_price"], highs[i])
-            peak = position["peak_price"]
-            sell_reason = None
-            sell_price  = closes[i]
+            peak         = position["peak_price"]
+            size         = position["size"]          # 目前持倉比例 (0~1)
+            atr_stop     = position.get("atr_stop", 0)
+            sell_reason  = None
+            sell_price   = closes[i]
+            partial_done = position.get("partial_done", False)
 
-            # 追蹤高點回落
+            # ① 追蹤高點回落
             if trailing_stop > 0 and peak > buy_price:
                 drop = (peak - closes[i]) / peak * 100
                 if drop >= trailing_stop:
                     sell_price  = round(peak*(1-trailing_stop/100), 2)
                     sell_reason = f"追蹤高點回落{trailing_stop}%"
-            # 停利
+
+            # ② 停利（固定）
             if not sell_reason and take_profit > 0 and cur_chg >= take_profit:
                 sell_price  = round(buy_price*(1+take_profit/100), 2)
                 sell_reason = f"停利+{take_profit}%"
-            # 停損
+
+            # ③ ATR 動態停損（優先於固定停損）
+            if not sell_reason and use_atr_stop and atr_stop > 0:
+                if closes[i] <= atr_stop:
+                    sell_reason = f"ATR停損（{round(atr_stop,2)}）"
+
+            # ④ 固定停損
             if not sell_reason and stop_loss > 0 and cur_chg <= -stop_loss:
                 sell_price  = round(buy_price*(1-stop_loss/100), 2)
                 sell_reason = f"停損-{stop_loss}%"
-            # 跌破均線
+
+            # ⑤ 跌破均線
             if not sell_reason and ma_sell_period > 0:
-                ma_val = sma(closes[max(0, i-ma_sell_period+1):i+1], ma_sell_period)
+                ma_val = sma(closes[max(0,i-ma_sell_period+1):i+1], ma_sell_period)
                 if ma_val > 0 and closes[i] < ma_val:
                     sell_reason = f"跌破MA{ma_sell_period}（{round(ma_val,2)}）"
-            # 持有天數
+
+            # ⑥ 持有天數
             if not sell_reason and hold_days > 0 and held >= hold_days:
                 sell_reason = f"持有{hold_days}日到期"
 
+            # ⑦ 分批出場（半倉先出）
+            if (not sell_reason and partial_exit_pct > 0
+                    and not partial_done and cur_chg >= partial_exit_pct):
+                ratio = partial_exit_ratio / 100
+                pnl_partial = cur_chg * ratio
+                capital *= (1 + pnl_partial / 100)
+                position["size"]         = size * (1 - ratio)
+                position["partial_done"] = True
+                trades.append({
+                    "buy_date":    position["buy_date"],
+                    "buy_price":   round(buy_price, 2),
+                    "peak_price":  round(peak, 2),
+                    "sell_date":   rec["date"],
+                    "sell_price":  round(closes[i], 2),
+                    "sell_reason": f"分批出場{partial_exit_ratio}%（漲{round(cur_chg,1)}%）",
+                    "pnl":         round(cur_chg, 2),
+                    "held_days":   held,
+                    "partial":     True,
+                })
+
             if sell_reason:
                 pnl = (sell_price - buy_price) / buy_price * 100
-                capital *= (1 + pnl/100)
+                capital *= (1 + pnl * position["size"] / 100)
                 trades.append({
                     "buy_date":    position["buy_date"],
                     "buy_price":   round(buy_price, 2),
@@ -266,22 +371,56 @@ def run_single_backtest(records, conditions, start_date, end_date,
                     "sell_reason": sell_reason,
                     "pnl":         round(pnl, 2),
                     "held_days":   held,
+                    "partial":     False,
                 })
                 position = None
 
-        if not position and all(eval_cond(day, c) for c in conditions if c.get("enabled", True)):
-            position = {"buy_date": rec["date"], "buy_price": closes[i],
-                        "buy_idx": i, "peak_price": closes[i]}
+        # 買入條件
+        if not position:
+            cond_ok = all(eval_cond(day, c) for c in conditions if c.get("enabled", True))
+
+            # 大盤過濾
+            if cond_ok and use_market_filter and index_map:
+                idx = index_map.get(rec["date"])
+                if idx is None:
+                    # 找最近一個有資料的日期
+                    for back in range(1, 6):
+                        prev_d = (datetime.strptime(rec["date"],"%Y-%m-%d")
+                                  - timedelta(days=back)).strftime("%Y-%m-%d")
+                        if prev_d in index_map:
+                            idx = index_map[prev_d]; break
+                if idx:
+                    if market_ma == 20:
+                        cond_ok = cond_ok and idx["above_ma20"]
+                    else:
+                        cond_ok = cond_ok and idx["above_ma60"]
+
+            if cond_ok:
+                atr_stop_price = 0
+                if use_atr_stop and i < len(atr_ser):
+                    atr_stop_price = round(closes[i] - atr_multiplier * atr_ser[i], 2)
+                position = {
+                    "buy_date":     rec["date"],
+                    "buy_price":    closes[i],
+                    "buy_idx":      i,
+                    "peak_price":   closes[i],
+                    "size":         1.0,
+                    "atr_stop":     atr_stop_price,
+                    "partial_done": False,
+                }
 
         daily_equity.append({
             "date":   rec["date"],
-            "equity": round(capital * ((closes[i]/position["buy_price"]) if position else 1.0), 4),
+            "equity": round(capital * ((closes[i]/position["buy_price"]
+                                        * position.get("size",1.0))
+                            if position else 1.0), 4),
         })
 
+    # 強制平倉
     if position and records:
         last = records[-1]
         pnl  = (last["close"] - position["buy_price"]) / position["buy_price"] * 100
-        capital *= (1 + pnl/100)
+        capital *= (1 + pnl * position["size"] / 100)
         trades.append({
             "buy_date":    position["buy_date"],
             "buy_price":   round(position["buy_price"], 2),
@@ -291,6 +430,7 @@ def run_single_backtest(records, conditions, start_date, end_date,
             "sell_reason": "回測結束平倉",
             "pnl":         round(pnl, 2),
             "held_days":   len(records)-1-position["buy_idx"],
+            "partial":     False,
         })
     return trades, daily_equity
 
@@ -558,22 +698,31 @@ def backtest():
     stop_loss     = float(body.get("stop_loss",0))
     hold_days     = int(body.get("hold_days",0))
     trailing_stop = float(body.get("trailing_stop",0))
-    ma_sell_period= int(body.get("ma_sell_period",0))
+    ma_sell_period    = int(body.get("ma_sell_period",0))
+    use_market_filter = bool(body.get("use_market_filter", False))
+    market_ma         = int(body.get("market_ma", 60))
+    use_atr_stop      = bool(body.get("use_atr_stop", False))
+    atr_multiplier    = float(body.get("atr_multiplier", 2.0))
+    partial_exit_pct  = float(body.get("partial_exit_pct", 0))
+    partial_exit_ratio= int(body.get("partial_exit_ratio", 50))
 
     if not code or not start_date or not end_date:
         return jsonify({"error":"請填入股票代號與日期範圍"}), 400
 
-    print(f"\n[單股回測] {code} {start_date}~{end_date}")
+    print(f"\n[單股回測] {code} {start_date}~{end_date} "
+          f"大盤過濾:{use_market_filter} ATR停損:{use_atr_stop} 分批:{partial_exit_pct}%")
     records = fetch_history_range(code, start_date, end_date)
     if not records:
         return jsonify({"error":f"查無 {code} 的歷史資料"}), 404
 
     trades, daily_equity = run_single_backtest(
         records, conditions, start_date, end_date,
-        take_profit, stop_loss, hold_days, trailing_stop, ma_sell_period)
+        take_profit, stop_loss, hold_days, trailing_stop, ma_sell_period,
+        use_market_filter, market_ma, use_atr_stop, atr_multiplier,
+        partial_exit_pct, partial_exit_ratio)
 
-    wins  = [t for t in trades if t["pnl"]>0]
-    loses = [t for t in trades if t["pnl"]<=0]
+    wins  = [t for t in trades if t["pnl"]>0 and not t.get("partial")]
+    loses = [t for t in trades if t["pnl"]<=0 and not t.get("partial")]
     peak_eq = 100.0; max_draw = 0.0
     for d in daily_equity:
         if d["equity"]>peak_eq: peak_eq=d["equity"]
@@ -597,14 +746,15 @@ def backtest():
             "k":k_ser[i],"d":d_ser[i],"rsi":rsi_ser[i],
         })
 
+    full_trades = [t for t in trades if not t.get("partial")]
     return jsonify({
         "code":code,"start_date":start_date,"end_date":end_date,
         "kline":kline,"trades":trades,"daily_equity":daily_equity,
         "stats":{
-            "total_trades":len(trades),
+            "total_trades":len(full_trades),
             "win_trades":len(wins),"lose_trades":len(loses),
-            "win_rate":round(len(wins)/len(trades)*100,1) if trades else 0,
-            "total_pnl":round(sum(t["pnl"] for t in trades),2),
+            "win_rate":round(len(wins)/len(full_trades)*100,1) if full_trades else 0,
+            "total_pnl":round(sum(t["pnl"] for t in full_trades),2),
             "avg_win": round(sum(t["pnl"] for t in wins)/len(wins),2)  if wins  else 0,
             "avg_loss":round(sum(t["pnl"] for t in loses)/len(loses),2) if loses else 0,
             "max_drawdown":round(max_draw,2),
