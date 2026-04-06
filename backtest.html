@@ -92,6 +92,7 @@ tr:hover td{background:rgba(255,255,255,.015);}
 .reason-hd{background:rgba(61,139,255,.12);color:var(--blu);border:1px solid rgba(61,139,255,.25);}
 .reason-fc{background:rgba(168,85,247,.12);color:var(--pur);border:1px solid rgba(168,85,247,.25);}
 .reason-ts{background:rgba(240,180,41,.12);color:var(--gold);border:1px solid rgba(240,180,41,.25);}
+.reason-ma{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
 
 /* mode buttons */
 .mode-btn{padding:9px 20px;border-radius:9px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.88rem;font-weight:500;cursor:pointer;transition:all .18s;}
@@ -129,6 +130,7 @@ tr:hover td{background:rgba(255,255,255,.015);}
     <div class="li">📊</div>
     <h1>台股<span>回測</span>系統</h1>
   </div>
+  <a class="back-btn" href="predict.html">🤖 AI 預測</a>
   <a class="back-btn" href="index.html">← 回到選股</a>
 </header>
 
@@ -246,6 +248,32 @@ tr:hover td{background:rgba(255,255,255,.015);}
           </div>
         </div>
       </div>
+
+      <!-- 跌破均線賣出 -->
+      <div style="grid-column:1/-1;border-top:1px solid var(--bd);padding-top:12px;margin-top:4px;">
+        <div class="sell-row" style="margin-bottom:10px;">
+          <input type="checkbox" id="useMa">
+          <label for="useMa" style="font-weight:600;color:var(--grn);">📉 跌破均線賣出</label>
+        </div>
+        <div style="padding-left:23px;">
+          <div style="font-size:.76rem;color:var(--dim);margin-bottom:10px;line-height:1.6;">
+            當收盤價跌破所選均線時賣出，均線可自由選擇或自訂天數。
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:.78rem;color:var(--dim);">均線週期：</span>
+            <button class="ivb" id="ma5btn"  onclick="setMaPeriod(5)"  >MA5</button>
+            <button class="ivb" id="ma10btn" onclick="setMaPeriod(10)" >MA10</button>
+            <button class="ivb active" id="ma20btn" onclick="setMaPeriod(20)">MA20</button>
+            <button class="ivb" id="ma60btn" onclick="setMaPeriod(60)" >MA60</button>
+            <div style="display:flex;align-items:center;gap:5px;">
+              <button class="ivb" id="maCustomBtn" onclick="setMaPeriod('custom')">自訂</button>
+              <input class="fi" type="number" id="maCustomVal" value="30" min="3" max="250" style="width:65px;padding:5px 8px;">
+              <span style="font-size:.78rem;color:var(--dim);">日</span>
+            </div>
+          </div>
+          <input type="hidden" id="maPeriod" value="20">
+        </div>
+      </div>
     </div>
 
     <!-- 買入條件預覽 -->
@@ -355,6 +383,32 @@ function setMaxStocks(v) {
   });
 }
 
+function setMaPeriod(v) {
+  const ids = ['ma5btn','ma10btn','ma20btn','ma60btn','maCustomBtn'];
+  const vals = [5, 10, 20, 60, 'custom'];
+  ids.forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', vals[i] === v);
+  });
+  if (v === 'custom') {
+    document.getElementById('maCustomVal').focus();
+    document.getElementById('maPeriod').value = document.getElementById('maCustomVal').value;
+  } else {
+    document.getElementById('maPeriod').value = v;
+  }
+}
+// 同步自訂輸入
+document.addEventListener('DOMContentLoaded', () => {
+  const customInput = document.getElementById('maCustomVal');
+  if (customInput) {
+    customInput.addEventListener('input', () => {
+      if (document.getElementById('maCustomBtn').classList.contains('active')) {
+        document.getElementById('maPeriod').value = customInput.value;
+      }
+    });
+  }
+});
+
 // ── 讀取選股條件 ──────────────────────────────────
 function loadConditions() {
   try { return JSON.parse(localStorage.getItem('bt_conditions') || '[]'); }
@@ -376,6 +430,7 @@ function getSellParams() {
   const useSl = document.getElementById('useSl').checked;
   const useHd = document.getElementById('useHd').checked;
   const useTs = document.getElementById('useTs').checked;
+  const useMa = document.getElementById('useMa').checked;
   let trailing_stop = 0;
   if (useTs) {
     const mode = document.querySelector('input[name="tsMode"]:checked').value;
@@ -383,11 +438,13 @@ function getSellParams() {
       ? parseFloat(document.getElementById('tsCustomVal').value)||5
       : parseFloat(mode);
   }
+  const ma_period = useMa ? (parseInt(document.getElementById('maPeriod').value)||20) : 0;
   return {
     take_profit:   useTp ? parseFloat(document.getElementById('tpVal').value)||0 : 0,
     stop_loss:     useSl ? parseFloat(document.getElementById('slVal').value)||0 : 0,
     hold_days:     useHd ? parseInt(document.getElementById('hdVal').value)||0   : 0,
     trailing_stop,
+    ma_sell_period: ma_period,
   };
 }
 
@@ -410,7 +467,7 @@ async function runSingleBacktest() {
   if (!code)                   { alert('請輸入股票代號！'); return; }
   if (!startDate || !endDate)  { alert('請選擇日期範圍！'); return; }
   if (!conds.length)           { alert('請先在選股頁面設定篩選條件！'); return; }
-  if (!sell.take_profit && !sell.stop_loss && !sell.hold_days && !sell.trailing_stop)
+  if (!sell.take_profit && !sell.stop_loss && !sell.hold_days && !sell.trailing_stop && !sell.ma_sell_period)
     { alert('請至少勾選一個賣出條件！'); return; }
 
   const btn = document.getElementById('runBtn');
@@ -453,7 +510,7 @@ async function runMarketBacktest() {
 
   if (!startDate || !endDate)  { alert('請選擇日期範圍！'); return; }
   if (!conds.length)           { alert('請先在選股頁面設定篩選條件！'); return; }
-  if (!sell.take_profit && !sell.stop_loss && !sell.hold_days && !sell.trailing_stop)
+  if (!sell.take_profit && !sell.stop_loss && !sell.hold_days && !sell.trailing_stop && !sell.ma_sell_period)
     { alert('請至少勾選一個賣出條件！'); return; }
 
   const btn = document.getElementById('runBtn');
@@ -685,6 +742,7 @@ function renderTrades(trades, isMarket) {
     if (t.sell_reason.includes('停利'))   rc='reason-tp';
     else if (t.sell_reason.includes('停損')) rc='reason-sl';
     else if (t.sell_reason.includes('追蹤')) rc='reason-ts';
+    else if (t.sell_reason.includes('跌破')) rc='reason-ma';
     else if (t.sell_reason.includes('強制')||t.sell_reason.includes('平倉')) rc='reason-fc';
     const peakGain = t.peak_price&&t.buy_price
       ? ((t.peak_price-t.buy_price)/t.buy_price*100).toFixed(1) : null;

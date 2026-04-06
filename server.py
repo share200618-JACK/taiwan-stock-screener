@@ -202,7 +202,8 @@ def build_day_indicators(i, closes, highs, lows, vols, k_ser, d_ser, rsi_ser, da
     }
 
 def run_single_backtest(records, conditions, start_date, end_date,
-                        take_profit, stop_loss, hold_days, trailing_stop):
+                        take_profit, stop_loss, hold_days, trailing_stop,
+                        ma_sell_period=0):
     if not records: return [], []
     closes = [r["close"] for r in records]
     highs  = [r["high"]  for r in records]
@@ -230,17 +231,26 @@ def run_single_backtest(records, conditions, start_date, end_date,
             sell_reason = None
             sell_price  = closes[i]
 
+            # 追蹤高點回落
             if trailing_stop > 0 and peak > buy_price:
                 drop = (peak - closes[i]) / peak * 100
                 if drop >= trailing_stop:
                     sell_price  = round(peak*(1-trailing_stop/100), 2)
                     sell_reason = f"追蹤高點回落{trailing_stop}%"
+            # 停利
             if not sell_reason and take_profit > 0 and cur_chg >= take_profit:
                 sell_price  = round(buy_price*(1+take_profit/100), 2)
                 sell_reason = f"停利+{take_profit}%"
+            # 停損
             if not sell_reason and stop_loss > 0 and cur_chg <= -stop_loss:
                 sell_price  = round(buy_price*(1-stop_loss/100), 2)
                 sell_reason = f"停損-{stop_loss}%"
+            # 跌破均線
+            if not sell_reason and ma_sell_period > 0:
+                ma_val = sma(closes[max(0, i-ma_sell_period+1):i+1], ma_sell_period)
+                if ma_val > 0 and closes[i] < ma_val:
+                    sell_reason = f"跌破MA{ma_sell_period}（{round(ma_val,2)}）"
+            # 持有天數
             if not sell_reason and hold_days > 0 and held >= hold_days:
                 sell_reason = f"持有{hold_days}日到期"
 
@@ -298,10 +308,11 @@ def fetch_cached(code, start_date, end_date):
 
 def run_market_backtest(codes, conditions, start_date, end_date,
                         take_profit, stop_loss, hold_days, trailing_stop,
-                        max_pos, progress_cb=None):
+                        max_pos, progress_cb=None, ma_sell_period=0):
     total = len(codes)
     all_stock_ind = {}
     all_dates_set = set()
+    all_stock_data_closes = {}  # code -> [{date, close}] for MA calculation
 
     for idx, code in enumerate(codes):
         if progress_cb:
@@ -322,6 +333,7 @@ def run_market_backtest(codes, conditions, start_date, end_date,
                     [x["date"] for x in recs])
             all_stock_ind[code] = ind_map
             all_dates_set.update(ind_map.keys())
+            all_stock_data_closes[code] = [{"date":r["date"],"close":r["close"]} for r in recs]
         except Exception as e:
             print(f"  [市場回測] {code}: {e}")
 
@@ -366,6 +378,17 @@ def run_market_backtest(codes, conditions, start_date, end_date,
             if not sell_reason and stop_loss > 0 and cur_chg <= -stop_loss:
                 sell_price  = round(bp*(1-stop_loss/100), 2)
                 sell_reason = f"停損-{stop_loss}%"
+            # 跌破均線
+            if not sell_reason and ma_sell_period > 0:
+                stock_recs = all_stock_data_closes.get(code, [])
+                if stock_recs:
+                    day_idx_in_stock = next(
+                        (j for j, r in enumerate(stock_recs) if r["date"] == date), None)
+                    if day_idx_in_stock is not None:
+                        closes_to_now = [r["close"] for r in stock_recs[:day_idx_in_stock+1]]
+                        ma_val = sma(closes_to_now[-ma_sell_period:], ma_sell_period)
+                        if ma_val > 0 and cur < ma_val:
+                            sell_reason = f"跌破MA{ma_sell_period}（{round(ma_val,2)}）"
             if not sell_reason and hold_days > 0 and held >= hold_days:
                 sell_reason = f"持有{hold_days}日到期"
 
@@ -535,6 +558,7 @@ def backtest():
     stop_loss     = float(body.get("stop_loss",0))
     hold_days     = int(body.get("hold_days",0))
     trailing_stop = float(body.get("trailing_stop",0))
+    ma_sell_period= int(body.get("ma_sell_period",0))
 
     if not code or not start_date or not end_date:
         return jsonify({"error":"請填入股票代號與日期範圍"}), 400
@@ -546,7 +570,7 @@ def backtest():
 
     trades, daily_equity = run_single_backtest(
         records, conditions, start_date, end_date,
-        take_profit, stop_loss, hold_days, trailing_stop)
+        take_profit, stop_loss, hold_days, trailing_stop, ma_sell_period)
 
     wins  = [t for t in trades if t["pnl"]>0]
     loses = [t for t in trades if t["pnl"]<=0]
@@ -632,6 +656,7 @@ def market_backtest():
     trailing_stop = float(body.get("trailing_stop",0))
     max_pos       = int(body.get("max_positions",5))
     max_stocks    = int(body.get("max_stocks",300))
+    ma_sell_period= int(body.get("ma_sell_period",0))
 
     if not start_date or not end_date or not conditions:
         return jsonify({"error":"請填入日期範圍與篩選條件"}), 400
@@ -669,7 +694,8 @@ def market_backtest():
             cb(f"掃描 {len(codes)} 支股票（上市共 {len(all_codes)} 支）...", 5)
             trades, daily_eq, day_signals = run_market_backtest(
                 codes, conditions, start_date, end_date,
-                take_profit, stop_loss, hold_days, trailing_stop, max_pos, cb)
+                take_profit, stop_loss, hold_days, trailing_stop, max_pos, cb,
+                ma_sell_period=ma_sell_period)
 
             cb("計算績效統計...", 96)
             wins  = [t for t in trades if t["pnl"]>0]
@@ -720,8 +746,323 @@ def market_backtest_progress(task_id):
     return jsonify(prog)
 
 # ══════════════════════════════════════════════════════
-# 啟動
+# API 路由 - 決策樹預測
 # ══════════════════════════════════════════════════════
+
+def build_features(closes, highs, lows, vols, i):
+    """計算第 i 天的特徵向量"""
+    if i < 60: return None
+    c = closes[i]
+
+    def ma(n): return sma(closes[max(0,i-n+1):i+1], n)
+    def vol_ma(n): return sma(vols[max(0,i-n+1):i+1], n)
+
+    ma5  = ma(5);  ma10 = ma(10); ma20 = ma(20); ma60 = ma(60)
+    v5   = vol_ma(5)
+
+    # KD
+    k_s, d_s = calc_kd_series(closes[:i+1], highs[:i+1], lows[:i+1], 9)
+    kval = k_s[-1]; dval = d_s[-1]
+
+    # RSI
+    rsi = calc_rsi_series(closes[:i+1], 14)[-1]
+
+    # MACD (12-26-9)
+    def ema(arr, n):
+        e = arr[0]; k = 2/(n+1)
+        for v in arr[1:]: e = v*k + e*(1-k)
+        return e
+    sl = closes[max(0,i-35):i+1]
+    macd = ema(sl, 12) - ema(sl, 26) if len(sl)>26 else 0
+
+    # 布林通道（20日）
+    sl20 = closes[max(0,i-19):i+1]
+    boll_mid = sum(sl20)/len(sl20)
+    boll_std = (sum((x-boll_mid)**2 for x in sl20)/len(sl20))**0.5
+    boll_pos = (c - boll_mid) / (boll_std*2+1e-9)  # -1~1
+
+    # ATR (14日)
+    tr_list = []
+    for j in range(max(1,i-13), i+1):
+        tr = max(highs[j]-lows[j], abs(highs[j]-closes[j-1]), abs(lows[j]-closes[j-1]))
+        tr_list.append(tr)
+    atr = sum(tr_list)/len(tr_list) if tr_list else 0
+    atr_pct = atr / c * 100 if c > 0 else 0
+
+    # 漲跌幅
+    ret5  = (c - closes[i-5])  / closes[i-5]  * 100 if closes[i-5]>0  else 0
+    ret10 = (c - closes[i-10]) / closes[i-10] * 100 if closes[i-10]>0 else 0
+    ret20 = (c - closes[i-20]) / closes[i-20] * 100 if closes[i-20]>0 else 0
+
+    # 量比
+    vol_ratio = vols[i] / v5 if v5 > 0 else 1
+
+    return [
+        round(kval, 1), round(dval, 1), round(rsi, 1),
+        round(macd, 4), round(boll_pos, 4),
+        round((c-ma5)/ma5*100,  2) if ma5>0  else 0,
+        round((c-ma10)/ma10*100, 2) if ma10>0 else 0,
+        round((c-ma20)/ma20*100, 2) if ma20>0 else 0,
+        round((c-ma60)/ma60*100, 2) if ma60>0 else 0,
+        round(vol_ratio, 3),
+        round(ret5, 2), round(ret10, 2), round(ret20, 2),
+        round(atr_pct, 3),
+    ]
+
+FEATURE_NAMES = [
+    "K值", "D值", "RSI(14)",
+    "MACD", "布林位置",
+    "距MA5(%)", "距MA10(%)", "距MA20(%)", "距MA60(%)",
+    "量比(5日)",
+    "近5日漲跌幅", "近10日漲跌幅", "近20日漲跌幅",
+    "ATR波動率",
+]
+
+def simple_decision_tree(X_train, y_train, max_depth=6):
+    """簡易決策樹（不依賴 sklearn），CART 演算法"""
+
+    def gini(labels):
+        n = len(labels)
+        if n == 0: return 0
+        counts = {}
+        for l in labels: counts[l] = counts.get(l,0) + 1
+        return 1 - sum((v/n)**2 for v in counts.values())
+
+    def best_split(X, y):
+        best_g, best_f, best_t = float('inf'), 0, 0
+        n = len(y)
+        for f in range(len(X[0])):
+            vals = sorted(set(x[f] for x in X))
+            for i in range(len(vals)-1):
+                t = (vals[i]+vals[i+1])/2
+                left_y  = [y[j] for j in range(n) if X[j][f] <= t]
+                right_y = [y[j] for j in range(n) if X[j][f] >  t]
+                if not left_y or not right_y: continue
+                g = (len(left_y)*gini(left_y) + len(right_y)*gini(right_y)) / n
+                if g < best_g:
+                    best_g, best_f, best_t = g, f, t
+        return best_f, best_t
+
+    def majority(labels):
+        counts = {}
+        for l in labels: counts[l] = counts.get(l,0)+1
+        return max(counts, key=counts.get), counts
+
+    def build(X, y, depth):
+        if depth >= max_depth or len(set(y)) == 1 or len(y) < 5:
+            label, counts = majority(y)
+            return {"leaf": True, "label": label, "counts": counts, "n": len(y)}
+        f, t = best_split(X, y)
+        left_X  = [X[j] for j in range(len(y)) if X[j][f] <= t]
+        left_y  = [y[j] for j in range(len(y)) if X[j][f] <= t]
+        right_X = [X[j] for j in range(len(y)) if X[j][f] >  t]
+        right_y = [y[j] for j in range(len(y)) if X[j][f] >  t]
+        if not left_y or not right_y:
+            label, counts = majority(y)
+            return {"leaf": True, "label": label, "counts": counts, "n": len(y)}
+        return {
+            "leaf": False, "feature": f, "threshold": t,
+            "left": build(left_X, left_y, depth+1),
+            "right": build(right_X, right_y, depth+1),
+            "n": len(y),
+        }
+
+    return build(X_train, y_train, 0)
+
+def predict_tree(tree, x):
+    if tree["leaf"]:
+        counts = tree["counts"]
+        total  = sum(counts.values())
+        conf   = round(counts.get(tree["label"],0)/total*100, 1)
+        return tree["label"], conf, counts
+    if x[tree["feature"]] <= tree["threshold"]:
+        return predict_tree(tree["left"],  x)
+    else:
+        return predict_tree(tree["right"], x)
+
+def calc_feature_importance(tree, n_features):
+    importance = [0.0] * n_features
+    def traverse(node):
+        if node["leaf"]: return
+        importance[node["feature"]] += node["n"]
+        traverse(node["left"])
+        traverse(node["right"])
+    traverse(tree)
+    total = sum(importance) or 1
+    return [round(v/total, 4) for v in importance]
+
+@app.route("/api/predict", methods=["POST"])
+def predict():
+    body        = request.get_json()
+    code        = body.get("code","").strip()
+    train_years = int(body.get("train_years", 2))
+    pred_days   = int(body.get("predict_days", 10))
+    threshold   = float(body.get("threshold", 3))
+
+    if not code:
+        return jsonify({"error": "請填入股票代號"}), 400
+
+    # 計算日期範圍（多抓 3 個月暖機）
+    end_dt   = datetime.today()
+    start_dt = end_dt - timedelta(days=train_years*365 + 90)
+    start_date = start_dt.strftime("%Y-%m-%d")
+    end_date   = end_dt.strftime("%Y-%m-%d")
+
+    print(f"\n[預測] {code} 訓練期: {start_date}~{end_date} 預測: {pred_days}日")
+
+    records = fetch_history_range(code, start_date, end_date)
+    if not records or len(records) < 120:
+        return jsonify({"error": f"歷史資料不足，查無 {code} 或資料少於 120 日"}), 404
+
+    closes = [r["close"] for r in records]
+    highs  = [r["high"]  for r in records]
+    lows   = [r["low"]   for r in records]
+    vols   = [r["vol"]   for r in records]
+    dates  = [r["date"]  for r in records]
+    name   = code  # 簡化，可從 TWSE 取得
+
+    # 建立特徵矩陣和標籤
+    X, y, sample_dates = [], [], []
+    for i in range(60, len(closes) - pred_days):
+        feat = build_features(closes, highs, lows, vols, i)
+        if feat is None: continue
+        future_ret = (closes[i+pred_days] - closes[i]) / closes[i] * 100
+        if future_ret > threshold:
+            label = "漲"
+        elif future_ret < -threshold:
+            label = "跌"
+        else:
+            label = "持平"
+        X.append(feat); y.append(label); sample_dates.append(dates[i])
+
+    if len(X) < 50:
+        return jsonify({"error": "訓練樣本不足（少於50筆）"}), 400
+
+    # 交叉驗證（5折）
+    n = len(X); fold_size = n // 5
+    accuracies = []
+    prec_up_list, prec_dn_list, prec_flat_list = [], [], []
+
+    for fold in range(5):
+        val_start = fold * fold_size
+        val_end   = val_start + fold_size
+        X_train = X[:val_start] + X[val_end:]
+        y_train = y[:val_start] + y[val_end:]
+        X_val   = X[val_start:val_end]
+        y_val   = y[val_start:val_end]
+        if not X_train or not X_val: continue
+        tree = simple_decision_tree(X_train, y_train, max_depth=5)
+        correct = 0
+        tp_up=0; fp_up=0; tp_dn=0; fp_dn=0; tp_fl=0; fp_fl=0
+        fn_up=0; fn_dn=0; fn_fl=0
+        for xi, yi in zip(X_val, y_val):
+            pred, _, _ = predict_tree(tree, xi)
+            if pred == yi: correct += 1
+            if yi=="漲":
+                if pred=="漲": tp_up+=1
+                else: fn_up+=1
+            elif yi=="跌":
+                if pred=="跌": tp_dn+=1
+                else: fn_dn+=1
+            else:
+                if pred=="持平": tp_fl+=1
+                else: fn_fl+=1
+            if pred=="漲" and yi!="漲": fp_up+=1
+            if pred=="跌" and yi!="跌": fp_dn+=1
+            if pred=="持平" and yi!="持平": fp_fl+=1
+        accuracies.append(correct/len(y_val)*100)
+        prec_up_list.append(tp_up/(tp_up+fp_up)*100 if tp_up+fp_up>0 else 0)
+        prec_dn_list.append(tp_dn/(tp_dn+fp_dn)*100 if tp_dn+fp_dn>0 else 0)
+        prec_flat_list.append(tp_fl/(tp_fl+fp_fl)*100 if tp_fl+fp_fl>0 else 0)
+
+    accuracy    = round(sum(accuracies)/len(accuracies), 1)
+    prec_up     = round(sum(prec_up_list)/len(prec_up_list),1)   if prec_up_list   else 0
+    prec_dn     = round(sum(prec_dn_list)/len(prec_dn_list),1)   if prec_dn_list   else 0
+    prec_flat   = round(sum(prec_flat_list)/len(prec_flat_list),1) if prec_flat_list else 0
+
+    # 用全部資料訓練最終模型
+    final_tree = simple_decision_tree(X, y, max_depth=6)
+    importance_vals = calc_feature_importance(final_tree, len(FEATURE_NAMES))
+    feature_importance = sorted(
+        [{"name": FEATURE_NAMES[i], "importance": importance_vals[i]}
+         for i in range(len(FEATURE_NAMES))],
+        key=lambda x: x["importance"], reverse=True
+    )
+
+    # 預測未來 pred_days 個交易日
+    # 用最後一天的特徵預測
+    last_feat = build_features(closes, highs, lows, vols, len(closes)-1)
+    predictions = []
+
+    if last_feat:
+        pred_label, conf, counts = predict_tree(final_tree, last_feat)
+        total_counts = sum(counts.values())
+
+        # 根據歷史同類樣本估算漲跌幅區間
+        same_label_rets = []
+        for i in range(60, len(closes)-pred_days):
+            fi = build_features(closes, highs, lows, vols, i)
+            if fi is None: continue
+            pl, _, _ = predict_tree(final_tree, fi)
+            if pl == pred_label:
+                ret = (closes[i+pred_days]-closes[i])/closes[i]*100
+                same_label_rets.append(ret)
+
+        if same_label_rets:
+            same_label_rets.sort()
+            q25 = same_label_rets[len(same_label_rets)//4]
+            q75 = same_label_rets[len(same_label_rets)*3//4]
+        else:
+            q25, q75 = -3, 3
+
+        # 找最重要的特徵作為依據說明
+        top_feat = feature_importance[0]["name"]
+        top_feat2= feature_importance[1]["name"]
+        reason = f"{top_feat}＋{top_feat2}為主要依據"
+
+        # 生成未來日期（跳過週末）
+        future_dates = []
+        cur = datetime.today()
+        while len(future_dates) < pred_days:
+            cur += timedelta(days=1)
+            if cur.weekday() < 5:
+                future_dates.append(cur.strftime("%Y-%m-%d"))
+
+        # 每個預測日都用同一模型（簡化）
+        for i, fdate in enumerate(future_dates):
+            decay = 1 - i * 0.03  # 越遠信心越低
+            adj_conf = max(round(conf * (0.5 + 0.5*decay), 1), 40)
+            predictions.append({
+                "date":       fdate,
+                "direction":  pred_label,
+                "confidence": adj_conf,
+                "range_low":  round(q25 * (1 + i*0.05), 2),
+                "range_high": round(q75 * (1 + i*0.05), 2),
+                "reason":     reason if i==0 else f"延伸預測（信心遞減）",
+            })
+
+    # 歷史價格（近60日）
+    history_prices = [
+        {"date": dates[i], "close": closes[i]}
+        for i in range(max(0, len(dates)-60), len(dates))
+    ]
+
+    print(f"  準確率: {accuracy}%  訓練樣本: {len(X)}")
+    return jsonify({
+        "code": code, "name": name,
+        "accuracy":    accuracy,
+        "threshold":   threshold,
+        "predictions": predictions,
+        "feature_importance": feature_importance[:8],
+        "history_prices": history_prices,
+        "model_stats": {
+            "train_samples": len(X),
+            "accuracy":  accuracy,
+            "prec_up":   prec_up,
+            "prec_dn":   prec_dn,
+            "prec_flat": prec_flat,
+        }
+    })
 
 if __name__ == "__main__":
     print("="*50)
