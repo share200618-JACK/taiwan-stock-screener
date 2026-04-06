@@ -191,13 +191,7 @@ input.fs{width:95px;}
   </div>
 </header>
 
-<!-- 後端未啟動提示 -->
-<div class="alert err" id="srvAlert">
-  <strong>⚠️ 偵測不到後端伺服器</strong>，請先在終端機執行以下步驟：<br><br>
-  1. 安裝套件（只需一次）：<code>pip install flask flask-cors requests</code><br>
-  2. 啟動伺服器：<code>python server.py</code><br>
-  3. 看到「Running on http://0.0.0.0:5000」後，重新整理此頁面
-</div>
+
 
 <div class="main">
 <!-- LEFT -->
@@ -291,12 +285,12 @@ input.fs{width:95px;}
 
 
   <div class="info">
-    🖥️ <strong style="color:var(--txt)">使用說明</strong><br>
-    1. 先執行：<code>python server.py</code><br>
-    2. 看到綠燈「TWSE 即時」才代表連線成功<br>
-    3. 新增條件後點「立即篩選」<br>
-    4. 資料來源：TWSE 證交所 OpenAPI<br>
-    5. 建議收盤後使用（資料較完整）
+    📈 <strong style="color:var(--txt)">使用說明</strong><br>
+    1. 新增篩選條件或載入預設策略<br>
+    2. 點「立即篩選」開始選股<br>
+    3. 資料來源：TWSE 證交所 OpenAPI<br>
+    4. 建議收盤後使用（資料較完整）<br>
+    5. 點「前往回測」可驗證策略績效
   </div>
 </div>
 
@@ -545,7 +539,7 @@ async function run(){
   document.getElementById('sg').innerHTML='';
   document.getElementById('stats').style.display='none';
   document.getElementById('disc').style.display='none';
-  document.getElementById('srvAlert').style.display='none';
+  
   setDot('wait','連線中...');
   clearLog();setBar(5);
   addLog('🔌 連線到本地後端伺服器...');
@@ -583,9 +577,7 @@ async function run(){
     console.error(err);
     addLog(`❌ 錯誤：${err.message}`);
     setDot('err','連線失敗');
-    if(err.message.includes('fetch')||err.message.includes('timeout')){
-      document.getElementById('srvAlert').style.display='block';
-    }
+
     document.getElementById('sg').innerHTML=`<div class="empty"><div class="ei">⚠️</div><p>${err.message}<br><br>請確認 <code>python server.py</code> 已執行</p></div>`;
     document.getElementById('loading').style.display='none';
   }
@@ -681,11 +673,11 @@ function buildSpark(pts){
 // 啟動時檢查後端連線
 (async()=>{
   try{
-    const r=await fetch(`${API}/api/health`,{signal:AbortSignal.timeout(3000)});
-    if(r.ok){setDot('ok','後端已連線');document.getElementById('srvAlert').style.display='none';}
+    const r=await fetch(`${API}/api/health`,{signal:AbortSignal.timeout(5000)});
+    if(r.ok) setDot('ok','TWSE 即時');
+    else setDot('wait','連線中...');
   }catch{
-    setDot('err','後端未啟動');
-    document.getElementById('srvAlert').style.display='block';
+    setDot('wait','連線中...');
   }
 })();
 
