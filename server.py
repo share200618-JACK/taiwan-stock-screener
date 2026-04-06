@@ -591,11 +591,37 @@ def backtest():
 # API 路由 - 全市場回測（背景執行）
 # ══════════════════════════════════════════════════════
 
+import json, os, uuid as _uuid
+
+TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tasks")
+os.makedirs(TASKS_DIR, exist_ok=True)
+
+def task_path(task_id):
+    return os.path.join(TASKS_DIR, f"{task_id}.json")
+
+def save_task(task_id, data):
+    try:
+        # result 可能很大，先存再讀沒問題
+        with open(task_path(task_id), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception as e:
+        print(f"[task] 儲存失敗: {e}")
+
+def load_task(task_id):
+    p = task_path(task_id)
+    if not os.path.exists(p):
+        return None
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return None
+
+# 記憶體快取（加速輪詢，同時有檔案備份）
 _market_tasks = {}
 
 @app.route("/api/market_backtest", methods=["POST"])
 def market_backtest():
-    import uuid
     body          = request.get_json()
     start_date    = body.get("start_date","")
     end_date      = body.get("end_date","")
@@ -605,20 +631,24 @@ def market_backtest():
     hold_days     = int(body.get("hold_days",0))
     trailing_stop = float(body.get("trailing_stop",0))
     max_pos       = int(body.get("max_positions",5))
-    max_stocks    = int(body.get("max_stocks",300))  # 預設改為全部上市股票
+    max_stocks    = int(body.get("max_stocks",300))
 
     if not start_date or not end_date or not conditions:
         return jsonify({"error":"請填入日期範圍與篩選條件"}), 400
 
-    task_id = str(uuid.uuid4())[:8]
-    _market_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
+    task_id = str(_uuid.uuid4())[:8]
+    init_state = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
+    _market_tasks[task_id] = init_state
+    save_task(task_id, init_state)
 
     def bg():
-        prog = _market_tasks[task_id]
         try:
             import random
+
             def cb(msg, pct):
-                prog["msg"] = msg; prog["pct"] = round(pct,1)
+                state = {"pct":round(pct,1),"msg":msg,"done":False,"result":None,"error":None}
+                _market_tasks[task_id] = state
+                save_task(task_id, state)
                 print(f"  [{pct:.0f}%] {msg}")
 
             cb("從 TWSE 取得股票清單...", 2)
@@ -631,7 +661,6 @@ def market_backtest():
                 and len(str(r.get("Code",""))) == 4
                 and safe_float(r.get("ClosingPrice")) > 0
             ]
-            # 不限制時掃描全部，否則隨機抽樣確保不重複偏向特定股票
             if max_stocks >= len(all_codes):
                 codes = all_codes
             else:
@@ -651,34 +680,43 @@ def market_backtest():
                 dd=(peak_eq-d["equity"])/peak_eq*100
                 if dd>max_draw: max_draw=dd
 
-            prog["result"] = {
-                "start_date":start_date,"end_date":end_date,
-                "stocks_tested":len(codes),
-                "trades":sorted(trades,key=lambda x:x["buy_date"]),
-                "daily_equity":daily_eq,
-                "stats":{
-                    "total_trades":len(trades),
-                    "win_trades":len(wins),"lose_trades":len(loses),
-                    "win_rate":round(len(wins)/len(trades)*100,1) if trades else 0,
-                    "total_return":round(daily_eq[-1]["equity"]-100,2) if daily_eq else 0,
-                    "avg_win": round(sum(t["pnl"] for t in wins)/len(wins),2)  if wins  else 0,
-                    "avg_loss":round(sum(t["pnl"] for t in loses)/len(loses),2) if loses else 0,
-                    "max_drawdown":round(max_draw,2),
-                    "max_positions":max_pos,
+            final = {
+                "pct": 100, "msg": "完成！", "done": True, "error": None,
+                "result": {
+                    "start_date":start_date,"end_date":end_date,
+                    "stocks_tested":len(codes),
+                    "trades":sorted(trades,key=lambda x:x["buy_date"]),
+                    "daily_equity":daily_eq,
+                    "stats":{
+                        "total_trades":len(trades),
+                        "win_trades":len(wins),"lose_trades":len(loses),
+                        "win_rate":round(len(wins)/len(trades)*100,1) if trades else 0,
+                        "total_return":round(daily_eq[-1]["equity"]-100,2) if daily_eq else 0,
+                        "avg_win": round(sum(t["pnl"] for t in wins)/len(wins),2)  if wins  else 0,
+                        "avg_loss":round(sum(t["pnl"] for t in loses)/len(loses),2) if loses else 0,
+                        "max_drawdown":round(max_draw,2),
+                        "max_positions":max_pos,
+                    }
                 }
             }
-            prog["pct"]=100; prog["msg"]="完成！"; prog["done"]=True
+            _market_tasks[task_id] = final
+            save_task(task_id, final)
+
         except Exception as e:
             import traceback; traceback.print_exc()
-            prog["error"]=str(e); prog["done"]=True
+            err_state = {"pct":0,"msg":str(e),"done":True,"result":None,"error":str(e)}
+            _market_tasks[task_id] = err_state
+            save_task(task_id, err_state)
 
     threading.Thread(target=bg, daemon=True).start()
     return jsonify({"task_id": task_id})
 
 @app.route("/api/market_backtest/progress/<task_id>")
 def market_backtest_progress(task_id):
-    prog = _market_tasks.get(task_id)
-    if not prog: return jsonify({"error":"找不到任務"}), 404
+    # 先查記憶體，沒有再讀檔案（Render 重啟後仍可繼續輪詢）
+    prog = _market_tasks.get(task_id) or load_task(task_id)
+    if not prog:
+        return jsonify({"error":"找不到任務，可能因伺服器重啟而遺失，請重新開始回測"}), 404
     return jsonify(prog)
 
 # ══════════════════════════════════════════════════════
