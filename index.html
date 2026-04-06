@@ -1,0 +1,701 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股智慧選股</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background:
+  radial-gradient(ellipse 55% 45% at 10% 0%,rgba(240,180,41,.07) 0%,transparent 60%),
+  radial-gradient(ellipse 45% 55% at 90% 100%,rgba(61,139,255,.05) 0%,transparent 60%);
+  pointer-events:none;z-index:0;}
+.w{max-width:1280px;margin:0 auto;padding:0 24px;position:relative;z-index:1;}
+
+/* header */
+header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;}
+.hd{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.logo{display:flex;align-items:center;gap:11px;}
+.li{width:36px;height:36px;background:linear-gradient(135deg,var(--gold),var(--gold2));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;box-shadow:0 0 20px rgba(240,180,41,.35);}
+.logo h1{font-size:1.28rem;font-weight:700;}
+.logo h1 span{color:var(--gold);}
+.hd-r{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.upd{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--dim);background:var(--s1);padding:5px 11px;border-radius:6px;border:1px solid var(--bd);}
+.src{font-size:.7rem;padding:4px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);display:flex;align-items:center;gap:5px;}
+.dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;transition:all .3s;}
+.dot.ok{background:var(--grn);box-shadow:0 0 6px var(--grn);}
+.dot.err{background:var(--red);}
+.dot.wait{background:var(--gold);animation:blink 1s infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* server alert */
+.alert{margin-bottom:18px;padding:14px 18px;border-radius:11px;font-size:.83rem;line-height:1.7;display:none;}
+.alert.err{background:rgba(255,77,94,.08);border:1px solid rgba(255,77,94,.25);color:#ffb3ba;}
+.alert.err strong{color:var(--red);}
+.alert code{font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,.08);padding:2px 6px;border-radius:4px;font-size:.8rem;}
+
+/* layout */
+.main{display:grid;grid-template-columns:370px 1fr;gap:20px;align-items:start;}
+@media(max-width:860px){.main{grid-template-columns:1fr;}}
+.left{display:flex;flex-direction:column;gap:14px;}
+
+/* box */
+.box{background:var(--s1);border:1px solid var(--bd);border-radius:14px;overflow:hidden;}
+.bh{padding:13px 17px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;}
+.bt{font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);}
+.ba{display:flex;gap:5px;align-items:center;}
+.ib{height:26px;padding:0 9px;border-radius:7px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.72rem;cursor:pointer;display:flex;align-items:center;gap:4px;transition:all .15s;font-family:'Noto Sans TC',sans-serif;white-space:nowrap;}
+.ib:hover{border-color:var(--gold);color:var(--gold);}
+.ib.r:hover{border-color:var(--red);color:var(--red);}
+.bdg{font-size:.7rem;background:var(--s2);border:1px solid var(--bd);color:var(--dim);padding:2px 8px;border-radius:10px;font-family:'JetBrains Mono',monospace;}
+.presets{padding:10px 15px;display:flex;flex-wrap:wrap;gap:6px;border-bottom:1px solid var(--bd);}
+.preset{padding:4px 12px;border-radius:20px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.77rem;cursor:pointer;transition:all .15s;font-family:'Noto Sans TC',sans-serif;}
+.preset:hover{border-color:var(--gold);color:var(--gold);}
+
+/* cond list */
+.clist{padding:4px 0;min-height:32px;}
+.ec{padding:16px;text-align:center;color:var(--dim);font-size:.81rem;}
+.crow{padding:8px 15px;border-bottom:1px solid rgba(255,255,255,.03);display:flex;align-items:center;gap:8px;}
+.crow:last-child{border-bottom:none;}
+.crow:hover{background:rgba(255,255,255,.015);}
+.tog{width:30px;height:17px;border-radius:9px;border:none;cursor:pointer;position:relative;transition:background .2s;flex-shrink:0;}
+.tog.on{background:var(--grn);}.tog.off{background:var(--bd);}
+.tog::after{content:'';position:absolute;top:2px;width:13px;height:13px;background:#fff;border-radius:50%;transition:left .18s;}
+.tog.on::after{left:15px;}.tog.off::after{left:2px;}
+.ctag{font-size:.67rem;padding:2px 6px;border-radius:4px;font-weight:600;flex-shrink:0;}
+.ctag.price{background:rgba(61,139,255,.15);color:var(--blu);border:1px solid rgba(61,139,255,.25);}
+.ctag.vol{background:rgba(168,85,247,.15);color:var(--pur);border:1px solid rgba(168,85,247,.25);}
+.ctag.ma{background:rgba(39,217,129,.15);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
+.ctag.kd{background:rgba(240,180,41,.15);color:var(--gold);border:1px solid rgba(240,180,41,.25);}
+.ctag.rsi{background:rgba(255,77,94,.15);color:var(--red);border:1px solid rgba(255,77,94,.25);}
+.cl{flex:1;font-size:.8rem;line-height:1.4;color:var(--txt);}
+.cl.off{opacity:.38;text-decoration:line-through;}
+.ca{display:flex;gap:4px;opacity:0;transition:opacity .15s;}
+.crow:hover .ca{opacity:1;}
+.cact{width:22px;height:22px;border-radius:5px;border:1px solid transparent;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.72rem;color:var(--dim);transition:all .15s;}
+.cact.e:hover{color:var(--gold);border-color:rgba(240,180,41,.3);}
+.cact.d:hover{color:var(--red);border-color:rgba(255,77,94,.3);}
+
+/* builder */
+.aa{padding:10px 15px 13px;}
+.builder{background:var(--s2);border:1px solid var(--bd);border-radius:11px;padding:14px;margin-bottom:10px;display:none;flex-direction:column;gap:11px;}
+.builder.open{display:flex;}
+.br{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.br label{font-size:.72rem;color:var(--dim);font-weight:600;white-space:nowrap;}
+.fs{padding:8px 11px;background:var(--s3);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'Noto Sans TC',sans-serif;font-size:.84rem;transition:border-color .15s;}
+.fs:focus{outline:none;border-color:var(--gold);}
+select.fs option{background:var(--s2);}
+input.fs.fw{flex:1;width:auto;}
+input.fs{width:95px;}
+.kdp{background:var(--s3);border:1px solid rgba(240,180,41,.2);border-radius:9px;padding:13px;display:none;flex-direction:column;gap:10px;}
+.kdp.open{display:flex;}
+.kdh{font-size:.75rem;color:var(--dim);line-height:1.55;padding:8px 10px;background:rgba(240,180,41,.05);border:1px solid rgba(240,180,41,.15);border-radius:7px;}
+.kdh strong{color:var(--gold);}
+.kdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.kdr label{font-size:.72rem;color:var(--dim);font-weight:600;min-width:75px;}
+.kdr span{font-size:.71rem;color:var(--dim);}
+.bacts{display:flex;gap:8px;justify-content:flex-end;}
+.bcl{padding:7px 15px;border-radius:8px;border:1px solid var(--bd);background:transparent;color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.82rem;cursor:pointer;}
+.bcl:hover{color:var(--txt);}
+.badd{padding:7px 18px;border-radius:8px;border:none;background:var(--gold);color:#000;font-weight:700;font-family:'Noto Sans TC',sans-serif;font-size:.82rem;cursor:pointer;}
+.badd:hover{background:var(--gold2);}
+.addbtn{width:100%;padding:9px;border:1.5px dashed var(--bd);border-radius:9px;background:transparent;color:var(--dim);font-size:.82rem;cursor:pointer;transition:all .18s;font-family:'Noto Sans TC',sans-serif;display:flex;align-items:center;justify-content:center;gap:6px;}
+.addbtn:hover{border-color:var(--gold);color:var(--gold);}
+.sb2{display:flex;gap:6px;padding:10px 15px;border-top:1px solid var(--bd);}
+.sb2 .ib{flex:1;justify-content:center;}
+.run{display:block;width:100%;padding:12px;background:linear-gradient(135deg,var(--gold),#e8a800);color:#000;font-family:'Noto Sans TC',sans-serif;font-size:.93rem;font-weight:700;border:none;border-radius:10px;cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(240,180,41,.28);letter-spacing:.04em;}
+.run:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(240,180,41,.42);}
+.run:disabled{opacity:.6;cursor:not-allowed;transform:none;}
+
+/* results */
+.rh{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;}
+.rc{font-size:.83rem;color:var(--dim);}
+.rc strong{color:var(--gold);font-size:1.08rem;font-family:'JetBrains Mono',monospace;}
+.srts{display:flex;gap:5px;}
+.sbt{padding:5px 10px;border-radius:6px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.72rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;transition:all .15s;}
+.sbt.active{color:var(--gold);border-color:var(--gold);}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;}
+.sc{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:11px 12px;text-align:center;}
+.sv{font-family:'JetBrains Mono',monospace;font-size:1.28rem;font-weight:700;color:var(--gold);}
+.sl{font-size:.67rem;color:var(--dim);margin-top:2px;}
+.sg{display:flex;flex-direction:column;gap:8px;}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:13px 16px;display:grid;grid-template-columns:54px 1fr 84px auto auto;align-items:center;gap:12px;transition:all .18s;position:relative;overflow:hidden;animation:fu .3s ease both;}
+.card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--grn);border-radius:0 2px 2px 0;}
+.card:hover{border-color:rgba(240,180,41,.22);background:var(--s2);}
+.scode{font-family:'JetBrains Mono',monospace;font-size:.91rem;font-weight:700;}
+.si{min-width:0;}
+.sn{font-size:.93rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sm{display:flex;gap:5px;margin-top:3px;flex-wrap:wrap;}
+.mt{font-size:.65rem;padding:2px 6px;border-radius:4px;background:var(--s2);border:1px solid var(--bd);color:var(--dim);}
+.mt.v{color:var(--pur);border-color:rgba(168,85,247,.28);}
+.mt.live{color:var(--grn);border-color:rgba(39,217,129,.28);background:rgba(39,217,129,.06);}
+.px{text-align:right;}
+.pv{font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:700;}
+.pv.u{color:var(--red);}.pv.d{color:var(--grn);}.pv.z{color:var(--dim);}
+.pc{font-size:.72rem;font-family:'JetBrains Mono',monospace;margin-top:2px;}
+.pc.u{color:var(--red);}.pc.d{color:var(--grn);}.pc.z{color:var(--dim);}
+.ring{position:relative;width:42px;height:42px;flex-shrink:0;}
+.ring svg{transform:rotate(-90deg);}
+.rn{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:.67rem;font-weight:700;}
+.empty{text-align:center;padding:52px 20px;color:var(--dim);}
+.ei{font-size:2.6rem;margin-bottom:10px;opacity:.4;}
+
+/* loading */
+.loading{display:none;background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:14px;}
+.ld-hd{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.spinner{width:20px;height:20px;border:2.5px solid var(--bd);border-top-color:var(--gold);border-radius:50%;animation:sp .8s linear infinite;flex-shrink:0;}
+@keyframes sp{to{transform:rotate(360deg);}}
+.ld-title{font-size:.88rem;font-weight:600;}
+.ld-log{font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--dim);line-height:1.8;max-height:130px;overflow-y:auto;background:var(--s2);border-radius:8px;padding:10px 12px;}
+.ld-prog{margin-top:10px;height:4px;background:var(--bd);border-radius:2px;overflow:hidden;}
+.ld-bar{height:100%;background:var(--gold);border-radius:2px;transition:width .5s ease;width:0;}
+@keyframes fu{from{opacity:0;transform:translateY(7px);}to{opacity:1;transform:none;}}
+.disc{margin-top:14px;padding:10px 14px;background:rgba(255,77,94,.05);border:1px solid rgba(255,77,94,.14);border-radius:9px;font-size:.71rem;color:var(--dim);line-height:1.6;}
+.disc strong{color:var(--red);}
+.info{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;font-size:.73rem;color:var(--dim);line-height:1.9;}
+.info code{font-family:'JetBrains Mono',monospace;background:rgba(255,255,255,.07);padding:1px 6px;border-radius:4px;font-size:.78rem;color:var(--gold);}
+
+/* modal */
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.72);backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;z-index:200;opacity:0;pointer-events:none;transition:opacity .2s;}
+.ov.show{opacity:1;pointer-events:all;}
+.modal{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:22px;width:90%;max-width:420px;box-shadow:0 24px 80px rgba(0,0,0,.6);transform:scale(.95);transition:transform .2s;max-height:85vh;overflow-y:auto;}
+.ov.show .modal{transform:scale(1);}
+.mt2{font-size:.95rem;font-weight:700;margin-bottom:16px;}
+.mt2 span{color:var(--gold);}
+.sr{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--bd);}
+.sr:last-child{border-bottom:none;}
+.mf{display:flex;gap:9px;margin-top:18px;}
+.mcl{flex:1;padding:9px;border-radius:9px;border:1px solid var(--bd);background:transparent;color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.85rem;cursor:pointer;}
+</style>
+</head>
+<body>
+<div class="w">
+<header>
+  <div class="hd">
+    <div class="logo">
+      <div class="li">📈</div>
+      <h1>台股<span>智慧</span>選股</h1>
+    </div>
+    <div class="hd-r">
+      <div class="src"><div class="dot wait" id="dot"></div><span id="srcTxt">等待連線</span></div>
+      <div class="upd" id="upd">尚未篩選</div>
+    </div>
+  </div>
+</header>
+
+<!-- 後端未啟動提示 -->
+<div class="alert err" id="srvAlert">
+  <strong>⚠️ 偵測不到後端伺服器</strong>，請先在終端機執行以下步驟：<br><br>
+  1. 安裝套件（只需一次）：<code>pip install flask flask-cors requests</code><br>
+  2. 啟動伺服器：<code>python server.py</code><br>
+  3. 看到「Running on http://0.0.0.0:5000」後，重新整理此頁面
+</div>
+
+<div class="main">
+<!-- LEFT -->
+<div class="left">
+  <div class="box">
+    <div class="bh">
+      <span class="bt">篩選條件</span>
+      <div class="ba">
+        <span class="bdg" id="cbdg">0 條件</span>
+        <button class="ib" onclick="toggleAll(true)">✓ 全開</button>
+        <button class="ib" onclick="toggleAll(false)">✗ 全停</button>
+        <button class="ib r" onclick="clearAll()">🗑</button>
+      </div>
+    </div>
+    <div class="presets">
+      <span style="font-size:.71rem;color:var(--dim);align-self:center;margin-right:2px;">預設：</span>
+      <button class="preset" onclick="loadPreset('s1')">⚡ 高獲利</button>
+      <button class="preset" onclick="loadPreset('s2')">🚀 高報酬</button>
+      <button class="preset" onclick="loadPreset('both')">🔥 整合</button>
+    </div>
+    <div class="clist" id="clist"><div class="ec">尚無條件，請新增或載入預設策略</div></div>
+    <div class="aa">
+      <div class="builder" id="builder">
+        <div class="br">
+          <label>條件類別</label>
+          <select class="fs fw" id="bCat" onchange="onCatChange()">
+            <optgroup label="── 價格 ──">
+              <option value="chgPct|price">漲跌幅 (%)</option>
+              <option value="price|price">股價 (元)</option>
+              <option value="priceVsMA20|price">股價 vs 20日均線 (%差)</option>
+              <option value="priceVsMA60|price">股價 vs 60日均線 (%差)</option>
+            </optgroup>
+            <optgroup label="── 均線 ──">
+              <option value="ma20VsMA60|ma">20日均線 vs 60日均線 (%差)</option>
+              <option value="ma5VsMA20|ma">5日均線 vs 20日均線 (%差)</option>
+            </optgroup>
+            <optgroup label="── 成交量 ──">
+              <option value="todayVol|vol">今日成交量 (張)</option>
+              <option value="avg5Vol|vol">近5日均量 (張)</option>
+              <option value="avg20Vol|vol">近20日均量 (張)</option>
+              <option value="volVsAvg5|vol">今日量 ÷ 5日均量 (倍數)</option>
+              <option value="volVsAvg20|vol">今日量 ÷ 20日均量 (倍數)</option>
+            </optgroup>
+            <optgroup label="── KD 指標 ──">
+              <option value="kVal|kd">K 值</option>
+              <option value="dVal|kd">D 值</option>
+              <option value="kdCross|kd">KD 黃金交叉（自訂範圍）</option>
+            </optgroup>
+            <optgroup label="── RSI ──">
+              <option value="rsi14|rsi">RSI (14日)</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="br" id="numRow">
+          <label>運算子</label>
+          <select class="fs" id="bOp">
+            <option value=">">大於 (&gt;)</option>
+            <option value=">=">大於等於 (≥)</option>
+            <option value="<">小於 (&lt;)</option>
+            <option value="<=">小於等於 (≤)</option>
+            <option value="=">等於</option>
+          </select>
+          <label>數值</label>
+          <input class="fs" type="number" id="bVal" placeholder="輸入數值" step="any">
+        </div>
+        <div class="kdp" id="kdp">
+          <div class="kdh"><strong>KD 黃金交叉</strong>：今日 K 由下穿越 D（K&gt;D，前日 K≤D），設定 K 範圍避免追高</div>
+          <div class="kdr"><label>K 值下限 (≥)</label><input class="fs" type="number" id="kdMin" value="20" style="width:70px"><span>（0=不限）</span></div>
+          <div class="kdr"><label>K 值上限 (&lt;)</label><input class="fs" type="number" id="kdMax" value="50" style="width:70px"><span>（100=不限）</span></div>
+          <div class="kdr"><label>KD 週期</label><select class="fs" id="kdPer"><option value="9">9日（標準）</option><option value="6">6日（短線）</option><option value="14">14日（穩健）</option></select></div>
+        </div>
+        <div class="br">
+          <label>顯示名稱</label>
+          <input class="fs fw" type="text" id="bLabel" placeholder="（留空自動產生）">
+        </div>
+        <div class="bacts">
+          <button class="bcl" onclick="closeBuilder()">取消</button>
+          <button class="badd" id="bSave" onclick="saveCondition()">➕ 加入條件</button>
+        </div>
+      </div>
+      <button class="addbtn" id="addBtn" onclick="toggleBuilder()">＋ 新增篩選條件</button>
+    </div>
+    <div class="sb2">
+      <button class="ib" style="flex:1;justify-content:center;" onclick="saveStrat()">💾 儲存策略</button>
+      <button class="ib" style="flex:1;justify-content:center;" onclick="openLoad()">📂 載入策略</button>
+    </div>
+  </div>
+
+  <button class="run" id="runBtn" onclick="run()">⚡ 立即篩選</button>
+  <button class="run" style="background:linear-gradient(135deg,#3d8bff,#2563eb);box-shadow:0 4px 14px rgba(61,139,255,.28);margin-top:8px;" onclick="goBacktest()">📊 前往回測</button>
+  <button class="run" style="background:linear-gradient(135deg,#2aabee,#1a8fc4);box-shadow:0 4px 14px rgba(42,171,238,.28);margin-top:8px;" onclick="window.location.href='alert.html'">✈️ Telegram 警報設定</button>
+
+  <div class="info">
+    🖥️ <strong style="color:var(--txt)">使用說明</strong><br>
+    1. 先執行：<code>python server.py</code><br>
+    2. 看到綠燈「TWSE 即時」才代表連線成功<br>
+    3. 新增條件後點「立即篩選」<br>
+    4. 資料來源：TWSE 證交所 OpenAPI<br>
+    5. 建議收盤後使用（資料較完整）
+  </div>
+</div>
+
+<!-- RIGHT -->
+<div>
+  <div class="stats" id="stats" style="display:none">
+    <div class="sc"><div class="sv" id="stN">0</div><div class="sl">符合股票</div></div>
+    <div class="sc"><div class="sv" id="stC">—</div><div class="sl">平均漲幅</div></div>
+    <div class="sc"><div class="sv" id="stS">—</div><div class="sl">平均符合率</div></div>
+  </div>
+  <div class="rh">
+    <div class="rc">符合條件：<strong id="rCount">—</strong> 檔</div>
+    <div class="srts">
+      <button class="sbt active" onclick="sortBy('score',this)">符合率</button>
+      <button class="sbt" onclick="sortBy('chg',this)">漲幅</button>
+      <button class="sbt" onclick="sortBy('vol',this)">成交量</button>
+      <button class="sbt" onclick="sortBy('price',this)">股價</button>
+    </div>
+  </div>
+  <div class="loading" id="loading">
+    <div class="ld-hd"><div class="spinner"></div><div class="ld-title" id="ldTitle">從 TWSE 抓取即時資料中...</div></div>
+    <div class="ld-log" id="ldLog"></div>
+    <div class="ld-prog"><div class="ld-bar" id="ldBar"></div></div>
+  </div>
+  <div class="sg" id="sg">
+    <div class="empty"><div class="ei">🔍</div><p>新增篩選條件後<br>點擊「立即篩選」開始選股</p></div>
+  </div>
+  <div class="disc" id="disc" style="display:none">
+    <strong>⚠️ 投資風險警示：</strong>資料來自 TWSE，KD/RSI 為估算值，僅供參考，不構成任何買賣建議。
+  </div>
+</div>
+</div>
+</div>
+
+<div class="ov" id="loadOv" onclick="if(event.target===this)closeLoad()">
+  <div class="modal">
+    <div class="mt2">📂 <span>載入已儲存策略</span></div>
+    <div id="loadBody"></div>
+    <div class="mf"><button class="mcl" onclick="closeLoad()">關閉</button></div>
+  </div>
+</div>
+
+<script>
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000' : '';
+let conds=[], editId=null, results=[], sortMode='score';
+
+const META={
+  chgPct:    {name:'漲跌幅',      unit:'%',  bool:false},
+  price:     {name:'股價',         unit:'元', bool:false},
+  priceVsMA20:{name:'股價 vs 20MA',unit:'%', bool:false},
+  priceVsMA60:{name:'股價 vs 60MA',unit:'%', bool:false},
+  ma20VsMA60:{name:'20MA vs 60MA',unit:'%',  bool:false},
+  ma5VsMA20: {name:'5MA vs 20MA', unit:'%',  bool:false},
+  todayVol:  {name:'今日成交量',   unit:'張', bool:false},
+  avg5Vol:   {name:'近5日均量',    unit:'張', bool:false},
+  avg20Vol:  {name:'近20日均量',   unit:'張', bool:false},
+  volVsAvg5: {name:'量÷5日均量',  unit:'倍', bool:false},
+  volVsAvg20:{name:'量÷20日均量', unit:'倍', bool:false},
+  kVal:      {name:'K值',          unit:'',   bool:false},
+  dVal:      {name:'D值',          unit:'',   bool:false},
+  kdCross:   {name:'KD黃金交叉',  unit:'',   bool:true },
+  rsi14:     {name:'RSI(14)',      unit:'',   bool:false},
+};
+const CAT={price:'price',vol:'vol',ma:'ma',kd:'kd',rsi:'rsi'};
+const CATL={price:'價格',vol:'成交量',ma:'均線',kd:'KD',rsi:'RSI'};
+
+const PRESETS={
+  s1:[
+    {key:'chgPct',    cat:'price',op:'>',val:3,    label:'漲幅 > 3%'},
+    {key:'avg20Vol',  cat:'vol',  op:'>',val:2000, label:'近20日均量 > 2000張'},
+    {key:'todayVol',  cat:'vol',  op:'>',val:2000, label:'今日成交量 > 2000張'},
+    {key:'priceVsMA20',cat:'price',op:'>',val:0,   label:'股價 > 20日均線'},
+    {key:'ma20VsMA60',cat:'ma',  op:'>',val:0,     label:'20日均線 > 60日均線'},
+    {key:'kdCross',   cat:'kd',  op:'=',val:true,  label:'KD黃金交叉（K 20~50）',kdMin:20,kdMax:50,kdPer:9},
+    {key:'kVal',      cat:'kd',  op:'>',val:20,    label:'K值 > 20'},
+  ],
+  s2:[
+    {key:'volVsAvg5', cat:'vol',  op:'>',val:2,    label:'今日量 > 5日均量 2倍'},
+    {key:'priceVsMA20',cat:'price',op:'>',val:0,   label:'股價 > 20日均線'},
+    {key:'kdCross',   cat:'kd',  op:'=',val:true,  label:'KD黃金交叉（K 30~50）',kdMin:30,kdMax:50,kdPer:9},
+    {key:'kVal',      cat:'kd',  op:'>',val:30,    label:'K值 > 30'},
+    {key:'avg20Vol',  cat:'vol',  op:'>',val:2000, label:'近20日均量 > 2000張'},
+  ],
+  both:[
+    {key:'chgPct',    cat:'price',op:'>',val:3,    label:'漲幅 > 3%'},
+    {key:'volVsAvg5', cat:'vol',  op:'>',val:2,    label:'今日量 > 5日均量 2倍'},
+    {key:'volVsAvg20',cat:'vol',  op:'>',val:1.5,  label:'今日量 > 20日均量 1.5倍'},
+    {key:'avg20Vol',  cat:'vol',  op:'>',val:2000, label:'近20日均量 > 2000張'},
+    {key:'priceVsMA20',cat:'price',op:'>',val:0,   label:'股價 > 20日均線'},
+    {key:'ma20VsMA60',cat:'ma',  op:'>',val:0,     label:'20日均線 > 60日均線'},
+    {key:'kdCross',   cat:'kd',  op:'=',val:true,  label:'KD黃金交叉（K 20~50）',kdMin:20,kdMax:50,kdPer:9},
+  ],
+};
+
+function loadPreset(n){
+  if(conds.length&&!confirm('取代目前條件？'))return;
+  conds=PRESETS[n].map((c,i)=>({...c,id:Date.now()+i,enabled:true}));
+  renderCList();resetResults();
+}
+
+let bOpen=false;
+function toggleBuilder(){
+  editId=null;bOpen=!bOpen;
+  document.getElementById('builder').classList.toggle('open',bOpen);
+  document.getElementById('addBtn').textContent=bOpen?'✕ 取消':'＋ 新增篩選條件';
+  if(bOpen){resetForm();document.getElementById('bSave').textContent='➕ 加入條件';}
+}
+function closeBuilder(){
+  bOpen=false;editId=null;
+  document.getElementById('builder').classList.remove('open');
+  document.getElementById('addBtn').textContent='＋ 新增篩選條件';
+}
+function resetForm(){
+  document.getElementById('bCat').value='chgPct|price';
+  document.getElementById('bOp').value='>';
+  document.getElementById('bVal').value='';
+  document.getElementById('bLabel').value='';
+  document.getElementById('kdMin').value=20;
+  document.getElementById('kdMax').value=50;
+  document.getElementById('kdPer').value=9;
+  onCatChange();
+}
+function openEdit(id){
+  const c=conds.find(x=>x.id===id);if(!c)return;
+  editId=id;bOpen=true;
+  document.getElementById('builder').classList.add('open');
+  document.getElementById('addBtn').textContent='✕ 取消編輯';
+  document.getElementById('bSave').textContent='💾 儲存修改';
+  const sel=document.getElementById('bCat');
+  for(let o of sel.options){if(o.value.startsWith(c.key+'|')){sel.value=o.value;break;}}
+  document.getElementById('bOp').value=c.op;
+  document.getElementById('bVal').value=c.val===true?'':c.val;
+  document.getElementById('bLabel').value=c.label||'';
+  if(c.key==='kdCross'){
+    document.getElementById('kdMin').value=c.kdMin??20;
+    document.getElementById('kdMax').value=c.kdMax??50;
+    document.getElementById('kdPer').value=c.kdPer??9;
+  }
+  onCatChange();
+  document.getElementById('builder').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function onCatChange(){
+  const [key]=document.getElementById('bCat').value.split('|');
+  const isKD=key==='kdCross';
+  document.getElementById('numRow').style.display=isKD?'none':'flex';
+  document.getElementById('kdp').classList.toggle('open',isKD);
+}
+function saveCondition(){
+  const [key,cat]=document.getElementById('bCat').value.split('|');
+  const isKD=key==='kdCross';
+  const customLabel=document.getElementById('bLabel').value.trim();
+  let obj={key,cat,op:'=',val:true,enabled:true};
+  if(isKD){
+    const mn=parseFloat(document.getElementById('kdMin').value)||0;
+    const mx=parseFloat(document.getElementById('kdMax').value)||100;
+    const pr=parseInt(document.getElementById('kdPer').value)||9;
+    obj={...obj,kdMin:mn,kdMax:mx,kdPer:pr,label:customLabel||`KD黃金交叉（K ${mn}~${mx}，${pr}日）`};
+  }else{
+    const op=document.getElementById('bOp').value;
+    const v=parseFloat(document.getElementById('bVal').value);
+    if(isNaN(v)){alert('請輸入數值！');return;}
+    const m=META[key];
+    const opT={'>':'> ','>=':'≥ ','<':'< ','<=':'≤ ','=':'= '}[op]||op;
+    obj={...obj,op,val:v,label:customLabel||`${m?m.name:key} ${opT}${v}${m?m.unit:''}`};
+  }
+  if(editId){const i=conds.findIndex(c=>c.id===editId);conds[i]={...conds[i],...obj};}
+  else conds.push({id:Date.now(),...obj});
+  closeBuilder();renderCList();resetResults();
+}
+
+function renderCList(){
+  const el=document.getElementById('clist');
+  const ac=conds.filter(c=>c.enabled).length;
+  document.getElementById('cbdg').textContent=`${ac}/${conds.length} 條件`;
+  if(!conds.length){el.innerHTML='<div class="ec">尚無條件，請新增或載入預設策略</div>';return;}
+  el.innerHTML=conds.map(c=>`
+    <div class="crow">
+      <button class="tog ${c.enabled?'on':'off'}" onclick="togCond(${c.id})"></button>
+      <span class="ctag ${CAT[c.cat]||'price'}">${CATL[c.cat]||c.cat}</span>
+      <span class="cl ${c.enabled?'':'off'}">${c.label}</span>
+      <div class="ca">
+        <button class="cact e" onclick="openEdit(${c.id})" title="編輯">✎</button>
+        <button class="cact d" onclick="delCond(${c.id})" title="刪除">✕</button>
+      </div>
+    </div>`).join('');
+}
+function togCond(id){const c=conds.find(x=>x.id===id);if(c){c.enabled=!c.enabled;renderCList();}}
+function delCond(id){conds=conds.filter(c=>c.id!==id);renderCList();resetResults();}
+function toggleAll(v){conds.forEach(c=>c.enabled=v);renderCList();}
+function clearAll(){if(!conds.length||!confirm('清除所有條件？'))return;conds=[];renderCList();resetResults();closeBuilder();}
+
+function saveStrat(){
+  const n=prompt('請輸入策略名稱：');if(!n)return;
+  const s=JSON.parse(localStorage.getItem('ts')||'{}');
+  s[n]=conds;localStorage.setItem('ts',JSON.stringify(s));
+  alert(`策略「${n}」已儲存！`);
+}
+function openLoad(){
+  const s=JSON.parse(localStorage.getItem('ts')||'{}');const ks=Object.keys(s);
+  document.getElementById('loadBody').innerHTML=ks.length?ks.map(k=>`
+    <div class="sr">
+      <div><div style="font-weight:600;font-size:.88rem;">${k}</div>
+      <div style="font-size:.71rem;color:var(--dim);margin-top:2px;">${s[k].length} 個條件</div></div>
+      <div style="display:flex;gap:7px;">
+        <button class="ib" onclick="applyStrat('${k}')">載入</button>
+        <button class="ib r" onclick="delStrat('${k}')">刪除</button>
+      </div>
+    </div>`).join('')
+    :'<p style="color:var(--dim);font-size:.84rem;padding:10px 0;">尚無儲存的策略。</p>';
+  document.getElementById('loadOv').classList.add('show');
+}
+function closeLoad(){document.getElementById('loadOv').classList.remove('show');}
+function applyStrat(n){
+  const s=JSON.parse(localStorage.getItem('ts')||'{}');
+  if(!s[n])return;
+  conds=s[n].map((c,i)=>({...c,id:Date.now()+i}));
+  renderCList();resetResults();closeLoad();
+}
+function delStrat(n){
+  if(!confirm(`刪除策略「${n}」？`))return;
+  const s=JSON.parse(localStorage.getItem('ts')||'{}');
+  delete s[n];localStorage.setItem('ts',JSON.stringify(s));openLoad();
+}
+
+function evalCond(s,c){
+  if(c.key==='kdCross'){
+    const mn=c.kdMin??0,mx=c.kdMax??100;
+    return s.kVal>s.dVal && s.prevK<=s.prevD && s.kVal>=mn && s.kVal<mx;
+  }
+  const v=s[c.key];
+  if(v===undefined||v===null)return false;
+  if(c.op==='>') return v>c.val;
+  if(c.op==='>=')return v>=c.val;
+  if(c.op==='<') return v<c.val;
+  if(c.op==='<=')return v<=c.val;
+  if(c.op==='=') return v===c.val;
+  return false;
+}
+
+async function run(){
+  const active=conds.filter(c=>c.enabled);
+  if(!active.length){alert('請至少新增一個篩選條件！');return;}
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true;btn.textContent='⏳ 抓取中...';
+  document.getElementById('loading').style.display='block';
+  document.getElementById('sg').innerHTML='';
+  document.getElementById('stats').style.display='none';
+  document.getElementById('disc').style.display='none';
+  document.getElementById('srvAlert').style.display='none';
+  setDot('wait','連線中...');
+  clearLog();setBar(5);
+  addLog('🔌 連線到本地後端伺服器...');
+
+  try{
+    addLog('📡 後端正在向 TWSE 抓取今日資料...');
+    setBar(20);
+    const resp=await fetch(`${API}/api/stocks`,{signal:AbortSignal.timeout(120000)});
+    if(!resp.ok) throw new Error(`後端回傳 HTTP ${resp.status}`);
+    setBar(70);
+    addLog('📊 解析資料並計算技術指標...');
+    const data=await resp.json();
+    if(data.error) throw new Error(data.error);
+
+    const stocks=data.stocks||[];
+    addLog(`✅ 取得 ${stocks.length} 支股票（資料時間：${data.time}）`);
+    setBar(85);
+    addLog('🔍 套用篩選條件...');
+
+    results=stocks.filter(s=>active.every(c=>evalCond(s,c)));
+    results.forEach(s=>{
+      s._score=Math.round(active.filter(c=>evalCond(s,c)).length/active.length*100);
+    });
+
+    setBar(100);
+    addLog(`🎯 篩選完成！符合：${results.length} 支股票`);
+    setDot('ok',`TWSE 即時 | ${new Date().toLocaleTimeString('zh-TW')}`);
+    document.getElementById('upd').textContent='更新 '+new Date().toLocaleTimeString('zh-TW');
+
+    setTimeout(()=>{
+      document.getElementById('loading').style.display='none';
+      renderResults();
+    },500);
+  }catch(err){
+    console.error(err);
+    addLog(`❌ 錯誤：${err.message}`);
+    setDot('err','連線失敗');
+    if(err.message.includes('fetch')||err.message.includes('timeout')){
+      document.getElementById('srvAlert').style.display='block';
+    }
+    document.getElementById('sg').innerHTML=`<div class="empty"><div class="ei">⚠️</div><p>${err.message}<br><br>請確認 <code>python server.py</code> 已執行</p></div>`;
+    document.getElementById('loading').style.display='none';
+  }
+  btn.disabled=false;btn.textContent='⚡ 重新篩選';
+}
+
+function setDot(c,t){
+  document.getElementById('dot').className='dot '+c;
+  document.getElementById('srcTxt').textContent=t;
+}
+function clearLog(){document.getElementById('ldLog').innerHTML='';}
+function addLog(m){
+  const el=document.getElementById('ldLog');
+  el.innerHTML+=`<div>${m}</div>`;
+  el.scrollTop=el.scrollHeight;
+}
+function setBar(p){document.getElementById('ldBar').style.width=p+'%';}
+
+function resetResults(){
+  results=[];
+  document.getElementById('sg').innerHTML='<div class="empty"><div class="ei">🔍</div><p>設定篩選條件後點擊「立即篩選」</p></div>';
+  document.getElementById('rCount').textContent='—';
+  document.getElementById('stats').style.display='none';
+  document.getElementById('disc').style.display='none';
+}
+function sortBy(m,btn){
+  sortMode=m;
+  document.querySelectorAll('.sbt').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  if(results.length)renderResults();
+}
+function renderResults(){
+  const s=[...results];
+  if(sortMode==='score')s.sort((a,b)=>b._score-a._score);
+  else if(sortMode==='chg')s.sort((a,b)=>b.chgPct-a.chgPct);
+  else if(sortMode==='vol')s.sort((a,b)=>b.todayVol-a.todayVol);
+  else if(sortMode==='price')s.sort((a,b)=>b.price-a.price);
+  document.getElementById('rCount').textContent=s.length;
+  if(!s.length){
+    document.getElementById('sg').innerHTML='<div class="empty"><div class="ei">😕</div><p>無符合條件的股票<br>請嘗試放寬篩選條件</p></div>';
+    return;
+  }
+  const avgC=(s.reduce((a,b)=>a+b.chgPct,0)/s.length).toFixed(2);
+  const avgS=Math.round(s.reduce((a,b)=>a+b._score,0)/s.length);
+  document.getElementById('stN').textContent=s.length;
+  document.getElementById('stC').textContent=(avgC>=0?'+':'')+avgC+'%';
+  document.getElementById('stS').textContent=avgS+'%';
+  document.getElementById('stats').style.display='grid';
+  document.getElementById('disc').style.display='block';
+  const C=2*Math.PI*17;
+  document.getElementById('sg').innerHTML=s.map((st,i)=>{
+    const up=st.chgPct>0,dn=st.chgPct<0;
+    const off=C-C*st._score/100;
+    const rc=st._score>=80?'#27d981':st._score>=60?'#f0b429':'#ff4d5e';
+    const pCls=up?'u':dn?'d':'z';
+    const spark=buildSpark(st.spark);
+    return `<div class="card" style="animation-delay:${i*.04}s">
+      <div class="scode">${st.code}</div>
+      <div class="si">
+        <div class="sn">${st.name}</div>
+        <div class="sm">
+          <span class="mt v">${Number(st.todayVol).toLocaleString()}張</span>
+          <span class="mt">K:${st.kVal} D:${st.dVal}</span>
+          <span class="mt live">📡 即時</span>
+        </div>
+      </div>
+      <svg width="84" height="34" viewBox="0 0 84 34">${spark}</svg>
+      <div class="px">
+        <div class="pv ${pCls}">${(+st.price).toFixed(2)}</div>
+        <div class="pc ${pCls}">${up?'+':''}${(+st.chgPct).toFixed(2)}%</div>
+      </div>
+      <div class="ring">
+        <svg width="42" height="42" viewBox="0 0 44 44" style="transform:rotate(-90deg)">
+          <circle cx="22" cy="22" r="17" fill="none" stroke="var(--s3)" stroke-width="3.5"/>
+          <circle cx="22" cy="22" r="17" fill="none" stroke="${rc}" stroke-width="3.5"
+            stroke-linecap="round" stroke-dasharray="${C.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}"/>
+        </svg>
+        <div class="rn">${st._score}%</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function buildSpark(pts){
+  if(!pts||pts.length<2)return'';
+  const arr=pts.map(Number).filter(n=>!isNaN(n));
+  if(arr.length<2)return'';
+  const w=84,h=34,mn=Math.min(...arr),mx=Math.max(...arr),rng=mx-mn||1;
+  const cs=arr.map((v,i)=>`${(i/(arr.length-1))*w},${h-((v-mn)/rng)*(h-4)-2}`);
+  const col=arr[arr.length-1]>=arr[0]?'#27d981':'#ff4d5e';
+  return `<polyline points="${cs.join(' ')}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>`;
+}
+
+// 啟動時檢查後端連線
+(async()=>{
+  try{
+    const r=await fetch(`${API}/api/health`,{signal:AbortSignal.timeout(3000)});
+    if(r.ok){setDot('ok','後端已連線');document.getElementById('srvAlert').style.display='none';}
+  }catch{
+    setDot('err','後端未啟動');
+    document.getElementById('srvAlert').style.display='block';
+  }
+})();
+
+renderCList();
+
+function goBacktest(){
+  if(!conds.length){alert("請先設定篩選條件再前往回測！");return;}
+  localStorage.setItem("bt_conditions",JSON.stringify(conds));
+  window.location.href="backtest.html";
+}
+</script>
+</body>
+</html>
