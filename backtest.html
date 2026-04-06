@@ -345,6 +345,31 @@ tr:hover td{background:rgba(255,255,255,.015);}
           </div>
         </div>
 
+        <!-- 融資設定 -->
+        <div style="background:var(--s2);border-radius:9px;padding:12px;border:1px solid rgba(255,180,0,.2);">
+          <div class="sell-row" style="margin-bottom:8px;">
+            <input type="checkbox" id="useMargin" style="accent-color:#f0b429;">
+            <label for="useMargin" style="font-weight:600;font-size:.84rem;color:var(--gold);">💰 融資回測</label>
+          </div>
+          <div style="font-size:.73rem;color:var(--dim);margin-bottom:10px;line-height:1.6;">
+            放大投資倍數（融資利率約年利 6.35%），損益同步放大，風險提高
+          </div>
+          <div style="padding-left:23px;display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="ivb" id="mg1" onclick="setMargin(1.0)" style="border-color:var(--bd);">不融資</button>
+            <button class="ivb" id="mg16" onclick="setMargin(1.6)">融資 6 成<br><span style="font-size:.65rem;color:var(--dim);">自備 4 成</span></button>
+            <button class="ivb" id="mg17" onclick="setMargin(1.7)">融資 7 成<br><span style="font-size:.65rem;color:var(--dim);">自備 3 成</span></button>
+            <button class="ivb" id="mg20" onclick="setMargin(2.0)">融資全額<br><span style="font-size:.65rem;color:var(--dim);">自備 5 成</span></button>
+          </div>
+          <div style="padding-left:23px;margin-top:8px;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:.75rem;color:var(--dim);">自訂倍數：</span>
+            <input class="fi" type="number" id="marginRatio" value="1.0" min="1" max="3" step="0.1" style="width:70px;padding:5px 8px;">
+            <span style="font-size:.73rem;color:var(--dim);">x（1=不融資）</span>
+          </div>
+          <div style="margin-top:8px;padding:6px 10px;background:rgba(255,77,94,.07);border-radius:6px;font-size:.71rem;color:var(--red);padding-left:23px;">
+            ⚠️ 融資有斷頭風險，僅供回測分析，不構成投資建議
+          </div>
+        </div>
+
       </div>
     </div>
 
@@ -479,6 +504,16 @@ function setAtrMult(v) {
   document.getElementById('atrMultiplier').value = v;
 }
 
+function setMargin(v) {
+  ['mg1','mg16','mg17','mg20'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const mv = parseFloat(el.getAttribute('onclick').match(/[\d.]+/)[0]);
+    el.classList.toggle('active', mv === v);
+  });
+  document.getElementById('marginRatio').value = v;
+}
+
 // 同步自訂輸入
 document.addEventListener('DOMContentLoaded', () => {
   const customInput = document.getElementById('maCustomVal');
@@ -516,6 +551,7 @@ function getSellParams() {
   const useMf = document.getElementById('useMarketFilter')?.checked || false;
   const useAt = document.getElementById('useAtrStop')?.checked || false;
   const usePa = document.getElementById('usePartial')?.checked || false;
+  const useMg = document.getElementById('useMargin')?.checked || false;
 
   let trailing_stop = 0;
   if (useTs) {
@@ -536,6 +572,7 @@ function getSellParams() {
     atr_multiplier:    parseFloat(document.getElementById('atrMultiplier')?.value||'2.0'),
     partial_exit_pct:  usePa ? parseFloat(document.getElementById('partialPct').value)||0  : 0,
     partial_exit_ratio:usePa ? parseInt(document.getElementById('partialRatio').value)||50 : 50,
+    margin_ratio:      useMg ? parseFloat(document.getElementById('marginRatio')?.value||'1.0') : 1.0,
   };
 }
 
@@ -699,7 +736,10 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 // ── 統計卡（單股）─────────────────────────────────
 function renderStats(s, data) {
   const pnl = s.total_pnl ?? s.total_return ?? 0;
+  const raw = s.total_pnl_raw ?? pnl;
   const cls  = pnl >= 0 ? 'up' : 'dn';
+  const margin = s.margin_ratio || 1;
+  const marginLabel = margin > 1 ? `（融資 ${margin}x）` : '';
   document.getElementById('statsGrid').innerHTML = `
     <div class="sc"><div class="sc-label">總交易次數</div>
       <div class="sc-val">${s.total_trades}</div>
@@ -707,9 +747,9 @@ function renderStats(s, data) {
     <div class="sc"><div class="sc-label">勝率</div>
       <div class="sc-val ${cls}">${s.win_rate}%</div>
       <div class="sc-sub">平均獲利 +${s.avg_win}% / 平均虧損 ${s.avg_loss}%</div></div>
-    <div class="sc"><div class="sc-label">累積報酬</div>
+    <div class="sc"><div class="sc-label">累積報酬${marginLabel}</div>
       <div class="sc-val ${cls}">${pnl>=0?'+':''}${pnl}%</div>
-      <div class="sc-sub">${data.start_date} ~ ${data.end_date}</div></div>
+      <div class="sc-sub">${margin>1 ? `未融資: ${raw>=0?'+':''}${raw}%` : `${data.start_date} ~ ${data.end_date}`}</div></div>
     <div class="sc"><div class="sc-label">最大回撤</div>
       <div class="sc-val dn">-${s.max_drawdown}%</div>
       <div class="sc-sub">期間最大虧損幅度</div></div>`;

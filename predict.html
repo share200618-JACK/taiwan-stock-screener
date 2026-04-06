@@ -249,17 +249,20 @@ async function runPredict() {
   document.getElementById('progWrap').style.display='block';
   document.getElementById('emptyState').style.display='none';
   document.getElementById('results').style.display='none';
-  setProgress(5, '抓取歷史資料...');
+  setProgress(5, '啟動預測任務...');
 
   try {
+    // 啟動背景任務
     const resp = await fetch(`${API}/api/predict`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ code, train_years:trainYears, predict_days:predDays, threshold }),
-      signal: AbortSignal.timeout(180000),
     });
-    const data = await resp.json();
-    if (data.error) throw new Error(data.error);
+    const { task_id, error } = await resp.json();
+    if (error) throw new Error(error);
+
+    // 輪詢進度
+    const data = await pollPredictProgress(task_id);
 
     setProgress(100, '完成！');
     setTimeout(()=>{
@@ -273,6 +276,18 @@ async function runPredict() {
     document.getElementById('emptyState').innerHTML=`<div class="ei">⚠️</div><p>${err.message}</p>`;
   }
   btn.disabled=false; btn.textContent='🤖 開始訓練並預測';
+}
+
+async function pollPredictProgress(taskId) {
+  while (true) {
+    await new Promise(r => setTimeout(r, 1500));
+    const r    = await fetch(`${API}/api/predict/progress/${taskId}`);
+    const prog = await r.json();
+    if (prog.error) throw new Error(prog.error);
+    setProgress(prog.pct, prog.msg);
+    if (prog.done && prog.result) return prog.result;
+    if (prog.done && !prog.result) throw new Error('預測失敗，請重試');
+  }
 }
 
 function setProgress(pct, msg) {
