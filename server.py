@@ -1274,7 +1274,6 @@ def get_portfolio():
     stocks = load_portfolio()
     preds  = load_daily_preds()
     today  = datetime.now().strftime("%Y-%m-%d")
-    # 附上最新預測結果和即時股價
     try:
         url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         resp = SESSION.get(url, timeout=10)
@@ -1290,26 +1289,58 @@ def get_portfolio():
 
     result = []
     for s in stocks:
-        code     = s["code"]
-        live     = price_map.get(code, {})
-        cur_price= live.get("price", s.get("cost", 0))
-        cost     = s.get("cost", 0)
-        qty      = s.get("qty", 1)
-        pnl_pct  = round((cur_price-cost)/cost*100, 2) if cost>0 else 0
-        pnl_amt  = round((cur_price-cost)*qty*1000, 0)
+        code       = s["code"]
+        live       = price_map.get(code, {})
+        cur_price  = live.get("price", s.get("cost", 0))
+        cost       = s.get("cost", 0)
+        qty        = s.get("qty", 1)
+        margin     = s.get("margin", 1.0)   # 融資倍數
+        buy_date   = s.get("buy_date", s.get("added",""))
 
-        # 今日預測
+        # 台股手續費 + 交易稅
+        fee_rate   = 0.001425   # 買賣各 0.1425%（打折後通常 0.001425）
+        tax_rate   = 0.003      # 賣出交易稅 0.3%（ETF 為 0.1%）
+        buy_fee    = round(cost * qty * 1000 * fee_rate)
+        sell_fee   = round(cur_price * qty * 1000 * fee_rate)
+        sell_tax   = round(cur_price * qty * 1000 * tax_rate)
+        total_cost = cost * qty * 1000 + buy_fee  # 實際買入成本含手續費
+
+        # 融資利息（年率 6.35%，按持有天數計算）
+        margin_interest = 0
+        if margin > 1 and buy_date:
+            try:
+                bd   = datetime.strptime(buy_date, "%Y-%m-%d")
+                days = (datetime.today() - bd).days
+                margin_interest = round(cost * qty * 1000 * (margin-1) * 0.0635 / 365 * days)
+            except: pass
+
+        # 實際損益（含手續費、稅、融資利息）
+        gross_pnl  = (cur_price - cost) * qty * 1000
+        net_pnl    = gross_pnl - buy_fee - sell_fee - sell_tax - margin_interest
+        # 融資放大後的損益（只有自備款的部分計算報酬率）
+        self_ratio = 1 / margin if margin > 0 else 1
+        self_cost  = total_cost * self_ratio
+        net_pnl_pct= round(net_pnl / self_cost * 100, 2) if self_cost > 0 else 0
+        gross_pnl_pct = round((cur_price-cost)/cost*100, 2) if cost>0 else 0
+
         pred_today = preds.get(today, {}).get(code)
 
         result.append({
             **s,
-            "cur_price": cur_price,
-            "chg":       live.get("chg", 0),
-            "chg_pct":   round(live.get("chg",0)/cur_price*100,2) if cur_price>0 else 0,
-            "pnl_pct":   pnl_pct,
-            "pnl_amt":   int(pnl_amt),
-            "pred_today":pred_today,
-            "last_update": preds.get("_updated","—"),
+            "cur_price":       cur_price,
+            "chg":             live.get("chg", 0),
+            "chg_pct":         round(live.get("chg",0)/cur_price*100,2) if cur_price>0 else 0,
+            "pnl_pct":         gross_pnl_pct,
+            "net_pnl_pct":     net_pnl_pct,
+            "pnl_amt":         int(gross_pnl),
+            "net_pnl_amt":     int(net_pnl),
+            "buy_fee":         buy_fee,
+            "sell_fee":        sell_fee,
+            "sell_tax":        sell_tax,
+            "margin_interest": margin_interest,
+            "total_fee":       buy_fee + sell_fee + sell_tax + margin_interest,
+            "pred_today":      pred_today,
+            "last_update":     preds.get("_updated","—"),
         })
     return jsonify({"stocks": result, "today": today})
 
@@ -1318,17 +1349,18 @@ def add_portfolio():
     body  = request.get_json()
     code  = body.get("code","").strip()
     if not code: return jsonify({"error":"請填入股票代號"}), 400
-    # 取名稱
-    name = body.get("name", code)
+    name   = body.get("name", code)
     stocks = load_portfolio()
-    stocks = [s for s in stocks if s["code"] != code]  # 去重
+    stocks = [s for s in stocks if s["code"] != code]
     stocks.append({
-        "code": code,
-        "name": name,
-        "cost": float(body.get("cost", 0)),
-        "qty":  int(body.get("qty", 1)),
-        "group": int(body.get("group", 0)),
-        "added": datetime.now().strftime("%Y-%m-%d"),
+        "code":     code,
+        "name":     name,
+        "cost":     float(body.get("cost", 0)),
+        "qty":      int(body.get("qty", 1)),
+        "group":    int(body.get("group", 0)),
+        "margin":   float(body.get("margin", 1.0)),
+        "buy_date": body.get("buy_date", datetime.now().strftime("%Y-%m-%d")),
+        "added":    datetime.now().strftime("%Y-%m-%d"),
     })
     save_portfolio(stocks)
     return jsonify({"ok": True, "count": len(stocks)})
@@ -1339,6 +1371,190 @@ def del_portfolio(code):
     stocks = [s for s in stocks if s["code"] != code]
     save_portfolio(stocks)
     return jsonify({"ok": True})
+
+# ── 賣出持股 → 自動存歷史紀錄 ──────────────────────────
+
+HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trade_history.json")
+
+def load_history():
+    if not os.path.exists(HISTORY_FILE): return []
+    try:
+        with open(HISTORY_FILE, encoding="utf-8") as f: return json.load(f)
+    except: return []
+
+def save_history(data):
+    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+@app.route("/api/portfolio/sell", methods=["POST"])
+def sell_stock():
+    """賣出持股，自動計算損益（含稅費）並存入歷史紀錄"""
+    body       = request.get_json()
+    code       = body.get("code","").strip()
+    sell_price = float(body.get("sell_price", 0))
+    sell_date  = body.get("sell_date", datetime.now().strftime("%Y-%m-%d"))
+    if not code or sell_price <= 0:
+        return jsonify({"error":"請填入股票代號與賣出價格"}), 400
+
+    stocks = load_portfolio()
+    stock  = next((s for s in stocks if s["code"] == code), None)
+    if not stock:
+        return jsonify({"error": f"持股中找不到 {code}"}), 404
+
+    cost     = stock.get("cost", 0)
+    qty      = stock.get("qty", 1)
+    margin   = stock.get("margin", 1.0)
+    buy_date = stock.get("buy_date", stock.get("added",""))
+    name     = stock.get("name", code)
+
+    fee_rate = 0.001425
+    tax_rate = 0.003
+    buy_fee  = round(cost * qty * 1000 * fee_rate)
+    sell_fee = round(sell_price * qty * 1000 * fee_rate)
+    sell_tax = round(sell_price * qty * 1000 * tax_rate)
+
+    # 融資利息
+    margin_interest = 0
+    if margin > 1 and buy_date:
+        try:
+            bd   = datetime.strptime(buy_date, "%Y-%m-%d")
+            sd   = datetime.strptime(sell_date, "%Y-%m-%d")
+            days = max((sd - bd).days, 0)
+            margin_interest = round(cost * qty * 1000 * (margin-1) * 0.0635 / 365 * days)
+        except: pass
+
+    gross_pnl    = (sell_price - cost) * qty * 1000
+    total_fee    = buy_fee + sell_fee + sell_tax + margin_interest
+    net_pnl      = gross_pnl - total_fee
+    hold_days    = 0
+    if buy_date:
+        try:
+            bd = datetime.strptime(buy_date, "%Y-%m-%d")
+            sd = datetime.strptime(sell_date, "%Y-%m-%d")
+            hold_days = max((sd-bd).days, 0)
+        except: pass
+
+    self_cost    = cost * qty * 1000 / margin if margin > 0 else cost * qty * 1000
+    net_pnl_pct  = round(net_pnl / self_cost * 100, 2) if self_cost > 0 else 0
+    gross_pnl_pct= round((sell_price-cost)/cost*100, 2) if cost > 0 else 0
+
+    # 存入歷史紀錄
+    record = {
+        "code":        code,
+        "name":        name,
+        "group":       stock.get("group", 0),
+        "buy_date":    buy_date,
+        "sell_date":   sell_date,
+        "buy_price":   cost,
+        "sell_price":  sell_price,
+        "qty":         qty,
+        "margin":      margin,
+        "buy_fee":     buy_fee,
+        "sell_fee":    sell_fee,
+        "sell_tax":    sell_tax,
+        "margin_interest": margin_interest,
+        "total_fee":   total_fee,
+        "gross_pnl":   int(gross_pnl),
+        "net_pnl":     int(net_pnl),
+        "gross_pnl_pct": gross_pnl_pct,
+        "net_pnl_pct": net_pnl_pct,
+        "hold_days":   hold_days,
+        "result":      "獲利" if net_pnl > 0 else "虧損",
+    }
+    history = load_history()
+    history.insert(0, record)
+    save_history(history)
+
+    # 從持股清單移除
+    stocks = [s for s in stocks if s["code"] != code]
+    save_portfolio(stocks)
+
+    return jsonify({"ok": True, "record": record})
+
+@app.route("/api/portfolio/history", methods=["GET"])
+def get_history():
+    return jsonify(load_history())
+
+@app.route("/api/portfolio/analysis", methods=["GET"])
+def get_analysis():
+    """分析歷史交易，找出需要加強的地方"""
+    history = load_history()
+    if not history:
+        return jsonify({"error": "尚無歷史紀錄"}), 404
+
+    wins   = [h for h in history if h["net_pnl"] > 0]
+    losses = [h for h in history if h["net_pnl"] <= 0]
+    total  = len(history)
+
+    win_rate     = round(len(wins)/total*100, 1)
+    avg_win_pct  = round(sum(h["net_pnl_pct"] for h in wins)/len(wins), 2)    if wins   else 0
+    avg_loss_pct = round(sum(h["net_pnl_pct"] for h in losses)/len(losses), 2) if losses else 0
+    profit_factor= round(abs(avg_win_pct / avg_loss_pct), 2) if avg_loss_pct != 0 else 0
+    avg_hold     = round(sum(h["hold_days"] for h in history)/total, 1)
+    total_net    = sum(h["net_pnl"] for h in history)
+    total_fee    = sum(h["total_fee"] for h in history)
+
+    # 各群組分析
+    group_stats = {}
+    for h in history:
+        g = h.get("group", 0)
+        if g not in group_stats:
+            group_stats[g] = {"wins":0,"losses":0,"pnl":0}
+        if h["net_pnl"] > 0: group_stats[g]["wins"] += 1
+        else: group_stats[g]["losses"] += 1
+        group_stats[g]["pnl"] += h["net_pnl"]
+
+    # 最佳/最差交易
+    best  = max(history, key=lambda x: x["net_pnl_pct"])
+    worst = min(history, key=lambda x: x["net_pnl_pct"])
+
+    # 快速出場（3日內）vs 長期持有
+    quick = [h for h in history if h["hold_days"] <= 3]
+    long_ = [h for h in history if h["hold_days"] > 20]
+    quick_wr = round(len([h for h in quick if h["net_pnl"]>0])/len(quick)*100,1) if quick else 0
+    long_wr  = round(len([h for h in long_ if h["net_pnl"]>0])/len(long_)*100,1) if long_ else 0
+
+    # 產生建議
+    suggestions = []
+    if win_rate < 50:
+        suggestions.append({"type":"warning","title":"勝率偏低",
+            "desc":f"目前勝率 {win_rate}%，低於 50%。建議收緊進場條件，只在多個指標同時確認時才買入。"})
+    if profit_factor < 1.5:
+        suggestions.append({"type":"warning","title":"賺少賠多",
+            "desc":f"平均獲利 {avg_win_pct}% vs 平均虧損 {avg_loss_pct}%，獲利因子 {profit_factor}。建議拉寬停利或縮緊停損。"})
+    if total_fee > abs(total_net) * 0.2:
+        suggestions.append({"type":"info","title":"手續費比重偏高",
+            "desc":f"總手續費 {total_fee:,} 元，佔損益比重偏高。建議減少短線頻繁交易，或選擇有折扣的券商。"})
+    if quick and quick_wr < 40:
+        suggestions.append({"type":"warning","title":"短線成效差",
+            "desc":f"持有 3 日內的交易勝率僅 {quick_wr}%。建議避免過度短線操作，給予足夠持有時間。"})
+    if long_ and long_wr > 70:
+        suggestions.append({"type":"success","title":"長期持有表現佳",
+            "desc":f"持有 20 日以上的交易勝率達 {long_wr}%，建議增加長期持有比例。"})
+    if avg_loss_pct < -10:
+        suggestions.append({"type":"danger","title":"虧損單平均跌幅過大",
+            "desc":f"平均虧損達 {avg_loss_pct}%，停損執行不夠確實。建議設定嚴格停損（5~8%），到點就出。"})
+    if not suggestions:
+        suggestions.append({"type":"success","title":"整體表現不錯",
+            "desc":f"勝率 {win_rate}%，獲利因子 {profit_factor}，繼續保持紀律！"})
+
+    return jsonify({
+        "total":         total,
+        "win_rate":      win_rate,
+        "avg_win_pct":   avg_win_pct,
+        "avg_loss_pct":  avg_loss_pct,
+        "profit_factor": profit_factor,
+        "avg_hold_days": avg_hold,
+        "total_net_pnl": int(total_net),
+        "total_fee":     int(total_fee),
+        "best_trade":    best,
+        "worst_trade":   worst,
+        "quick_win_rate":quick_wr,
+        "long_win_rate": long_wr,
+        "group_stats":   group_stats,
+        "suggestions":   suggestions,
+        "history":       history[:50],
+    })
 
 @app.route("/api/portfolio/tg", methods=["GET"])
 def get_tg_settings():
