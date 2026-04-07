@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>台股回測系統</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background:
+  radial-gradient(ellipse 55% 40% at 10% 0%,rgba(240,180,41,.06) 0%,transparent 60%),
+  radial-gradient(ellipse 45% 55% at 90% 100%,rgba(61,139,255,.05) 0%,transparent 60%);
+  pointer-events:none;z-index:0;}
+.w{max-width:1400px;margin:0 auto;padding:0 24px 40px;position:relative;z-index:1;}
+
+/* header */
+header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.logo{display:flex;align-items:center;gap:11px;}
+.li{width:34px;height:34px;background:linear-gradient(135deg,var(--gold),var(--gold2));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 0 16px rgba(240,180,41,.35);}
+.logo h1{font-size:1.2rem;font-weight:700;}
+.logo h1 span{color:var(--gold);}
+.back-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.82rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;text-decoration:none;display:flex;align-items:center;gap:5px;transition:all .15s;}
+.back-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+/* settings panel */
+.settings{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:20px;margin-bottom:22px;}
+.settings-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;align-items:end;}
+.fg{display:flex;flex-direction:column;gap:6px;}
+.fl{font-size:.74rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;}
+.fi,.fs{padding:9px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'Noto Sans TC',sans-serif;font-size:.85rem;transition:border-color .15s;width:100%;}
+.fi:focus,.fs:focus{outline:none;border-color:var(--gold);}
+select.fs option{background:var(--s2);}
+.sell-opts{grid-column:1/-1;background:var(--s2);border-radius:10px;padding:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;border:1px solid var(--bd);}
+.sell-opts .fl{color:var(--gold);font-size:.75rem;margin-bottom:4px;}
+.sell-row{display:flex;align-items:center;gap:8px;}
+.sell-row input[type=checkbox]{width:15px;height:15px;accent-color:var(--gold);cursor:pointer;}
+.sell-row label{font-size:.82rem;cursor:pointer;}
+.sell-sub{display:flex;align-items:center;gap:6px;margin-top:6px;padding-left:23px;}
+.sell-sub label{font-size:.76rem;color:var(--dim);}
+.sell-sub .fi{width:80px;padding:6px 9px;}
+
+.cond-preview{grid-column:1/-1;background:var(--s3);border-radius:9px;padding:12px 14px;font-size:.78rem;color:var(--dim);border:1px solid var(--bd);}
+.cond-preview strong{color:var(--txt);}
+.cond-chip{display:inline-block;padding:2px 9px;border-radius:12px;background:rgba(240,180,41,.12);border:1px solid rgba(240,180,41,.25);color:var(--gold);font-size:.72rem;margin:2px;}
+
+.run-btn{padding:11px 28px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--gold),#e8a800);color:#000;font-family:'Noto Sans TC',sans-serif;font-size:.92rem;font-weight:700;cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(240,180,41,.28);white-space:nowrap;}
+.run-btn:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(240,180,41,.42);}
+.run-btn:disabled{opacity:.6;cursor:not-allowed;transform:none;}
+
+/* stats cards */
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;}
+@media(max-width:700px){.stats-grid{grid-template-columns:repeat(2,1fr);}}
+.sc{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;}
+.sc-label{font-size:.7rem;color:var(--dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em;}
+.sc-val{font-family:'JetBrains Mono',monospace;font-size:1.5rem;font-weight:700;color:var(--gold);}
+.sc-val.up{color:var(--red);}
+.sc-val.dn{color:var(--grn);}
+.sc-sub{font-size:.72rem;color:var(--dim);margin-top:3px;}
+
+/* chart area */
+.chart-wrap{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:16px;}
+.chart-title{font-size:.82rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;}
+.chart-legend{display:flex;gap:14px;font-size:.72rem;}
+.leg-item{display:flex;align-items:center;gap:5px;}
+.leg-dot{width:10px;height:10px;border-radius:2px;}
+canvas{max-height:360px;}
+
+/* trades table */
+.trades-wrap{background:var(--s1);border:1px solid var(--bd);border-radius:14px;overflow:hidden;margin-bottom:16px;}
+.tw-hd{padding:14px 18px;border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;}
+.tw-title{font-size:.82rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;}
+table{width:100%;border-collapse:collapse;}
+thead tr{background:var(--s2);}
+th{padding:10px 16px;text-align:left;font-size:.72rem;color:var(--dim);font-weight:700;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;}
+td{padding:11px 16px;font-size:.82rem;border-bottom:1px solid rgba(255,255,255,.03);}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:rgba(255,255,255,.015);}
+.pnl-up{color:var(--red);font-weight:600;font-family:'JetBrains Mono',monospace;}
+.pnl-dn{color:var(--grn);font-weight:600;font-family:'JetBrains Mono',monospace;}
+.mono{font-family:'JetBrains Mono',monospace;}
+.reason-tag{padding:2px 8px;border-radius:4px;font-size:.69rem;font-weight:600;}
+.reason-tp{background:rgba(255,77,94,.12);color:var(--red);border:1px solid rgba(255,77,94,.25);}
+.reason-sl{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
+.reason-hd{background:rgba(61,139,255,.12);color:var(--blu);border:1px solid rgba(61,139,255,.25);}
+.reason-fc{background:rgba(168,85,247,.12);color:var(--pur);border:1px solid rgba(168,85,247,.25);}
+.reason-ts{background:rgba(240,180,41,.12);color:var(--gold);border:1px solid rgba(240,180,41,.25);}
+.reason-ma{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
+.reason-pa{background:rgba(61,139,255,.12);color:var(--blu);border:1px solid rgba(61,139,255,.25);}
+
+/* mode buttons */
+.mode-btn{padding:9px 20px;border-radius:9px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.88rem;font-weight:500;cursor:pointer;transition:all .18s;}
+.mode-btn:hover{border-color:var(--gold);color:var(--gold);}
+.mode-btn.active{background:rgba(240,180,41,.12);border-color:var(--gold);color:var(--gold);font-weight:700;}
+
+/* market progress */
+.mkt-progress{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:14px;display:none;}
+.mkt-prog-hd{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
+.mkt-prog-bar-wrap{height:6px;background:var(--bd);border-radius:3px;overflow:hidden;margin-bottom:8px;}
+.mkt-prog-bar{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2));border-radius:3px;transition:width .5s ease;width:0;}
+.mkt-prog-msg{font-size:.78rem;color:var(--dim);}
+
+/* market trades table extra column */
+.code-tag{font-family:'JetBrains Mono',monospace;font-size:.78rem;background:var(--s2);border:1px solid var(--bd);padding:2px 7px;border-radius:5px;color:var(--txt);}
+
+/* loading */
+.loading{display:none;text-align:center;padding:60px;color:var(--dim);}
+.spinner{width:32px;height:32px;border:3px solid var(--bd);border-top-color:var(--gold);border-radius:50%;animation:sp .8s linear infinite;margin:0 auto 14px;}
+@keyframes sp{to{transform:rotate(360deg);}}
+
+/* empty */
+.empty{text-align:center;padding:60px;color:var(--dim);}
+.ei{font-size:3rem;margin-bottom:12px;opacity:.4;}
+
+/* equity chart */
+.charts-row{display:grid;grid-template-columns:2fr 1fr;gap:14px;margin-bottom:16px;}
+@media(max-width:900px){.charts-row{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div class="w">
+<header>
+  <div class="logo">
+    <div class="li">📊</div>
+    <h1>台股<span>回測</span>系統</h1>
+  </div>
+  <a class="back-btn" href="predict.html">🤖 AI 預測</a>
+  <a class="back-btn" href="index.html">← 回到選股</a>
+</header>
+
+<!-- 設定區 -->
+<div class="settings">
+
+  <!-- 模式切換 -->
+  <div style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--bd);padding-bottom:16px;">
+    <button class="mode-btn active" id="modeSingle" onclick="setMode('single')">📈 單股回測</button>
+    <button class="mode-btn" id="modeMarket" onclick="setMode('market')">🌏 全市場自動選股回測</button>
+  </div>
+
+  <div class="settings-grid">
+    <!-- 單股模式：股票代號 -->
+    <div class="fg" id="codeGroup">
+      <label class="fl">股票代號</label>
+      <input class="fi" type="text" id="code" placeholder="例：2330" maxlength="6">
+    </div>
+
+    <!-- 全市場模式：同時持有上限 + 掃描股數 -->
+    <div class="fg" id="maxPosGroup" style="display:none">
+      <label class="fl">最多同時持有</label>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input class="fi" type="number" id="maxPos" value="5" min="1" max="20" style="width:80px">
+        <span style="font-size:.8rem;color:var(--dim)">檔（資金平均分配）</span>
+      </div>
+    </div>
+    <div class="fg" id="maxStocksGroup" style="display:none">
+      <label class="fl">掃描股票數量</label>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;">
+        <button class="ivb" onclick="setMaxStocks(100)">100 支</button>
+        <button class="ivb" onclick="setMaxStocks(300)">300 支</button>
+        <button class="ivb" onclick="setMaxStocks(500)">500 支</button>
+        <button class="ivb active" onclick="setMaxStocks(9999)">全部上市</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input class="fi" type="number" id="maxStocks" value="9999" min="10" max="9999" step="10" style="width:90px">
+        <span style="font-size:.75rem;color:var(--dim)">支（越多越慢，全部約 30~60 分鐘）</span>
+      </div>
+    </div>
+
+    <!-- 起始日期 -->
+    <div class="fg">
+      <label class="fl">起始日期</label>
+      <input class="fi" type="date" id="startDate">
+    </div>
+    <!-- 結束日期 -->
+    <div class="fg">
+      <label class="fl">結束日期</label>
+      <input class="fi" type="date" id="endDate">
+    </div>
+
+    <!-- 賣出條件 -->
+    <div class="sell-opts">
+      <div class="fl">賣出條件（可多選）</div>
+
+      <div>
+        <div class="sell-row">
+          <input type="checkbox" id="useTp" checked>
+          <label for="useTp">停利賣出</label>
+        </div>
+        <div class="sell-sub">
+          <label>漲幅達</label>
+          <input class="fi" type="number" id="tpVal" value="10" min="1" max="100">
+          <label>% 賣出</label>
+        </div>
+      </div>
+
+      <div>
+        <div class="sell-row">
+          <input type="checkbox" id="useSl" checked>
+          <label for="useSl">停損賣出</label>
+        </div>
+        <div class="sell-sub">
+          <label>跌幅達</label>
+          <input class="fi" type="number" id="slVal" value="5" min="1" max="100">
+          <label>% 賣出</label>
+        </div>
+      </div>
+
+      <div>
+        <div class="sell-row">
+          <input type="checkbox" id="useHd">
+          <label for="useHd">持有天數賣出</label>
+        </div>
+        <div class="sell-sub">
+          <label>持有</label>
+          <input class="fi" type="number" id="hdVal" value="20" min="1" max="365">
+          <label>個交易日後賣出</label>
+        </div>
+      </div>
+
+      <div style="grid-column:1/-1;border-top:1px solid var(--bd);padding-top:12px;margin-top:4px;">
+        <div class="sell-row" style="margin-bottom:8px;">
+          <input type="checkbox" id="useTs">
+          <label for="useTs" style="font-weight:600;color:var(--gold);">📌 追蹤高點回落賣出（Trailing Stop）</label>
+        </div>
+        <div style="padding-left:23px;font-size:.76rem;color:var(--dim);margin-bottom:10px;line-height:1.6;">
+          買入後持續追蹤最高點，當股價從最高點回落達設定幅度時賣出。
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;padding-left:23px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="tsMode" id="tsMode5" value="5" checked style="accent-color:var(--gold)">
+            <label for="tsMode5" style="font-size:.82rem;">從最高點回落 <strong style="color:var(--gold)">5%</strong></label>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="tsMode" id="tsMode10" value="10" style="accent-color:var(--gold)">
+            <label for="tsMode10" style="font-size:.82rem;">從最高點回落 <strong style="color:var(--gold)">10%</strong></label>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="radio" name="tsMode" id="tsModeCustom" value="custom" style="accent-color:var(--gold)">
+            <label for="tsModeCustom" style="font-size:.82rem;">自訂</label>
+            <input class="fi" type="number" id="tsCustomVal" value="7" min="1" max="50" style="width:65px;padding:5px 8px;">
+            <label style="font-size:.82rem;">%</label>
+          </div>
+        </div>
+      </div>
+
+      <!-- 跌破均線賣出 -->
+      <div style="grid-column:1/-1;border-top:1px solid var(--bd);padding-top:12px;margin-top:4px;">
+        <div class="sell-row" style="margin-bottom:10px;">
+          <input type="checkbox" id="useMa">
+          <label for="useMa" style="font-weight:600;color:var(--grn);">📉 跌破均線賣出</label>
+        </div>
+        <div style="padding-left:23px;">
+          <div style="font-size:.76rem;color:var(--dim);margin-bottom:10px;line-height:1.6;">
+            當收盤價跌破所選均線時賣出，均線可自由選擇或自訂天數。
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <span style="font-size:.78rem;color:var(--dim);">均線週期：</span>
+            <button class="ivb" id="ma5btn"  onclick="setMaPeriod(5)"  >MA5</button>
+            <button class="ivb" id="ma10btn" onclick="setMaPeriod(10)" >MA10</button>
+            <button class="ivb active" id="ma20btn" onclick="setMaPeriod(20)">MA20</button>
+            <button class="ivb" id="ma60btn" onclick="setMaPeriod(60)" >MA60</button>
+            <div style="display:flex;align-items:center;gap:5px;">
+              <button class="ivb" id="maCustomBtn" onclick="setMaPeriod('custom')">自訂</button>
+              <input class="fi" type="number" id="maCustomVal" value="30" min="3" max="250" style="width:65px;padding:5px 8px;">
+              <span style="font-size:.78rem;color:var(--dim);">日</span>
+            </div>
+          </div>
+          <input type="hidden" id="maPeriod" value="20">
+        </div>
+      </div>
+    </div>
+
+    <!-- 買入條件預覽 -->
+    <div class="cond-preview" id="condPreview">
+      <strong>買入條件：</strong> 尚未設定，請先在<a href="index.html" style="color:var(--gold)">選股頁面</a>設定條件
+    </div>
+
+    <!-- 策略優化 -->
+    <div style="grid-column:1/-1;background:rgba(168,85,247,.06);border:1px solid rgba(168,85,247,.2);border-radius:11px;padding:16px;">
+      <div style="font-size:.76rem;font-weight:700;color:#a855f7;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;">
+        ⚡ 策略優化（提升報酬率）
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+
+        <!-- 大盤過濾 -->
+        <div style="background:var(--s2);border-radius:9px;padding:12px;border:1px solid var(--bd);">
+          <div class="sell-row" style="margin-bottom:8px;">
+            <input type="checkbox" id="useMarketFilter" style="accent-color:#a855f7;">
+            <label for="useMarketFilter" style="font-weight:600;font-size:.84rem;">🏦 大盤環境過濾</label>
+          </div>
+          <div style="font-size:.73rem;color:var(--dim);margin-bottom:8px;line-height:1.6;">
+            大盤在均線之下不買入，空頭市場自動停止進場
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;padding-left:23px;">
+            <span style="font-size:.76rem;color:var(--dim);">均線：</span>
+            <button class="ivb" id="mktMa20" onclick="setMarketMa(20)">MA20</button>
+            <button class="ivb active" id="mktMa60" onclick="setMarketMa(60)">MA60</button>
+          </div>
+          <input type="hidden" id="marketMa" value="60">
+        </div>
+
+        <!-- ATR 動態停損 -->
+        <div style="background:var(--s2);border-radius:9px;padding:12px;border:1px solid var(--bd);">
+          <div class="sell-row" style="margin-bottom:8px;">
+            <input type="checkbox" id="useAtrStop" style="accent-color:#a855f7;">
+            <label for="useAtrStop" style="font-weight:600;font-size:.84rem;">📐 ATR 動態停損</label>
+          </div>
+          <div style="font-size:.73rem;color:var(--dim);margin-bottom:8px;line-height:1.6;">
+            依股票波動幅度自動設定停損，比固定%更貼近市場
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;padding-left:23px;">
+            <span style="font-size:.76rem;color:var(--dim);">倍數：</span>
+            <button class="ivb" id="atr1" onclick="setAtrMult(1.5)">1.5x</button>
+            <button class="ivb active" id="atr2" onclick="setAtrMult(2.0)">2.0x</button>
+            <button class="ivb" id="atr3" onclick="setAtrMult(3.0)">3.0x</button>
+          </div>
+          <input type="hidden" id="atrMultiplier" value="2.0">
+          <div style="font-size:.71rem;color:var(--dim);margin-top:6px;padding-left:23px;">停損價 = 買入價 − N × ATR</div>
+        </div>
+
+        <!-- 分批出場 -->
+        <div style="background:var(--s2);border-radius:9px;padding:12px;border:1px solid var(--bd);">
+          <div class="sell-row" style="margin-bottom:8px;">
+            <input type="checkbox" id="usePartial" style="accent-color:#a855f7;">
+            <label for="usePartial" style="font-weight:600;font-size:.84rem;">✂️ 分批出場</label>
+          </div>
+          <div style="font-size:.73rem;color:var(--dim);margin-bottom:8px;line-height:1.6;">
+            先出部分倉位鎖住獲利，剩餘讓利潤繼續奔跑
+          </div>
+          <div style="padding-left:23px;">
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:5px;">
+              <span style="font-size:.75rem;color:var(--dim);">漲</span>
+              <input class="fi" type="number" id="partialPct" value="5" min="1" max="50" style="width:58px;padding:4px 7px;">
+              <span style="font-size:.75rem;color:var(--dim);">% 時先出</span>
+              <input class="fi" type="number" id="partialRatio" value="50" min="10" max="90" step="10" style="width:58px;padding:4px 7px;">
+              <span style="font-size:.75rem;color:var(--dim);">% 倉位</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 融資設定 -->
+        <div style="background:var(--s2);border-radius:9px;padding:12px;border:1px solid rgba(255,180,0,.2);">
+          <div class="sell-row" style="margin-bottom:8px;">
+            <input type="checkbox" id="useMargin" style="accent-color:#f0b429;">
+            <label for="useMargin" style="font-weight:600;font-size:.84rem;color:var(--gold);">💰 融資回測</label>
+          </div>
+          <div style="font-size:.73rem;color:var(--dim);margin-bottom:10px;line-height:1.6;">
+            放大投資倍數（融資利率約年利 6.35%），損益同步放大，風險提高
+          </div>
+          <div style="padding-left:23px;display:flex;gap:6px;flex-wrap:wrap;">
+            <button class="ivb" id="mg1" onclick="setMargin(1.0)" style="border-color:var(--bd);">不融資</button>
+            <button class="ivb" id="mg16" onclick="setMargin(1.6)">融資 6 成<br><span style="font-size:.65rem;color:var(--dim);">自備 4 成</span></button>
+            <button class="ivb" id="mg17" onclick="setMargin(1.7)">融資 7 成<br><span style="font-size:.65rem;color:var(--dim);">自備 3 成</span></button>
+            <button class="ivb" id="mg20" onclick="setMargin(2.0)">融資全額<br><span style="font-size:.65rem;color:var(--dim);">自備 5 成</span></button>
+          </div>
+          <div style="padding-left:23px;margin-top:8px;display:flex;align-items:center;gap:6px;">
+            <span style="font-size:.75rem;color:var(--dim);">自訂倍數：</span>
+            <input class="fi" type="number" id="marginRatio" value="1.0" min="1" max="3" step="0.1" style="width:70px;padding:5px 8px;">
+            <span style="font-size:.73rem;color:var(--dim);">x（1=不融資）</span>
+          </div>
+          <div style="margin-top:8px;padding:6px 10px;background:rgba(255,77,94,.07);border-radius:6px;font-size:.71rem;color:var(--red);padding-left:23px;">
+            ⚠️ 融資有斷頭風險，僅供回測分析，不構成投資建議
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:flex-end;">
+      <button class="run-btn" id="runBtn" onclick="runBacktest()">▶ 開始回測</button>
+    </div>
+  </div>
+</div>
+
+<!-- Loading -->
+<div class="loading" id="loading">
+  <div class="spinner"></div>
+  <p id="ldMsg">從 TWSE 抓取歷史資料中...</p>
+</div>
+
+<!-- Empty -->
+<div class="empty" id="emptyState">
+  <div class="ei">📈</div>
+  <p>設定好股票代號、日期與賣出條件<br>點擊「開始回測」查看結果</p>
+</div>
+
+<!-- Results -->
+<div id="results" style="display:none">
+
+  <!-- 績效統計 -->
+  <div class="stats-grid" id="statsGrid"></div>
+
+  <!-- K線圖 + 資產曲線 -->
+  <div class="charts-row">
+    <div class="chart-wrap">
+      <div class="chart-title">
+        K 線圖（含買賣點位）
+        <div class="chart-legend">
+          <div class="leg-item"><div class="leg-dot" style="background:#f0b429"></div><span>MA5</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:#3d8bff"></div><span>MA20</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:#a855f7"></div><span>MA60</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:#27d981;border-radius:50%"></div><span>買入▲</span></div>
+          <div class="leg-item"><div class="leg-dot" style="background:#ff4d5e;border-radius:50%"></div><span>賣出▼</span></div>
+        </div>
+      </div>
+      <canvas id="klineChart"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">資產曲線</div>
+      <canvas id="equityChart"></canvas>
+    </div>
+  </div>
+
+  <!-- KD 圖 -->
+  <div class="chart-wrap kd-wrap" style="margin-bottom:16px;">
+    <div class="chart-title">KD 指標</div>
+    <canvas id="kdChart" style="max-height:160px;"></canvas>
+  </div>
+
+  <!-- 交易明細 -->
+  <div class="trades-wrap">
+    <div class="tw-hd">
+      <span class="tw-title">交易明細</span>
+      <span id="tradeCount" style="font-size:.78rem;color:var(--dim);"></span>
+    </div>
+    <div style="overflow-x:auto;">
+      <table id="tradesTable">
+        <thead>
+          <tr>
+            <th>#</th><th>買入日期</th><th>買入價</th>
+            <th>最高點</th>
+            <th>賣出日期</th><th>賣出價</th>
+            <th>持有天數</th><th>損益</th><th>賣出原因</th>
+          </tr>
+        </thead>
+        <tbody id="tradesBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+</div>
+
+<script>
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000' : '';
+let klineChartInst = null, equityChartInst = null, kdChartInst = null;
+let currentMode = 'single';  // 'single' | 'market'
+
+// ── 模式切換 ──────────────────────────────────────
+function setMode(mode) {
+  currentMode = mode;
+  document.getElementById('modeSingle').classList.toggle('active', mode==='single');
+  document.getElementById('modeMarket').classList.toggle('active', mode==='market');
+  document.getElementById('codeGroup').style.display     = mode==='single' ? '' : 'none';
+  document.getElementById('maxPosGroup').style.display   = mode==='market' ? '' : 'none';
+  document.getElementById('maxStocksGroup').style.display= mode==='market' ? '' : 'none';
+  // 更新 K 線圖區塊：全市場模式不顯示 K 線
+  const chartsRow = document.querySelector('.charts-row');
+  if (chartsRow) chartsRow.style.display = mode==='single' ? '' : 'none';
+  const kdWrap = document.querySelector('.kd-wrap');
+  if (kdWrap) kdWrap.style.display = mode==='single' ? '' : 'none';
+}
+
+function setMaxStocks(v) {
+  document.getElementById('maxStocks').value = v;
+  document.querySelectorAll('#maxStocksGroup .ivb').forEach(b => {
+    const m = b.getAttribute('onclick').match(/\d+/);
+    if (m) b.classList.toggle('active', parseInt(m[0]) === v);
+  });
+}
+
+function setMaPeriod(v) {
+  const ids = ['ma5btn','ma10btn','ma20btn','ma60btn','maCustomBtn'];
+  const vals = [5, 10, 20, 60, 'custom'];
+  ids.forEach((id, i) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', vals[i] === v);
+  });
+  if (v === 'custom') {
+    document.getElementById('maCustomVal').focus();
+    document.getElementById('maPeriod').value = document.getElementById('maCustomVal').value;
+  } else {
+    document.getElementById('maPeriod').value = v;
+  }
+}
+
+function setMarketMa(v) {
+  document.getElementById('mktMa20').classList.toggle('active', v===20);
+  document.getElementById('mktMa60').classList.toggle('active', v===60);
+  document.getElementById('marketMa').value = v;
+}
+
+function setAtrMult(v) {
+  [['atr1',1.5],['atr2',2.0],['atr3',3.0]].forEach(([id,mv]) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', mv === v);
+  });
+  document.getElementById('atrMultiplier').value = v;
+}
+
+function setMargin(v) {
+  ['mg1','mg16','mg17','mg20'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const mv = parseFloat(el.getAttribute('onclick').match(/[\d.]+/)[0]);
+    el.classList.toggle('active', mv === v);
+  });
+  document.getElementById('marginRatio').value = v;
+}
+
+// 同步自訂輸入
+document.addEventListener('DOMContentLoaded', () => {
+  const customInput = document.getElementById('maCustomVal');
+  if (customInput) {
+    customInput.addEventListener('input', () => {
+      if (document.getElementById('maCustomBtn').classList.contains('active')) {
+        document.getElementById('maPeriod').value = customInput.value;
+      }
+    });
+  }
+});
+
+// ── 讀取選股條件 ──────────────────────────────────
+function loadConditions() {
+  try { return JSON.parse(localStorage.getItem('bt_conditions') || '[]'); }
+  catch { return []; }
+}
+function renderCondPreview(conds) {
+  const el = document.getElementById('condPreview');
+  if (!conds || !conds.length) {
+    el.innerHTML = '<strong>買入條件：</strong> 尚未設定，請先在 <a href="index.html" style="color:var(--gold)">選股頁面</a> 設定條件後再來回測';
+    return;
+  }
+  const chips = conds.map(c => `<span class="cond-chip">${c.label}</span>`).join(' ');
+  el.innerHTML = `<strong>買入條件（${conds.length} 個）：</strong><br>${chips}`;
+}
+
+// ── 賣出設定 ──────────────────────────────────────
+function getSellParams() {
+  const useTp = document.getElementById('useTp').checked;
+  const useSl = document.getElementById('useSl').checked;
+  const useHd = document.getElementById('useHd').checked;
+  const useTs = document.getElementById('useTs').checked;
+  const useMa = document.getElementById('useMa').checked;
+  const useMf = document.getElementById('useMarketFilter')?.checked || false;
+  const useAt = document.getElementById('useAtrStop')?.checked || false;
+  const usePa = document.getElementById('usePartial')?.checked || false;
+  const useMg = document.getElementById('useMargin')?.checked || false;
+
+  let trailing_stop = 0;
+  if (useTs) {
+    const mode = document.querySelector('input[name="tsMode"]:checked').value;
+    trailing_stop = mode==='custom'
+      ? parseFloat(document.getElementById('tsCustomVal').value)||5
+      : parseFloat(mode);
+  }
+  return {
+    take_profit:       useTp ? parseFloat(document.getElementById('tpVal').value)||0  : 0,
+    stop_loss:         useSl ? parseFloat(document.getElementById('slVal').value)||0  : 0,
+    hold_days:         useHd ? parseInt(document.getElementById('hdVal').value)||0    : 0,
+    trailing_stop,
+    ma_sell_period:    useMa ? (parseInt(document.getElementById('maPeriod').value)||20) : 0,
+    use_market_filter: useMf,
+    market_ma:         parseInt(document.getElementById('marketMa')?.value||'60'),
+    use_atr_stop:      useAt,
+    atr_multiplier:    parseFloat(document.getElementById('atrMultiplier')?.value||'2.0'),
+    partial_exit_pct:  usePa ? parseFloat(document.getElementById('partialPct').value)||0  : 0,
+    partial_exit_ratio:usePa ? parseInt(document.getElementById('partialRatio').value)||50 : 50,
+    margin_ratio:      useMg ? parseFloat(document.getElementById('marginRatio')?.value||'1.0') : 1.0,
+  };
+}
+
+// ── 主入口：判斷模式 ──────────────────────────────
+function runBacktest() {
+  if (currentMode === 'single') runSingleBacktest();
+  else runMarketBacktest();
+}
+
+// ══════════════════════════════════════════════════
+// 單股回測
+// ══════════════════════════════════════════════════
+async function runSingleBacktest() {
+  const code      = document.getElementById('code').value.trim();
+  const startDate = document.getElementById('startDate').value;
+  const endDate   = document.getElementById('endDate').value;
+  const conds     = loadConditions().filter(c => c.enabled);
+  const sell      = getSellParams();
+
+  if (!code)                   { alert('請輸入股票代號！'); return; }
+  if (!startDate || !endDate)  { alert('請選擇日期範圍！'); return; }
+  if (!conds.length)           { alert('請先在選股頁面設定篩選條件！'); return; }
+  if (!sell.take_profit && !sell.stop_loss && !sell.hold_days && !sell.trailing_stop && !sell.ma_sell_period)
+    { alert('請至少勾選一個賣出條件！'); return; }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '⏳ 回測中...';
+  showLoading(`抓取 ${code} 歷史資料中...`);
+  hideResults();
+
+  try {
+    const resp = await fetch(`${API}/api/backtest`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ code, start_date:startDate, end_date:endDate, conditions:conds, ...sell }),
+      signal: AbortSignal.timeout(120000),
+    });
+    const data = await resp.json();
+    if (data.error) throw new Error(data.error);
+    hideLoading();
+    showResults();
+    renderStats(data.stats, data);
+    renderKline(data.kline, data.trades);
+    renderEquity(data.daily_equity);
+    renderKD(data.kline);
+    renderTrades(data.trades, false);
+  } catch(err) {
+    hideLoading();
+    showError(err.message);
+  }
+  btn.disabled = false; btn.textContent = '▶ 開始回測';
+}
+
+// ══════════════════════════════════════════════════
+// 全市場回測
+// ══════════════════════════════════════════════════
+async function runMarketBacktest() {
+  const startDate   = document.getElementById('startDate').value;
+  const endDate     = document.getElementById('endDate').value;
+  const conds       = loadConditions().filter(c => c.enabled);
+  const sell        = getSellParams();
+  const maxPos      = parseInt(document.getElementById('maxPos').value)||5;
+  const maxStocks   = parseInt(document.getElementById('maxStocks').value)||100;
+
+  if (!startDate || !endDate)  { alert('請選擇日期範圍！'); return; }
+  if (!conds.length)           { alert('請先在選股頁面設定篩選條件！'); return; }
+  if (!sell.take_profit && !sell.stop_loss && !sell.hold_days && !sell.trailing_stop && !sell.ma_sell_period)
+    { alert('請至少勾選一個賣出條件！'); return; }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '⏳ 回測中...';
+  hideResults();
+  showMktProgress(0, '啟動全市場回測...');
+
+  try {
+    // 啟動背景任務
+    const startResp = await fetch(`${API}/api/market_backtest`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        start_date:startDate, end_date:endDate,
+        conditions:conds, ...sell,
+        max_positions:maxPos, max_stocks:maxStocks,
+      }),
+    });
+    const { task_id, error } = await startResp.json();
+    if (error) throw new Error(error);
+
+    // 輪詢進度
+    await pollProgress(task_id);
+  } catch(err) {
+    hideMktProgress();
+    showError(err.message);
+  }
+  btn.disabled = false; btn.textContent = '▶ 開始回測';
+}
+
+async function pollProgress(taskId) {
+  while (true) {
+    await sleep(1200);
+    try {
+      const r = await fetch(`${API}/api/market_backtest/progress/${taskId}`);
+      const prog = await r.json();
+      showMktProgress(prog.pct, prog.msg);
+      if (prog.error) throw new Error(prog.error);
+      if (prog.done && prog.result) {
+        hideMktProgress();
+        const data = prog.result;
+        showResults();
+        renderMarketStats(data.stats, data);
+        renderEquity(data.daily_equity, true);
+        renderMarketTrades(data.trades);
+        return;
+      }
+    } catch(e) {
+      hideMktProgress();
+      showError(e.message);
+      return;
+    }
+  }
+}
+
+// ── UI helpers ─────────────────────────────────────
+function showLoading(msg) {
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('ldMsg').textContent = msg;
+  document.getElementById('emptyState').style.display = 'none';
+}
+function hideLoading() { document.getElementById('loading').style.display = 'none'; }
+
+function showMktProgress(pct, msg) {
+  let el = document.getElementById('mktProgress');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'mktProgress';
+    el.className = 'mkt-progress';
+    el.innerHTML = `
+      <div class="mkt-prog-hd">
+        <div class="spinner"></div>
+        <div style="font-size:.9rem;font-weight:600;">全市場回測進行中...</div>
+      </div>
+      <div class="mkt-prog-bar-wrap"><div class="mkt-prog-bar" id="mktBar"></div></div>
+      <div class="mkt-prog-msg" id="mktMsg"></div>`;
+    document.getElementById('loading').after(el);
+  }
+  el.style.display = 'block';
+  document.getElementById('mktBar').style.width = pct + '%';
+  document.getElementById('mktMsg').textContent = `${pct}%  ${msg}`;
+  document.getElementById('emptyState').style.display = 'none';
+}
+function hideMktProgress() {
+  const el = document.getElementById('mktProgress');
+  if (el) el.style.display = 'none';
+}
+function showResults()  { document.getElementById('results').style.display = 'block'; }
+function hideResults()  { document.getElementById('results').style.display = 'none'; }
+function showError(msg) {
+  document.getElementById('emptyState').style.display = 'block';
+  document.getElementById('emptyState').innerHTML = `<div class="ei">⚠️</div><p>${msg}</p>`;
+}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ── 統計卡（單股）─────────────────────────────────
+function renderStats(s, data) {
+  const pnl = s.total_pnl ?? s.total_return ?? 0;
+  const raw = s.total_pnl_raw ?? pnl;
+  const cls  = pnl >= 0 ? 'up' : 'dn';
+  const margin = s.margin_ratio || 1;
+  const marginLabel = margin > 1 ? `（融資 ${margin}x）` : '';
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="sc"><div class="sc-label">總交易次數</div>
+      <div class="sc-val">${s.total_trades}</div>
+      <div class="sc-sub">勝 ${s.win_trades} 負 ${s.lose_trades}</div></div>
+    <div class="sc"><div class="sc-label">勝率</div>
+      <div class="sc-val ${cls}">${s.win_rate}%</div>
+      <div class="sc-sub">平均獲利 +${s.avg_win}% / 平均虧損 ${s.avg_loss}%</div></div>
+    <div class="sc"><div class="sc-label">累積報酬${marginLabel}</div>
+      <div class="sc-val ${cls}">${pnl>=0?'+':''}${pnl}%</div>
+      <div class="sc-sub">${margin>1 ? `未融資: ${raw>=0?'+':''}${raw}%` : `${data.start_date} ~ ${data.end_date}`}</div></div>
+    <div class="sc"><div class="sc-label">最大回撤</div>
+      <div class="sc-val dn">-${s.max_drawdown}%</div>
+      <div class="sc-sub">期間最大虧損幅度</div></div>`;
+}
+
+// ── 統計卡（全市場）──────────────────────────────
+function renderMarketStats(s, data) {
+  const pnl = s.total_return ?? 0;
+  const cls  = pnl >= 0 ? 'up' : 'dn';
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="sc"><div class="sc-label">總交易次數</div>
+      <div class="sc-val">${s.total_trades}</div>
+      <div class="sc-sub">勝 ${s.win_trades} 負 ${s.lose_trades}</div></div>
+    <div class="sc"><div class="sc-label">勝率</div>
+      <div class="sc-val ${cls}">${s.win_rate}%</div>
+      <div class="sc-sub">平均獲利 +${s.avg_win}% / 平均虧損 ${s.avg_loss}%</div></div>
+    <div class="sc"><div class="sc-label">策略總報酬</div>
+      <div class="sc-val ${cls}">${pnl>=0?'+':''}${pnl}%</div>
+      <div class="sc-sub">同時最多持有 ${s.max_positions} 檔</div></div>
+    <div class="sc"><div class="sc-label">最大回撤</div>
+      <div class="sc-val dn">-${s.max_drawdown}%</div>
+      <div class="sc-sub">掃描 ${data.stocks_tested} 支股票</div></div>`;
+}
+
+// ── K 線圖（單股）─────────────────────────────────
+function renderKline(kline, trades) {
+  if (klineChartInst) { klineChartInst.destroy(); klineChartInst = null; }
+  const labels = kline.map(d=>d.date);
+  const buyPts = kline.map(d=>{const t=trades.find(tr=>tr.buy_date===d.date);return t?t.buy_price:null;});
+  const sellPts= kline.map(d=>{const t=trades.find(tr=>tr.sell_date===d.date);return t?t.sell_price:null;});
+  const ctx = document.getElementById('klineChart').getContext('2d');
+  klineChartInst = new Chart(ctx, {
+    type:'line',
+    data:{ labels, datasets:[
+      {label:'收盤價',data:kline.map(d=>d.close),borderColor:'#e4eaf5',borderWidth:1.5,pointRadius:0,tension:0.1,order:5},
+      {label:'MA5',  data:kline.map(d=>d.ma5),  borderColor:'#f0b429',borderWidth:1.5,pointRadius:0,tension:0.1,order:4},
+      {label:'MA20', data:kline.map(d=>d.ma20), borderColor:'#3d8bff',borderWidth:1.5,pointRadius:0,tension:0.1,order:3},
+      {label:'MA60', data:kline.map(d=>d.ma60), borderColor:'#a855f7',borderWidth:1.5,pointRadius:0,tension:0.1,order:2},
+      {label:'買入',data:buyPts, borderColor:'#27d981',backgroundColor:'#27d981',pointRadius:buyPts.map(v=>v?8:0), pointStyle:'triangle',showLine:false,order:1},
+      {label:'賣出',data:sellPts,borderColor:'#ff4d5e',backgroundColor:'#ff4d5e',pointRadius:sellPts.map(v=>v?8:0),pointStyle:'triangle',pointRotation:180,showLine:false,order:0},
+    ]},
+    options:{responsive:true,maintainAspectRatio:true,interaction:{mode:'index',intersect:false},
+      plugins:{legend:{display:false},tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1}},
+      scales:{x:{ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:11}},grid:{color:'rgba(255,255,255,.04)'}},
+              y:{ticks:{color:'#6a748f',font:{size:11}},grid:{color:'rgba(255,255,255,.04)'},position:'right'}}}
+  });
+}
+
+// ── 資產曲線 ──────────────────────────────────────
+function renderEquity(daily, isMarket=false) {
+  if (equityChartInst) { equityChartInst.destroy(); equityChartInst = null; }
+  const ctx = document.getElementById('equityChart').getContext('2d');
+  const vals = daily.map(d=>d.equity);
+  const final = vals[vals.length-1]||100;
+  const color = final>=100?'#ff4d5e':'#27d981';
+
+  const datasets = [{
+    label:'策略資產（基準100）',data:vals,
+    borderColor:color,borderWidth:2,backgroundColor:color+'18',fill:true,pointRadius:0,tension:0.2,
+  }];
+
+  // 全市場模式：也顯示每日持倉數
+  if (isMarket && daily[0]?.n_pos !== undefined) {
+    datasets.push({
+      label:'持倉檔數',data:daily.map(d=>d.n_pos),
+      borderColor:'#f0b429',borderWidth:1.5,pointRadius:0,tension:0.1,yAxisID:'y2',
+    });
+  }
+
+  equityChartInst = new Chart(ctx, {
+    type:'line', data:{labels:daily.map(d=>d.date),datasets},
+    options:{responsive:true,maintainAspectRatio:true,
+      plugins:{legend:{labels:{color:'#6a748f',font:{size:11}}},
+               tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1}},
+      scales:{
+        x:{ticks:{color:'#6a748f',maxTicksLimit:6,font:{size:10}},grid:{color:'rgba(255,255,255,.04)'}},
+        y:{ticks:{color:'#6a748f',font:{size:10}},grid:{color:'rgba(255,255,255,.04)'},position:'right'},
+        ...(isMarket ? {y2:{ticks:{color:'#f0b429',font:{size:10}},position:'left',grid:{display:false},min:0}} : {}),
+      }}
+  });
+}
+
+// ── KD 圖（單股）─────────────────────────────────
+function renderKD(kline) {
+  if (kdChartInst) { kdChartInst.destroy(); kdChartInst = null; }
+  const ctx = document.getElementById('kdChart').getContext('2d');
+  kdChartInst = new Chart(ctx, {
+    type:'line',
+    data:{labels:kline.map(d=>d.date),datasets:[
+      {label:'K',data:kline.map(d=>d.k),borderColor:'#f0b429',borderWidth:1.5,pointRadius:0,tension:0.1},
+      {label:'D',data:kline.map(d=>d.d),borderColor:'#3d8bff',borderWidth:1.5,pointRadius:0,tension:0.1},
+    ]},
+    options:{responsive:true,maintainAspectRatio:true,
+      plugins:{legend:{labels:{color:'#6a748f',font:{size:11}}},tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1}},
+      scales:{x:{ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:10}},grid:{color:'rgba(255,255,255,.04)'}},
+              y:{min:0,max:100,ticks:{color:'#6a748f',font:{size:10}},grid:{color:'rgba(255,255,255,.04)'},position:'right'}}}
+  });
+}
+
+// ── 交易明細（單股）──────────────────────────────
+function renderTrades(trades, isMarket) {
+  document.getElementById('tradeCount').textContent = `共 ${trades.length} 筆交易`;
+  const thead = document.querySelector('#tradesTable thead tr');
+  const body  = document.getElementById('tradesBody');
+
+  if (isMarket) {
+    thead.innerHTML = '<th>#</th><th>股票</th><th>買入日</th><th>買入價</th><th>最高點</th><th>賣出日</th><th>賣出價</th><th>持有</th><th>損益</th><th>原因</th>';
+  } else {
+    thead.innerHTML = '<th>#</th><th>買入日期</th><th>買入價</th><th>最高點</th><th>賣出日期</th><th>賣出價</th><th>持有天數</th><th>損益</th><th>賣出原因</th>';
+  }
+
+  if (!trades.length) {
+    body.innerHTML = `<tr><td colspan="${isMarket?10:9}" style="text-align:center;color:var(--dim);padding:24px;">期間內無符合條件的交易</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = trades.map((t,i) => {
+    const pnlCls = t.pnl>=0?'pnl-up':'pnl-dn';
+    const pnlTxt = `${t.pnl>=0?'+':''}${t.pnl}%`;
+    let rc='reason-hd';
+    if (t.sell_reason.includes('停利'))     rc='reason-tp';
+    else if (t.sell_reason.includes('停損')) rc='reason-sl';
+    else if (t.sell_reason.includes('追蹤')) rc='reason-ts';
+    else if (t.sell_reason.includes('跌破')) rc='reason-ma';
+    else if (t.sell_reason.includes('分批')) rc='reason-pa';
+    else if (t.sell_reason.includes('ATR'))  rc='reason-sl';
+    else if (t.sell_reason.includes('強制')||t.sell_reason.includes('平倉')) rc='reason-fc';
+    const peakGain = t.peak_price&&t.buy_price
+      ? ((t.peak_price-t.buy_price)/t.buy_price*100).toFixed(1) : null;
+    const peakTxt = t.peak_price
+      ? `${t.peak_price} <span style="color:var(--red);font-size:.68rem;">(+${peakGain}%)</span>` : '—';
+
+    if (isMarket) {
+      return `<tr>
+        <td class="mono">${i+1}</td>
+        <td><span class="code-tag">${t.code}</span></td>
+        <td>${t.buy_date}</td><td class="mono">${t.buy_price}</td>
+        <td class="mono">${peakTxt}</td>
+        <td>${t.sell_date}</td><td class="mono">${t.sell_price}</td>
+        <td class="mono">${t.held_days}日</td>
+        <td class="${pnlCls}">${pnlTxt}</td>
+        <td><span class="reason-tag ${rc}">${t.sell_reason}</span></td>
+      </tr>`;
+    } else {
+      return `<tr>
+        <td class="mono">${i+1}</td>
+        <td>${t.buy_date}</td><td class="mono">${t.buy_price}</td>
+        <td class="mono">${peakTxt}</td>
+        <td>${t.sell_date}</td><td class="mono">${t.sell_price}</td>
+        <td class="mono">${t.held_days}日</td>
+        <td class="${pnlCls}">${pnlTxt}</td>
+        <td><span class="reason-tag ${rc}">${t.sell_reason}</span></td>
+      </tr>`;
+    }
+  }).join('');
+}
+
+// 全市場用相同的 renderTrades，只是多傳 isMarket=true
+function renderMarketTrades(trades) { renderTrades(trades, true); }
+
+// ── 初始化 ────────────────────────────────────────
+function init() {
+  const today = new Date();
+  const oneYearAgo = new Date(today);
+  oneYearAgo.setFullYear(today.getFullYear()-1);
+  document.getElementById('endDate').value   = today.toISOString().split('T')[0];
+  document.getElementById('startDate').value = oneYearAgo.toISOString().split('T')[0];
+  const conds = loadConditions();
+  renderCondPreview(conds.filter(c=>c.enabled));
+}
+init();
+</script>
+</body>
+</html>
