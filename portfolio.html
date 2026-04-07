@@ -266,26 +266,50 @@ header{padding:16px 0 13px;border-bottom:1px solid var(--bd);margin-bottom:18px;
         <input class="fi" id="addCode" type="text" placeholder="例：2330" maxlength="6">
       </div>
       <div class="fg">
-        <label class="fl">買入成本（元）</label>
-        <input class="fi" id="addCost" type="number" placeholder="例：150.5" step="0.01">
+        <label class="fl">成本均價（元/股）</label>
+        <input class="fi" id="addCost" type="number" placeholder="例：7.62" step="0.01">
       </div>
       <div class="fg">
-        <label class="fl">持有張數</label>
-        <input class="fi" id="addQty" type="number" value="1" min="1">
+        <label class="fl">持有數量</label>
+        <div style="display:flex;gap:5px;">
+          <input class="fi" id="addQty" type="number" placeholder="數量" step="1" style="flex:1;">
+          <select class="fs" id="addQtyUnit" style="width:68px;flex-shrink:0;" onchange="updateQtyHint()">
+            <option value="share">股</option>
+            <option value="lot" selected>張</option>
+          </select>
+        </div>
+        <div class="hint" id="qtyHint">1張 = 1,000股</div>
       </div>
       <div class="fg">
         <label class="fl">買入日期</label>
         <input class="fi" id="addDate" type="date">
       </div>
       <div class="fg">
-        <label class="fl">融資成數</label>
+        <label class="fl">融資</label>
         <select class="fs" id="addMargin">
-          <option value="1.0">不融資（現股）</option>
-          <option value="1.6">融資 6 成</option>
-          <option value="1.7">融資 7 成</option>
-          <option value="2.0">融資全額</option>
+          <option value="1.0">現股（不融資）</option>
+          <option value="1.6">融資買（6成）自備4成</option>
+          <option value="1.7">融資買（7成）自備3成</option>
+          <option value="2.0">融資買（全額）自備5成</option>
         </select>
-        <div class="hint">台股融資年利率約 6.35%</div>
+      </div>
+      <div class="fg">
+        <label class="fl">手續費折扣</label>
+        <select class="fs" id="addFeeDiscount">
+          <option value="1.0">原價 1425折</option>
+          <option value="0.6" selected>6折 855折</option>
+          <option value="0.5">5折 712折</option>
+          <option value="0.28">2.8折 399折</option>
+          <option value="0.1">1折 142折</option>
+        </select>
+        <div class="hint">對應你的券商實際折扣</div>
+      </div>
+      <div class="fg">
+        <label class="fl">股票類型</label>
+        <select class="fs" id="addIsEtf">
+          <option value="0">一般股票（交易稅0.3%）</option>
+          <option value="1">ETF（交易稅0.1%）</option>
+        </select>
       </div>
       <div class="fg">
         <label class="fl">群組</label>
@@ -522,8 +546,9 @@ function buildCard(s){
         <div class="info-row">
           <div class="ir"><div class="ir-l">現價</div><div class="ir-v">${cur}</div></div>
           <div class="ir"><div class="ir-l">今日</div><div class="ir-v ${cCls}">${chg>=0?'+':''}${chg}（${chgP>=0?'+':''}${chgP}%）</div></div>
-          <div class="ir"><div class="ir-l">成本</div><div class="ir-v">${cost}</div></div>
-          <div class="ir"><div class="ir-l">持有</div><div class="ir-v">${qty}張</div></div>
+          <div class="ir"><div class="ir-l">成本均價</div><div class="ir-v">${cost}</div></div>
+          <div class="ir"><div class="ir-l">損平價</div><div class="ir-v" style="color:var(--gold);">${s.breakeven||cost}</div></div>
+          <div class="ir"><div class="ir-l">持有</div><div class="ir-v">${s.lots||s.qty}張（${(s.shares||(s.qty*1000)).toLocaleString()}股）</div></div>
           <div class="ir"><div class="ir-l">買入日</div><div class="ir-v">${buyDate}</div></div>
         </div>
       </div>
@@ -637,26 +662,47 @@ function buildActions(dir,conf,probs,pnlPct,rLow,rHigh,cur,tp,sl){
 async function addStock(){
   const code=document.getElementById('addCode').value.trim().toUpperCase();
   const cost=parseFloat(document.getElementById('addCost').value)||0;
-  const qty=parseInt(document.getElementById('addQty').value)||1;
+  const qty=parseFloat(document.getElementById('addQty').value)||0;
+  const qty_unit=document.getElementById('addQtyUnit').value;
   const buyDate=document.getElementById('addDate').value;
   const margin=parseFloat(document.getElementById('addMargin').value)||1;
+  const fee_discount=parseFloat(document.getElementById('addFeeDiscount').value)||0.6;
+  const is_etf=document.getElementById('addIsEtf').value==='1';
   const group=parseInt(document.getElementById('addGroup').value)||0;
   if(!code){showToast('請輸入股票代號','err');return;}
+  if(!qty){showToast('請輸入持有數量','err');return;}
   try{
     const r=await fetch(`${API}/api/portfolio`,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({code,cost,qty,buy_date:buyDate,margin,group})});
+      body:JSON.stringify({code,cost,qty,qty_unit,buy_date:buyDate,margin,fee_discount,is_etf,group})});
     const d=await r.json();
     if(d.ok){
-      showToast(`✅ ${code} 已加入 ${groupNames[group]}`,'ok');
+      const unitLabel = qty_unit==='share' ? `${qty}股` : `${qty}張`;
+      showToast(`✅ ${code} ${unitLabel} 已加入 ${groupNames[group]}`,'ok');
       document.getElementById('addCode').value='';
       document.getElementById('addCost').value='';
-      document.getElementById('addQty').value='1';
+      document.getElementById('addQty').value='';
       document.getElementById('addDate').value='';
       document.getElementById('addMargin').value='1.0';
       loadPortfolio();
     }
   }catch(e){showToast('加入失敗：'+e.message,'err');}
 }
+
+function updateQtyHint(){
+  const unit=document.getElementById('addQtyUnit').value;
+  const qty=parseFloat(document.getElementById('addQty').value)||0;
+  const hint=document.getElementById('qtyHint');
+  if(!hint)return;
+  if(unit==='share'){
+    const lots=(qty/1000).toFixed(qty%1000===0?0:3);
+    hint.textContent=qty>0?`${qty}股 = ${lots}張`:'輸入股數，系統自動換算';
+  }else{
+    hint.textContent=qty>0?`${qty}張 = ${(qty*1000).toLocaleString()}股`:'1張 = 1,000股';
+  }
+}
+document.addEventListener('DOMContentLoaded',()=>{
+  document.getElementById('addQty')?.addEventListener('input',updateQtyHint);
+});
 
 async function delStock(code){
   if(!confirm(`確定移除 ${code}？`))return;

@@ -1293,52 +1293,75 @@ def get_portfolio():
         live       = price_map.get(code, {})
         cur_price  = live.get("price", s.get("cost", 0))
         cost       = s.get("cost", 0)
-        qty        = s.get("qty", 1)
-        margin     = s.get("margin", 1.0)   # 融資倍數
+        margin     = s.get("margin", 1.0)
         buy_date   = s.get("buy_date", s.get("added",""))
+        fee_discount = s.get("fee_discount", 0.6)  # 手續費折扣，預設6折
+        is_etf     = s.get("is_etf", False)         # ETF交易稅0.1%
 
-        # 台股手續費 + 交易稅
-        fee_rate   = 0.001425   # 買賣各 0.1425%（打折後通常 0.001425）
-        tax_rate   = 0.003      # 賣出交易稅 0.3%（ETF 為 0.1%）
-        buy_fee    = round(cost * qty * 1000 * fee_rate)
-        sell_fee   = round(cur_price * qty * 1000 * fee_rate)
-        sell_tax   = round(cur_price * qty * 1000 * tax_rate)
-        total_cost = cost * qty * 1000 + buy_fee  # 實際買入成本含手續費
+        # 單位換算：支援「股」或「張」輸入
+        # qty_unit: "share"=股數, "lot"=張數(預設)
+        qty_unit  = s.get("qty_unit", "lot")
+        qty_input = s.get("qty", 1)
+        if qty_unit == "share":
+            shares = qty_input              # 直接是股數
+            lots   = shares / 1000          # 換算張數
+        else:
+            lots   = qty_input              # 輸入張數
+            shares = lots * 1000            # 換算股數
 
-        # 融資利息（年率 6.35%，按持有天數計算）
+        # 台股費率
+        base_fee_rate = 0.001425
+        fee_rate = base_fee_rate * fee_discount   # 折扣後手續費率
+        tax_rate = 0.001 if is_etf else 0.003     # ETF 0.1%，一般股 0.3%
+
+        buy_fee  = round(cost      * shares * fee_rate)
+        sell_fee = round(cur_price * shares * fee_rate)
+        sell_tax = round(cur_price * shares * tax_rate)
+
+        # 損平價（含買入手續費）= 成本 + 買入手續費/股數
+        breakeven = round(cost + buy_fee / shares, 3) if shares > 0 else cost
+
+        # 融資利息（年率 6.35%，按持有天數）
         margin_interest = 0
         if margin > 1 and buy_date:
             try:
                 bd   = datetime.strptime(buy_date, "%Y-%m-%d")
                 days = (datetime.today() - bd).days
-                margin_interest = round(cost * qty * 1000 * (margin-1) * 0.0635 / 365 * days)
+                loan = cost * shares * (1 - 1/margin)   # 融資借款金額
+                margin_interest = round(loan * 0.0635 / 365 * days)
             except: pass
 
-        # 實際損益（含手續費、稅、融資利息）
-        gross_pnl  = (cur_price - cost) * qty * 1000
-        net_pnl    = gross_pnl - buy_fee - sell_fee - sell_tax - margin_interest
-        # 融資放大後的損益（只有自備款的部分計算報酬率）
-        self_ratio = 1 / margin if margin > 0 else 1
-        self_cost  = total_cost * self_ratio
-        net_pnl_pct= round(net_pnl / self_cost * 100, 2) if self_cost > 0 else 0
-        gross_pnl_pct = round((cur_price-cost)/cost*100, 2) if cost>0 else 0
+        # 損益計算（對齊券商邏輯）
+        # 毛損益 = (現價 - 損平價) × 股數
+        gross_pnl = round((cur_price - breakeven) * shares)
+        # 淨損益 = 毛損益 - 賣出手續費 - 交易稅 - 融資利息
+        net_pnl   = gross_pnl - sell_fee - sell_tax - margin_interest
+
+        # 報酬率 = 淨損益 / 自備款(含買入手續費)
+        self_cost = (cost * shares + buy_fee) / margin if margin > 0 else cost * shares + buy_fee
+        net_pnl_pct   = round(net_pnl / self_cost * 100, 2)   if self_cost > 0 else 0
+        gross_pnl_pct = round((cur_price - cost) / cost * 100, 2) if cost > 0  else 0
 
         pred_today = preds.get(today, {}).get(code)
 
         result.append({
             **s,
+            "lots":            round(lots, 3),
+            "shares":          int(shares),
             "cur_price":       cur_price,
             "chg":             live.get("chg", 0),
             "chg_pct":         round(live.get("chg",0)/cur_price*100,2) if cur_price>0 else 0,
+            "breakeven":       breakeven,
             "pnl_pct":         gross_pnl_pct,
             "net_pnl_pct":     net_pnl_pct,
-            "pnl_amt":         int(gross_pnl),
-            "net_pnl_amt":     int(net_pnl),
+            "pnl_amt":         gross_pnl,
+            "net_pnl_amt":     net_pnl,
             "buy_fee":         buy_fee,
             "sell_fee":        sell_fee,
             "sell_tax":        sell_tax,
             "margin_interest": margin_interest,
             "total_fee":       buy_fee + sell_fee + sell_tax + margin_interest,
+            "self_cost":       round(self_cost),
             "pred_today":      pred_today,
             "last_update":     preds.get("_updated","—"),
         })
@@ -1353,14 +1376,17 @@ def add_portfolio():
     stocks = load_portfolio()
     stocks = [s for s in stocks if s["code"] != code]
     stocks.append({
-        "code":     code,
-        "name":     name,
-        "cost":     float(body.get("cost", 0)),
-        "qty":      int(body.get("qty", 1)),
-        "group":    int(body.get("group", 0)),
-        "margin":   float(body.get("margin", 1.0)),
-        "buy_date": body.get("buy_date", datetime.now().strftime("%Y-%m-%d")),
-        "added":    datetime.now().strftime("%Y-%m-%d"),
+        "code":         code,
+        "name":         name,
+        "cost":         float(body.get("cost", 0)),
+        "qty":          float(body.get("qty", 1)),
+        "qty_unit":     body.get("qty_unit", "lot"),   # "lot"=張, "share"=股
+        "group":        int(body.get("group", 0)),
+        "margin":       float(body.get("margin", 1.0)),
+        "buy_date":     body.get("buy_date", datetime.now().strftime("%Y-%m-%d")),
+        "fee_discount": float(body.get("fee_discount", 0.6)),  # 手續費折扣
+        "is_etf":       bool(body.get("is_etf", False)),
+        "added":        datetime.now().strftime("%Y-%m-%d"),
     })
     save_portfolio(stocks)
     return jsonify({"ok": True, "count": len(stocks)})
