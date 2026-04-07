@@ -1213,12 +1213,6 @@ def predict_progress(task_id):
     if not prog: return jsonify({"error":"找不到任務"}),404
     return jsonify(prog)
 
-@app.route("/api/predict/progress/<task_id>")
-def predict_progress(task_id):
-    prog=_predict_tasks.get(task_id)
-    if not prog: return jsonify({"error":"找不到任務"}),404
-    return jsonify(prog)
-
 # ══════════════════════════════════════════════════════
 # 持股管理 + 每日自動預測
 # ══════════════════════════════════════════════════════
