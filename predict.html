@@ -200,10 +200,46 @@ tr:hover td{background:rgba(255,255,255,.015);}
 
   <!-- 特徵說明 -->
   <div style="background:var(--s2);border:1px solid var(--bd);border-radius:9px;padding:12px 14px;margin-bottom:14px;font-size:.76rem;color:var(--dim);line-height:1.8;">
-    🌲 <strong style="color:var(--txt)">隨機森林模型 — 29 個技術特徵</strong><br>
-    動量：KD差、RSI超買賣 ／ 趨勢：MACD方向、布林位置寬度 ／
-    均線：距MA5/10/20/60偏離、均線多空排列 ／ 量能：量比、量能趨勢 ／
-    型態：K線實體、上下影線 ／ 連續性：連漲/連跌天數 ／ 波動：ATR、振幅
+    🌲 <strong style="color:var(--txt)">隨機森林升級版 — 39 個特徵</strong><br>
+    <span style="color:var(--gold);">★ FinMind</span>
+    <strong style="color:var(--txt)"> 三大法人歷史資料</strong>：外資、投信、自營商每日買賣超（千張），10日累積動向<br>
+    <span style="color:var(--gold);">★ FinMind</span>
+    <strong style="color:var(--txt)"> 基本面評等</strong>：PER本益比、PBR股淨比、殖利率 → 估值合理性評分<br>
+    技術面：KD差、RSI、MACD、布林、均線多空排列、量比、K線型態、ATR 等 29 個指標
+  </div>
+
+  <!-- FinMind Token 設定 -->
+  <div id="finmindBox" style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.2);
+    border-radius:9px;padding:12px 14px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+      <div style="font-size:.78rem;font-weight:700;color:var(--gold);">
+        🔑 FinMind API Token
+        <span id="tokenStatus" style="font-size:.7rem;font-weight:400;margin-left:8px;color:var(--dim);">載入中...</span>
+      </div>
+      <button onclick="toggleTokenInput()" id="tokenToggleBtn"
+        style="padding:4px 12px;border-radius:6px;border:1px solid rgba(240,180,41,.3);
+        background:transparent;color:var(--gold);font-size:.74rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">
+        設定 Token
+      </button>
+    </div>
+    <div id="tokenInputArea" style="display:none;">
+      <div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;line-height:1.6;">
+        前往 <a href="https://finmindtrade.com" target="_blank"
+          style="color:var(--gold);">finmindtrade.com</a> 免費註冊，驗證信箱後在「個人資訊」取得 Token。
+        有 Token 可取得三大法人歷史資料 + PER/PBR 基本面資料（提升準確率）。
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input class="fi" id="finmindToken" type="text" placeholder="貼上 FinMind Token..."
+          style="flex:1;font-family:monospace;font-size:.8rem;">
+        <button onclick="saveFinmindToken()"
+          style="padding:8px 16px;border-radius:7px;border:none;background:var(--gold);
+          color:#000;font-weight:700;font-size:.8rem;cursor:pointer;white-space:nowrap;
+          font-family:'Noto Sans TC',sans-serif;">
+          💾 儲存驗證
+        </button>
+      </div>
+      <div id="tokenMsg" style="font-size:.72rem;margin-top:6px;min-height:16px;"></div>
+    </div>
   </div>
 
   <button class="run-btn" id="runBtn" onclick="runPredict()">🌲 開始訓練並預測</button>
@@ -511,6 +547,62 @@ function renderPriceChart(history, predictions) {
     }
   });
 }
+
+// ── FinMind Token 管理 ────────────────────────────────
+async function loadTokenStatus() {
+  try {
+    const r = await fetch(`${API}/api/settings/finmind_token`);
+    const d = await r.json();
+    const el = document.getElementById('tokenStatus');
+    const btn = document.getElementById('tokenToggleBtn');
+    if (d.has_token) {
+      el.textContent  = `✅ 已設定（${d.masked}）`;
+      el.style.color  = 'var(--grn)';
+      btn.textContent = '修改 Token';
+    } else {
+      el.textContent  = '⚠️ 未設定（僅用技術指標，無法人資料）';
+      el.style.color  = 'var(--dim)';
+      btn.textContent = '設定 Token';
+    }
+  } catch(e) {
+    document.getElementById('tokenStatus').textContent = '（無法取得狀態）';
+  }
+}
+
+function toggleTokenInput() {
+  const area = document.getElementById('tokenInputArea');
+  area.style.display = area.style.display === 'none' ? 'block' : 'none';
+}
+
+async function saveFinmindToken() {
+  const token = document.getElementById('finmindToken').value.trim();
+  const msg   = document.getElementById('tokenMsg');
+  if (!token) { msg.textContent='請輸入 Token'; msg.style.color='var(--red)'; return; }
+  msg.textContent='驗證中...'; msg.style.color='var(--dim)';
+  try {
+    const r = await fetch(`${API}/api/settings/finmind_token`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({token}),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      msg.textContent = '✅ ' + d.msg;
+      msg.style.color = 'var(--grn)';
+      document.getElementById('finmindToken').value = '';
+      document.getElementById('tokenInputArea').style.display = 'none';
+      loadTokenStatus();
+    } else {
+      msg.textContent = '❌ ' + (d.error || '儲存失敗');
+      msg.style.color = 'var(--red)';
+    }
+  } catch(e) {
+    msg.textContent = '❌ 連線失敗：' + e.message;
+    msg.style.color = 'var(--red)';
+  }
+}
+
+// 初始化
+loadTokenStatus();
 </script>
 </body>
 </html>
