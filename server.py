@@ -1384,24 +1384,77 @@ def add_portfolio():
     body  = request.get_json()
     code  = body.get("code","").strip()
     if not code: return jsonify({"error":"請填入股票代號"}), 400
-    name   = body.get("name", code)
+    # 自動查詢股票名稱（若未傳入）
+    name = body.get("name", "").strip()
+    if not name or name == code:
+        try:
+            url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+            resp = SESSION.get(url, timeout=8)
+            if resp.ok:
+                for r in resp.json():
+                    if r.get("Code","") == code:
+                        name = r.get("Name", code)
+                        break
+        except: pass
+    if not name: name = code
+
     stocks = load_portfolio()
-    stocks = [s for s in stocks if s["code"] != code]
+    # 如果已存在，保留 added 欄位（編輯時不覆蓋原始加入日）
+    existing = next((s for s in stocks if s["code"] == code), None)
+    added    = existing.get("added", datetime.now().strftime("%Y-%m-%d")) if existing else datetime.now().strftime("%Y-%m-%d")
+    stocks   = [s for s in stocks if s["code"] != code]
     stocks.append({
         "code":         code,
         "name":         name,
         "cost":         float(body.get("cost", 0)),
         "qty":          float(body.get("qty", 1)),
-        "qty_unit":     body.get("qty_unit", "lot"),   # "lot"=張, "share"=股
+        "qty_unit":     body.get("qty_unit", "lot"),
         "group":        int(body.get("group", 0)),
         "margin":       float(body.get("margin", 1.0)),
         "buy_date":     body.get("buy_date", datetime.now().strftime("%Y-%m-%d")),
-        "fee_discount": float(body.get("fee_discount", 0.6)),  # 手續費折扣
+        "fee_discount": float(body.get("fee_discount", 0.6)),
         "is_etf":       bool(body.get("is_etf", False)),
-        "added":        datetime.now().strftime("%Y-%m-%d"),
+        "added":        added,
     })
     save_portfolio(stocks)
-    return jsonify({"ok": True, "count": len(stocks)})
+    return jsonify({"ok": True, "name": name, "count": len(stocks)})
+
+@app.route("/api/portfolio/<code>", methods=["PATCH"])
+def edit_portfolio(code):
+    """直接編輯持股的特定欄位，不影響其他欄位"""
+    body   = request.get_json()
+    stocks = load_portfolio()
+    stock  = next((s for s in stocks if s["code"] == code), None)
+    if not stock: return jsonify({"error": f"找不到 {code}"}), 404
+
+    # 只更新有傳入的欄位
+    editable = ["cost","qty","qty_unit","buy_date","margin","fee_discount","is_etf","group","name"]
+    for field in editable:
+        if field in body:
+            val = body[field]
+            if field in ("cost","margin","fee_discount","qty"):
+                val = float(val)
+            elif field == "group":
+                val = int(val)
+            elif field == "is_etf":
+                val = bool(val)
+            stock[field] = val
+
+    save_portfolio(stocks)
+    return jsonify({"ok": True, "stock": stock})
+
+@app.route("/api/stock_name/<code>")
+def get_stock_name(code):
+    """查詢股票名稱"""
+    try:
+        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        resp = SESSION.get(url, timeout=8)
+        if resp.ok:
+            for r in resp.json():
+                if r.get("Code","") == code:
+                    return jsonify({"code": code, "name": r.get("Name", code)})
+    except: pass
+    return jsonify({"code": code, "name": code})
 
 @app.route("/api/portfolio/<code>", methods=["DELETE"])
 def del_portfolio(code):

@@ -176,12 +176,17 @@ header{padding:16px 0 13px;border-bottom:1px solid var(--bd);margin-bottom:18px;
 
 /* sell modal */
 .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:100;
-  display:none;align-items:center;justify-content:center;}
+  display:none;align-items:center;justify-content:center;padding:16px;}
 .modal-bg.open{display:flex;}
 .modal{background:var(--s1);border:1px solid var(--bd);border-radius:14px;
-  padding:22px;width:min(400px,90vw);}
-.modal-title{font-size:1rem;font-weight:700;margin-bottom:16px;}
-.modal-grid{display:grid;gap:10px;margin-bottom:16px;}
+  padding:20px;width:min(480px,100%);max-height:90vh;overflow-y:auto;}
+.modal-title{font-size:.98rem;font-weight:700;margin-bottom:14px;
+  display:flex;align-items:center;justify-content:space-between;}
+.modal-close{background:none;border:none;color:var(--dim);font-size:1.2rem;
+  cursor:pointer;padding:2px 6px;border-radius:4px;}
+.modal-close:hover{color:var(--txt);}
+.modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:14px;}
+@media(max-width:400px){.modal-grid{grid-template-columns:1fr;}}
 .modal-btns{display:flex;gap:8px;justify-content:flex-end;}
 
 /* history table */
@@ -407,8 +412,11 @@ header{padding:16px 0 13px;border-bottom:1px solid var(--bd);margin-bottom:18px;
 <!-- 賣出 Modal -->
 <div class="modal-bg" id="sellModal">
   <div class="modal">
-    <div class="modal-title">📤 賣出持股 — <span id="sellCodeLabel"></span></div>
-    <div class="modal-grid">
+    <div class="modal-title">
+      📤 賣出持股 — <span id="sellCodeLabel"></span>
+      <button class="modal-close" onclick="closeSellModal()">✕</button>
+    </div>
+    <div class="modal-grid" style="grid-template-columns:1fr 1fr;">
       <div class="fg">
         <label class="fl">賣出價格（元）</label>
         <input class="fi" id="sellPrice" type="number" step="0.01" placeholder="輸入賣出價格">
@@ -417,11 +425,80 @@ header{padding:16px 0 13px;border-bottom:1px solid var(--bd);margin-bottom:18px;
         <label class="fl">賣出日期</label>
         <input class="fi" id="sellDate" type="date">
       </div>
-      <div id="sellPreview" style="background:var(--s2);border-radius:8px;padding:10px;font-size:.78rem;display:none;"></div>
+      <div id="sellPreview" style="grid-column:1/-1;background:var(--s2);border-radius:8px;
+        padding:10px;font-size:.78rem;display:none;"></div>
     </div>
     <div class="modal-btns">
       <button class="btn btn-sm" onclick="closeSellModal()" style="border-color:var(--bd);">取消</button>
       <button class="btn btn-gold" onclick="confirmSell()">確認賣出並記錄</button>
+    </div>
+  </div>
+</div>
+
+<!-- 編輯持股 Modal -->
+<div class="modal-bg" id="editModal">
+  <div class="modal">
+    <div class="modal-title">
+      ✏️ 編輯持股 — <span id="editCodeLabel" style="color:var(--grn);"></span>
+      <button class="modal-close" onclick="closeEditModal()">✕</button>
+    </div>
+    <div class="modal-grid">
+      <div class="fg">
+        <label class="fl">股票名稱</label>
+        <input class="fi" id="editName" type="text" placeholder="名稱">
+      </div>
+      <div class="fg">
+        <label class="fl">成本均價（元）</label>
+        <input class="fi" id="editCost" type="number" step="0.01">
+      </div>
+      <div class="fg">
+        <label class="fl">持有數量</label>
+        <div style="display:flex;gap:5px;">
+          <input class="fi" id="editQty" type="number" step="1" style="flex:1;">
+          <select class="fs" id="editQtyUnit" style="width:68px;flex-shrink:0;">
+            <option value="share">股</option>
+            <option value="lot">張</option>
+          </select>
+        </div>
+      </div>
+      <div class="fg">
+        <label class="fl">買入日期</label>
+        <input class="fi" id="editDate" type="date">
+      </div>
+      <div class="fg">
+        <label class="fl">融資</label>
+        <select class="fs" id="editMargin">
+          <option value="1.0">現股</option>
+          <option value="1.6">融資6成</option>
+          <option value="1.7">融資7成</option>
+          <option value="2.0">融資全額</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label class="fl">手續費折扣</label>
+        <select class="fs" id="editFeeDiscount">
+          <option value="1.0">原價</option>
+          <option value="0.6">6折</option>
+          <option value="0.5">5折</option>
+          <option value="0.28">2.8折</option>
+          <option value="0.1">1折</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label class="fl">類型</label>
+        <select class="fs" id="editIsEtf">
+          <option value="0">一般股（0.3%）</option>
+          <option value="1">ETF（0.1%）</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label class="fl">群組</label>
+        <select class="fs" id="editGroup"></select>
+      </div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn btn-sm" onclick="closeEditModal()">取消</button>
+      <button class="btn btn-grn" onclick="confirmEdit()">💾 儲存變更</button>
     </div>
   </div>
 </div>
@@ -586,6 +663,7 @@ function buildCard(s){
       </div>
       <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end;">
         <button class="btn btn-red" onclick="openSellModal('${s.code}')" style="font-size:.76rem;padding:6px 11px;">📤 賣出</button>
+        <button class="btn" onclick="openEditModal('${s.code}')" style="font-size:.76rem;padding:6px 11px;background:rgba(61,139,255,.15);color:var(--blu);border:1px solid rgba(61,139,255,.3);">✏️ 編輯</button>
         <button class="btn-sm" onclick="delStock('${s.code}')">✕ 移除</button>
         <select style="background:var(--s2);border:1px solid var(--bd);border-radius:5px;
           color:var(--dim);font-size:.69rem;padding:3px 5px;cursor:pointer;font-family:'Noto Sans TC',sans-serif;"
@@ -690,7 +768,89 @@ function buildActions(dir,conf,probs,pnlPct,rLow,rHigh,cur,tp,sl){
   return acts.map(a=>`<div class="action-card ${a.cls}"><span class="ac-icon">${a.icon}</span><div class="ac-text"><div class="ac-title">${a.title}</div><div style="color:var(--dim);">${a.desc}</div></div></div>`).join('');
 }
 
-// ── 新增/刪除/移群組 ─────────────────────────────────
+// ── 自動查詢股票名稱 ─────────────────────────────────
+let nameTimer = null;
+document.addEventListener('DOMContentLoaded', () => {
+  const codeInput = document.getElementById('addCode');
+  const nameHint  = document.createElement('div');
+  nameHint.style.cssText = 'font-size:.72rem;color:var(--grn);margin-top:3px;height:16px;';
+  codeInput?.parentNode?.appendChild(nameHint);
+
+  codeInput?.addEventListener('input', () => {
+    const code = codeInput.value.trim();
+    clearTimeout(nameTimer);
+    if (code.length < 4) { nameHint.textContent=''; return; }
+    nameHint.textContent = '查詢中...';
+    nameTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/api/stock_name/${code}`,
+                               {signal: AbortSignal.timeout(6000)});
+        const d = await r.json();
+        nameHint.textContent = d.name !== code ? `✓ ${d.name}` : '（查無名稱）';
+        nameHint.style.color = d.name !== code ? 'var(--grn)' : 'var(--dim)';
+      } catch(e) { nameHint.textContent = ''; }
+    }, 600);
+  });
+
+  document.getElementById('addDate').value = new Date().toISOString().split('T')[0];
+  document.getElementById('addQty')?.addEventListener('input', updateQtyHint);
+});
+
+// ── 編輯持股 Modal ────────────────────────────────────
+let editCode = '';
+
+function openEditModal(code) {
+  const s = portfolioData.find(x => x.code === code);
+  if (!s) return;
+  editCode = code;
+  document.getElementById('editCodeLabel').textContent = `${code} ${s.name||''}`;
+  document.getElementById('editName').value       = s.name || code;
+  document.getElementById('editCost').value       = s.cost || '';
+  document.getElementById('editQty').value        = s.qty  || '';
+  document.getElementById('editQtyUnit').value    = s.qty_unit || 'lot';
+  document.getElementById('editDate').value       = s.buy_date || s.added || '';
+  document.getElementById('editMargin').value     = String(s.margin || 1.0);
+  document.getElementById('editFeeDiscount').value= String(s.fee_discount || 0.6);
+  document.getElementById('editIsEtf').value      = s.is_etf ? '1' : '0';
+
+  // 填入群組選單
+  const grpSel = document.getElementById('editGroup');
+  grpSel.innerHTML = groupNames.map((n,i) =>
+    `<option value="${i}" ${i===(s.group??0)?'selected':''}>${n}</option>`).join('');
+
+  document.getElementById('editModal').classList.add('open');
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').classList.remove('open');
+}
+
+async function confirmEdit() {
+  const body = {
+    name:         document.getElementById('editName').value.trim(),
+    cost:         parseFloat(document.getElementById('editCost').value) || 0,
+    qty:          parseFloat(document.getElementById('editQty').value)  || 0,
+    qty_unit:     document.getElementById('editQtyUnit').value,
+    buy_date:     document.getElementById('editDate').value,
+    margin:       parseFloat(document.getElementById('editMargin').value) || 1,
+    fee_discount: parseFloat(document.getElementById('editFeeDiscount').value) || 0.6,
+    is_etf:       document.getElementById('editIsEtf').value === '1',
+    group:        parseInt(document.getElementById('editGroup').value) || 0,
+  };
+  if (!body.qty) { showToast('請輸入數量','err'); return; }
+  try {
+    const r = await fetch(`${API}/api/portfolio/${editCode}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      closeEditModal();
+      showToast(`✅ ${editCode} 已更新`,'ok');
+      loadPortfolio();
+    } else throw new Error(d.error);
+  } catch(e) { showToast('儲存失敗：'+e.message,'err'); }
+}
 async function addStock(){
   const code=document.getElementById('addCode').value.trim().toUpperCase();
   const cost=parseFloat(document.getElementById('addCost').value)||0;
@@ -721,20 +881,16 @@ async function addStock(){
 }
 
 function updateQtyHint(){
-  const unit=document.getElementById('addQtyUnit').value;
-  const qty=parseFloat(document.getElementById('addQty').value)||0;
+  const unit=document.getElementById('addQtyUnit')?.value||'lot';
+  const qty=parseFloat(document.getElementById('addQty')?.value)||0;
   const hint=document.getElementById('qtyHint');
   if(!hint)return;
   if(unit==='share'){
-    const lots=(qty/1000).toFixed(qty%1000===0?0:3);
-    hint.textContent=qty>0?`${qty}股 = ${lots}張`:'輸入股數，系統自動換算';
+    hint.textContent=qty>0?`${qty.toLocaleString()}股 = ${(qty/1000).toFixed(qty%1000===0?0:2)}張`:'輸入股數，自動換算';
   }else{
     hint.textContent=qty>0?`${qty}張 = ${(qty*1000).toLocaleString()}股`:'1張 = 1,000股';
   }
 }
-document.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('addQty')?.addEventListener('input',updateQtyHint);
-});
 
 async function delStock(code){
   if(!confirm(`確定移除 ${code}？`))return;
@@ -1009,7 +1165,6 @@ function showToast(msg,type='ok'){
 }
 
 // ── Init ──────────────────────────────────────────────
-document.getElementById('addDate').value=new Date().toISOString().split('T')[0];
 syncGroupSelect();
 loadPortfolio();
 </script>
