@@ -917,19 +917,277 @@ def market_backtest_progress(task_id):
 # API 路由 - 隨機森林預測（升級版）
 # ══════════════════════════════════════════════════════
 
-FEATURE_NAMES = [
-    "K值","D值","KD差","RSI(14)","RSI超買賣",
-    "MACD","MACD方向","布林位置","布林寬度",
-    "距MA5(%)","距MA10(%)","距MA20(%)","距MA60(%)",
-    "MA5vsMA20","MA20vsMA60",
-    "量比5日","量比20日","量能趨勢",
-    "近3日漲跌","近5日漲跌","近10日漲跌","近20日漲跌",
-    "ATR%","高低振幅%",
-    "實體大小","上影線","下影線",
-    "連漲天數","連跌天數",
-]
+# FinMind 資料快取
+_finmind_cache = {}
+FINMIND_URL    = "https://api.finmindtrade.com/api/v4/data"
 
-def _build_all_features(closes, highs, lows, vols):
+FINMIND_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "finmind_token.json")
+
+def _get_finmind_token():
+    """讀取 FinMind Token：優先環境變數，其次本地檔案"""
+    import os
+    token = os.environ.get("FINMIND_TOKEN", "")
+    if token: return token
+    try:
+        if os.path.exists(FINMIND_TOKEN_FILE):
+            with open(FINMIND_TOKEN_FILE, encoding="utf-8") as f:
+                return json.load(f).get("token", "")
+    except: pass
+    return ""
+
+def _save_finmind_token(token):
+    with open(FINMIND_TOKEN_FILE, "w", encoding="utf-8") as f:
+        json.dump({"token": token}, f)
+
+@app.route("/api/settings/finmind_token", methods=["GET"])
+def get_finmind_token_api():
+    token = _get_finmind_token()
+    masked = token[:6]+"****"+token[-4:] if len(token) > 10 else ("已設定" if token else "")
+    return jsonify({"has_token": bool(token), "masked": masked})
+
+@app.route("/api/settings/finmind_token", methods=["POST"])
+def set_finmind_token_api():
+    body  = request.get_json()
+    token = body.get("token","").strip()
+    if not token: return jsonify({"error": "Token 不能為空"}), 400
+    # 用 TaiwanStockInfo 驗證（不需要 data_id，流量少）
+    try:
+        r = SESSION.get(FINMIND_URL, params={
+            "dataset": "TaiwanStockInfo",
+        }, headers={"Authorization": f"Bearer {token}"}, timeout=12)
+        d = r.json()
+        status = d.get("status", 0)
+        if status != 200:
+            msg = d.get("msg", "未知錯誤")
+            # 常見狀況：402 是超過使用量，401 是 token 無效
+            if status == 401:
+                return jsonify({"error": "Token 無效，請重新確認"}), 400
+            elif status == 402:
+                # 超過免費額度但 token 本身有效，仍允許儲存
+                pass
+            else:
+                return jsonify({"error": f"驗證失敗（{status}）：{msg}"}), 400
+    except Exception as e:
+        return jsonify({"error": f"無法連線到 FinMind：{str(e)}"}), 400
+    _save_finmind_token(token)
+    _finmind_cache.clear()
+    return jsonify({"ok": True, "msg": "FinMind Token 已儲存，下次預測將自動使用法人資料！"})
+
+def fetch_finmind(dataset, code, start_date, end_date=""):
+    """
+    通用 FinMind API 呼叫
+    - 無 token：免費版 300次/小時
+    - 有 token：600次/小時
+    """
+    cache_key = f"{dataset}_{code}_{start_date[:7]}"
+    if cache_key in _finmind_cache:
+        return _finmind_cache[cache_key]
+
+    params = {
+        "dataset":    dataset,
+        "data_id":    code,
+        "start_date": start_date,
+    }
+    if end_date:
+        params["end_date"] = end_date
+
+    token = _get_finmind_token()
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        r = SESSION.get(FINMIND_URL, params=params, headers=headers, timeout=15)
+        data = r.json()
+        if data.get("status") == 200:
+            result = data.get("data", [])
+            _finmind_cache[cache_key] = result
+            print(f"  [FinMind] {dataset} {code}: {len(result)} 筆")
+            return result
+        else:
+            msg = data.get("msg","unknown")
+            print(f"  [FinMind] {dataset} {code} 失敗: {msg}")
+            return []
+    except Exception as e:
+        print(f"  [FinMind] {dataset} {code} 例外: {e}")
+        return []
+
+def fetch_institutional_finmind(code, start_date, end_date):
+    """
+    FinMind 三大法人買賣超
+    dataset: TaiwanStockInstitutionalInvestorsBuySell
+    欄位: date, stock_id, name(外資/投信/自營商), buy, sell
+    回傳: {date: {foreign_net, trust_net, dealer_net, total_net}}
+    """
+    rows = fetch_finmind("TaiwanStockInstitutionalInvestorsBuySell",
+                         code, start_date, end_date)
+    result = {}
+    for row in rows:
+        date = row.get("date","")[:10]
+        name = row.get("name","")
+        buy  = int(str(row.get("buy",0)).replace(",","") or 0)
+        sell = int(str(row.get("sell",0)).replace(",","") or 0)
+        net  = buy - sell
+        if date not in result:
+            result[date] = {"foreign_net":0,"trust_net":0,"dealer_net":0,"total_net":0}
+        if "外資" in name:
+            result[date]["foreign_net"] += net
+        elif "投信" in name:
+            result[date]["trust_net"]   += net
+        elif "自營" in name:
+            result[date]["dealer_net"]  += net
+        result[date]["total_net"] = (result[date]["foreign_net"] +
+                                     result[date]["trust_net"]   +
+                                     result[date]["dealer_net"])
+    return result
+
+def fetch_per_finmind(code, start_date):
+    """
+    FinMind PER/PBR/殖利率
+    dataset: TaiwanStockPER
+    欄位: date, stock_id, PER, PBR, DividendYield
+    回傳: {date: {per, pbr, yield_pct}}
+    """
+    rows = fetch_finmind("TaiwanStockPER", code, start_date)
+    result = {}
+    for row in rows:
+        date = row.get("date","")[:10]
+        result[date] = {
+            "per":        float(row.get("PER",0)  or 0),
+            "pbr":        float(row.get("PBR",0)  or 0),
+            "yield_pct":  float(row.get("DividendYield",0) or 0),
+        }
+    return result
+
+# 分析師評等特徵名稱對應
+ANALYST_LABELS = {-2:"強烈賣出", -1:"賣出", 0:"中立", 1:"買入", 2:"強烈買入"}
+
+def _analyst_score_finmind(closes, highs, lows, vols, i,
+                            inst_map=None, per_map=None, dates=None):
+    """
+    結合 FinMind 真實資料的分析師評等模型：
+    1. 法人連續買超方向（外資、投信主導）
+    2. 基本面評估（PER、殖利率是否合理）
+    3. 技術面趨勢強度
+
+    回傳：(score, tp_pct, detail_dict)
+    """
+    if i < 60: return 0, 0, {}
+
+    def ma(n): return sma(closes[max(0,i-n+1):i+1], n)
+    def vma(n): return sma(vols[max(0,i-n+1):i+1], n)
+
+    ma20  = ma(20); ma60 = ma(60); ma120 = ma(120) if i >= 120 else ma(60)
+    c     = closes[i]
+    score = 0
+    details = {}
+
+    # ① 技術面趨勢（-3 ~ +3）
+    tech = 0
+    if c > ma20 > ma60:     tech += 1
+    if ma20 > ma60 > ma120: tech += 1
+    if c < ma20 < ma60:     tech -= 1
+    if ma20 < ma60 < ma120: tech -= 1
+    # 季線突破
+    if i > 0:
+        if c > ma60 and closes[i-1] <= ma(60): tech += 1
+        if c < ma60 and closes[i-1] >= ma(60): tech -= 1
+    # 量能確認
+    v20 = vma(20)
+    if v20 > 0 and i > 0:
+        vol_r = vols[i] / v20
+        daily_ret = (c - closes[i-1]) / closes[i-1]
+        if daily_ret > 0.02 and vol_r > 1.5:  tech += 1
+        if daily_ret < -0.02 and vol_r > 1.5: tech -= 1
+    score += max(-2, min(2, tech))
+    details["技術評分"] = tech
+
+    # ② 法人動向（使用 FinMind 資料）
+    inst_score = 0
+    if inst_map and dates and i < len(dates):
+        # 取近 10 個交易日的法人買賣超
+        cur_date = dates[i]
+        recent_dates = sorted([d for d in inst_map.keys() if d <= cur_date])[-10:]
+        if recent_dates:
+            foreign_sum = sum(inst_map[d].get("foreign_net",0) for d in recent_dates)
+            trust_sum   = sum(inst_map[d].get("trust_net",  0) for d in recent_dates)
+            total_sum   = sum(inst_map[d].get("total_net",  0) for d in recent_dates)
+            # 外資連續買超：最重要訊號
+            if foreign_sum > 5000:   inst_score += 2   # 大買超 (5000張以上)
+            elif foreign_sum > 1000: inst_score += 1
+            elif foreign_sum < -5000: inst_score -= 2
+            elif foreign_sum < -1000: inst_score -= 1
+            # 投信加碼
+            if trust_sum > 500:   inst_score += 1
+            elif trust_sum < -500: inst_score -= 1
+            details["外資10日"] = round(foreign_sum/1000,1)
+            details["投信10日"] = round(trust_sum/1000,1)
+        score += max(-2, min(2, inst_score))
+    details["法人評分"] = inst_score
+
+    # ③ 基本面評估（使用 FinMind PER 資料）
+    fund_score = 0
+    if per_map and dates and i < len(dates):
+        cur_date = dates[i]
+        recent_per_dates = sorted([d for d in per_map.keys() if d <= cur_date])
+        if recent_per_dates:
+            latest = per_map[recent_per_dates[-1]]
+            per    = latest.get("per", 0)
+            pbr    = latest.get("pbr", 0)
+            dy     = latest.get("yield_pct", 0)
+            # PER 合理範圍評估（台股平均約15~20倍）
+            if 0 < per < 15:   fund_score += 1   # 低本益比：便宜
+            elif per > 30:     fund_score -= 1   # 高本益比：貴
+            # 殖利率
+            if dy > 5:         fund_score += 1   # 高殖利率：支撐股價
+            elif dy < 1 and dy > 0: fund_score -= 1
+            # 股淨比
+            if 0 < pbr < 1:    fund_score += 1   # 跌破淨值：潛在價值
+            elif pbr > 3:      fund_score -= 1
+            details["PER"]    = per
+            details["殖利率"] = dy
+        score += max(-1, min(1, fund_score))   # 基本面影響稍小
+    details["基本面評分"] = fund_score
+
+    # 總評 -2 ~ +2
+    score = max(-2, min(2, score))
+
+    # 目標價推算（基於趨勢斜率）
+    slope = 0
+    if i >= 20 and closes[i-20] > 0:
+        slope = (c - closes[i-20]) / closes[i-20] / 20
+    tp_pct = round(slope * 60 * 100, 1)
+
+    return score, tp_pct, details
+
+FEATURE_NAMES = [
+    # 動量（5）
+    "K值","D值","KD差","RSI(14)","RSI超買賣",
+    # 趨勢（4）
+    "MACD","MACD方向","布林位置","布林寬度",
+    # 均線（7）
+    "距MA5(%)","距MA10(%)","距MA20(%)","距MA60(%)",
+    "MA5vsMA20","MA20vsMA60","MA20vsMA120",
+    # 量能（3）
+    "量比5日","量比20日","量能趨勢",
+    # 價格動能（4）
+    "近3日漲跌","近5日漲跌","近10日漲跌","近20日漲跌",
+    # 波動（2）
+    "ATR%","高低振幅%",
+    # K線型態（3）
+    "實體大小","上影線","下影線",
+    # 連續性（2）
+    "連漲天數","連跌天數",
+    # 三大法人-FinMind（5）
+    "外資買賣超(千張)","投信買賣超(千張)","自營買賣超(千張)",
+    "法人合計(千張)","外資強度",
+    # 分析師評等-FinMind（4）
+    "綜合評等分","法人評分","基本面評分","目標漲跌幅%",
+]  # 共 39 個特徵
+
+def _build_all_features(closes, highs, lows, vols,
+                        inst_map=None, per_map=None, dates=None):
+    """升級版：39個特徵，整合 FinMind 三大法人 + 基本面 + 分析師評等"""
     n = len(closes)
     k_ser, d_ser = calc_kd_series(closes, highs, lows, 9)
     rsi_ser      = calc_rsi_series(closes, 14)
@@ -948,6 +1206,7 @@ def _build_all_features(closes, highs, lows, vols):
         def ma(nn): return sma(closes[max(0,i-nn+1):i+1],nn)
         def vma(nn): return sma(vols[max(0,i-nn+1):i+1],nn)
         ma5=ma(5);ma10=ma(10);ma20=ma(20);ma60=ma(60)
+        ma120=ma(120) if i>=120 else ma60
         v5=vma(5);v20=vma(20)
         kv=k_ser[i];dv=d_ser[i]
         rsi=rsi_ser[i]
@@ -977,18 +1236,44 @@ def _build_all_features(closes, highs, lows, vols):
             if j<1: break
             if closes[j]<closes[j-1]: dn_d+=1
             else: break
+
+        # 三大法人特徵（FinMind 真實資料）
+        foreign_acc=trust_acc=dealer_acc=total_acc=0
+        if inst_map and dates and i<len(dates):
+            cur_date = dates[i]
+            recent = sorted([d for d in inst_map.keys() if d<=cur_date])[-5:]
+            for d in recent:
+                rec = inst_map.get(d,{})
+                foreign_acc += rec.get("foreign_net",0)
+                trust_acc   += rec.get("trust_net",0)
+                dealer_acc  += rec.get("dealer_net",0)
+                total_acc   += rec.get("total_net",0)
+        avg_vol    = vols[i] if vols[i]>0 else 1
+        foreign_r  = round(foreign_acc/avg_vol, 3) if avg_vol>0 else 0
+
+        # 分析師評等
+        a_score, tp_pct, a_det = _analyst_score_finmind(
+            closes, highs, lows, vols, i, inst_map, per_map, dates)
+        inst_s = a_det.get("法人評分",0)
+        fund_s = a_det.get("基本面評分",0)
+
         features.append([
             round(kv,1),round(dv,1),round(kv-dv,2),round(rsi,1),rsi_ob,
             round(macd_v,4),macd_dir,round(boll,4),bwid,
-            round((c-ma5)/ma5*100,2) if ma5>0 else 0,
-            round((c-ma10)/ma10*100,2) if ma10>0 else 0,
-            round((c-ma20)/ma20*100,2) if ma20>0 else 0,
-            round((c-ma60)/ma60*100,2) if ma60>0 else 0,
-            round((ma5-ma20)/ma20*100,2) if ma20>0 else 0,
-            round((ma20-ma60)/ma60*100,2) if ma60>0 else 0,
+            round((c-ma5)/ma5*100,2)   if ma5>0   else 0,
+            round((c-ma10)/ma10*100,2) if ma10>0  else 0,
+            round((c-ma20)/ma20*100,2) if ma20>0  else 0,
+            round((c-ma60)/ma60*100,2) if ma60>0  else 0,
+            round((ma5-ma20)/ma20*100,2)    if ma20>0  else 0,
+            round((ma20-ma60)/ma60*100,2)   if ma60>0  else 0,
+            round((ma20-ma120)/ma120*100,2) if ma120>0 else 0,
             vr5,vr20,vtrend,
             ret(3),ret(5),ret(10),ret(20),
             atr_p,hl_p,body,ush,lsh,up_d,dn_d,
+            round(foreign_acc/1000,1), round(trust_acc/1000,1),
+            round(dealer_acc/1000,1),  round(total_acc/1000,1),
+            round(foreign_r,3),
+            a_score, inst_s, fund_s, round(tp_pct,2),
         ])
     return features
 
@@ -1111,14 +1396,34 @@ def predict_start():
             cb("抓取歷史資料...",5)
             end_dt=datetime.today()
             start_dt=end_dt-timedelta(days=train_years*365+90)
-            records=fetch_history_range(code,start_dt.strftime("%Y-%m-%d"),end_dt.strftime("%Y-%m-%d"))
+            start_str=start_dt.strftime("%Y-%m-%d")
+            end_str  =end_dt.strftime("%Y-%m-%d")
+            records=fetch_history_range(code, start_str, end_str)
             if not records or len(records)<120:
                 raise ValueError(f"歷史資料不足（{len(records) if records else 0}筆）")
             closes=[r["close"] for r in records]; highs=[r["high"] for r in records]
             lows=[r["low"] for r in records]; vols=[r["vol"] for r in records]
             dates=[r["date"] for r in records]
-            cb(f"計算{len(FEATURE_NAMES)}個技術特徵...",18)
-            all_feats=_build_all_features(closes,highs,lows,vols)
+
+            cb("抓取三大法人買賣超資料（FinMind）...",14)
+            inst_map = {}
+            try:
+                inst_map = fetch_institutional_finmind(code, start_str, end_str)
+                print(f"  [法人] {code}: {len(inst_map)} 筆")
+            except Exception as e:
+                print(f"  [法人] 失敗（繼續）: {e}")
+
+            cb("抓取 PER / 殖利率資料（FinMind）...",17)
+            per_map = {}
+            try:
+                per_map = fetch_per_finmind(code, start_str)
+                print(f"  [PER] {code}: {len(per_map)} 筆")
+            except Exception as e:
+                print(f"  [PER] 失敗（繼續）: {e}")
+
+            cb(f"計算 {len(FEATURE_NAMES)} 個技術+法人+基本面特徵...", 22)
+            all_feats = _build_all_features(closes, highs, lows, vols,
+                                            inst_map, per_map, dates)
             cb("建立訓練樣本...",30)
             X,y=[],[]
             for i in range(60,len(closes)-pred_days):
@@ -1696,12 +2001,11 @@ def run_daily_predictions():
         print(f"  [{code}] {name} 現價:{cur} 持倉損益:{pnl_pct:+.1f}%")
 
         try:
-            # 抓 2 年歷史 → 建隨機森林
             end_dt   = datetime.today()
             start_dt = end_dt - timedelta(days=2*365+90)
-            records  = fetch_history_range(code,
-                           start_dt.strftime("%Y-%m-%d"),
-                           end_dt.strftime("%Y-%m-%d"))
+            start_str= start_dt.strftime("%Y-%m-%d")
+            end_str  = end_dt.strftime("%Y-%m-%d")
+            records  = fetch_history_range(code, start_str, end_str)
 
             if not records or len(records) < 120:
                 results[code] = {"error": "資料不足"}
@@ -1710,7 +2014,19 @@ def run_daily_predictions():
             closes=[r["close"] for r in records]; highs=[r["high"] for r in records]
             lows=[r["low"] for r in records];     vols=[r["vol"]   for r in records]
 
-            all_feats = _build_all_features(closes, highs, lows, vols)
+            # 抓 FinMind 法人 + PER 資料
+            inst_map = {}
+            per_map  = {}
+            try:
+                inst_map = fetch_institutional_finmind(code, start_str, end_str)
+            except: pass
+            try:
+                per_map = fetch_per_finmind(code, start_str)
+            except: pass
+
+            all_feats = _build_all_features(closes, highs, lows, vols,
+                                            inst_map, per_map,
+                                            [r["date"] for r in records])
 
             # 建立訓練樣本（預測10日後）
             X, y = [], []
