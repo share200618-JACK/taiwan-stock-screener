@@ -1384,6 +1384,8 @@ def predict_start():
     pred_days=int(body.get("predict_days",10))
     threshold=float(body.get("threshold",3))
     n_trees=int(body.get("n_trees",15))
+    # 自訂特徵索引（前端傳入選取的特徵索引列表，空=全用）
+    selected_feat_idx = body.get("selected_features", [])
     if not code: return jsonify({"error":"請填入股票代號"}),400
     task_id=str(_u.uuid4())[:8]
     _predict_tasks[task_id]={"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
@@ -1424,18 +1426,25 @@ def predict_start():
             cb(f"計算 {len(FEATURE_NAMES)} 個技術+法人+基本面特徵...", 22)
             all_feats = _build_all_features(closes, highs, lows, vols,
                                             inst_map, per_map, dates)
-            cb("建立訓練樣本...",30)
+
+            # 確定使用的特徵索引
+            valid_idx = [i for i in selected_feat_idx
+                         if isinstance(i, int) and 0 <= i < len(FEATURE_NAMES)]
+            if not valid_idx:
+                valid_idx = list(range(len(FEATURE_NAMES)))  # 全選
+            used_names = [FEATURE_NAMES[i] for i in valid_idx]
+            cb(f"建立訓練樣本（使用 {len(valid_idx)} 個特徵）...", 30)
             X,y=[],[]
             for i in range(60,len(closes)-pred_days):
                 f=all_feats[i]
                 if f is None: continue
                 ret=(closes[i+pred_days]-closes[i])/closes[i]*100
                 y.append("漲" if ret>threshold else "跌" if ret<-threshold else "持平")
-                X.append(f)
+                X.append([f[j] for j in valid_idx])
             if len(X)<50: raise ValueError(f"訓練樣本不足（{len(X)}筆）")
             X_bal,y_bal=oversample_minority(X,y,0.85)
             cb(f"樣本平衡：{len(X_bal)}筆（原{len(X)}）",35)
-            n_feat=len(FEATURE_NAMES); max_f=max(1,int(n_feat**0.5))
+            n_feat=len(valid_idx); max_f=max(1,int(n_feat**0.5))
             cb("交叉驗證...",42)
             n=len(X); fs=n//3; accs,pu_l,pd_l,pf_l=[],[],[],[]
             for fold in range(3):
@@ -1478,12 +1487,14 @@ def predict_start():
             cb("預測未來走勢...",90)
             last_feat=all_feats[-1]; predictions=[]
             if last_feat:
-                pred_label,conf,probs=random_forest_predict(final_trees,last_feat)
+                last_feat_sel = [last_feat[j] for j in valid_idx]
+                pred_label,conf,probs=random_forest_predict(final_trees,last_feat_sel)
                 same_rets=[]
                 for i in range(60,len(closes)-pred_days):
                     f2=all_feats[i]
                     if f2 is None: continue
-                    pl,_,_=random_forest_predict(final_trees,f2)
+                    f2_sel=[f2[j] for j in valid_idx]
+                    pl,_,_=random_forest_predict(final_trees,f2_sel)
                     if pl==pred_label: same_rets.append((closes[i+pred_days]-closes[i])/closes[i]*100)
                 same_rets.sort()
                 q25=same_rets[len(same_rets)//4] if same_rets else -3
@@ -1506,7 +1517,9 @@ def predict_start():
             prog["result"]={"code":code,"name":code,"accuracy":accuracy,"threshold":threshold,
                 "n_trees":n_trees,"predictions":predictions,
                 "feature_importance":feat_imp[:10],"history_prices":history_prices,
+                "used_features": used_names,
                 "model_stats":{"train_samples":len(X),"balanced_samples":len(X_bal),
+                    "n_features": len(valid_idx),
                     "accuracy":accuracy,"prec_up":prec_up,"prec_dn":prec_dn,"prec_flat":prec_flat}}
             prog["done"]=True
             print(f"  [預測完成] {code} 準確率:{accuracy}% ({n_trees}棵樹)")
@@ -1521,6 +1534,44 @@ def predict_progress(task_id):
     prog=_predict_tasks.get(task_id)
     if not prog: return jsonify({"error":"找不到任務"}),404
     return jsonify(prog)
+
+@app.route("/api/predict/features")
+def get_feature_list():
+    """回傳所有可用特徵名稱和分組"""
+    groups = [
+        {"group": "動量指標", "color": "#a855f7",
+         "features": [{"idx":0,"name":"K值"},{"idx":1,"name":"D值"},{"idx":2,"name":"KD差"},
+                      {"idx":3,"name":"RSI(14)"},{"idx":4,"name":"RSI超買賣"}]},
+        {"group": "趨勢指標", "color": "#3d8bff",
+         "features": [{"idx":5,"name":"MACD"},{"idx":6,"name":"MACD方向"},
+                      {"idx":7,"name":"布林位置"},{"idx":8,"name":"布林寬度"}]},
+        {"group": "均線偏離", "color": "#27d981",
+         "features": [{"idx":9,"name":"距MA5(%)"},{"idx":10,"name":"距MA10(%)"},
+                      {"idx":11,"name":"距MA20(%)"},{"idx":12,"name":"距MA60(%)"},
+                      {"idx":13,"name":"MA5vsMA20"},{"idx":14,"name":"MA20vsMA60"},
+                      {"idx":15,"name":"MA20vsMA120"}]},
+        {"group": "量能指標", "color": "#f0b429",
+         "features": [{"idx":16,"name":"量比5日"},{"idx":17,"name":"量比20日"},
+                      {"idx":18,"name":"量能趨勢"}]},
+        {"group": "價格動能", "color": "#ff4d5e",
+         "features": [{"idx":19,"name":"近3日漲跌"},{"idx":20,"name":"近5日漲跌"},
+                      {"idx":21,"name":"近10日漲跌"},{"idx":22,"name":"近20日漲跌"}]},
+        {"group": "波動指標", "color": "#6a748f",
+         "features": [{"idx":23,"name":"ATR%"},{"idx":24,"name":"高低振幅%"}]},
+        {"group": "K線型態", "color": "#e4eaf5",
+         "features": [{"idx":25,"name":"實體大小"},{"idx":26,"name":"上影線"},
+                      {"idx":27,"name":"下影線"}]},
+        {"group": "連續性", "color": "#6a748f",
+         "features": [{"idx":28,"name":"連漲天數"},{"idx":29,"name":"連跌天數"}]},
+        {"group": "三大法人（FinMind）", "color": "#f0b429",
+         "features": [{"idx":30,"name":"外資買賣超(千張)"},{"idx":31,"name":"投信買賣超(千張)"},
+                      {"idx":32,"name":"自營買賣超(千張)"},{"idx":33,"name":"法人合計(千張)"},
+                      {"idx":34,"name":"外資強度"}]},
+        {"group": "評等模型（FinMind）", "color": "#a855f7",
+         "features": [{"idx":35,"name":"綜合評等分"},{"idx":36,"name":"法人評分"},
+                      {"idx":37,"name":"基本面評分"},{"idx":38,"name":"目標漲跌幅%"}]},
+    ]
+    return jsonify({"groups": groups, "total": len(FEATURE_NAMES)})
 
 # ══════════════════════════════════════════════════════
 # 持股管理 + 每日自動預測
@@ -2127,6 +2178,175 @@ def manual_run_predict():
     """手動觸發每日預測（背景執行）"""
     threading.Thread(target=run_daily_predictions, daemon=True).start()
     return jsonify({"ok": True, "msg": "已啟動預測，請稍後刷新頁面"})
+
+# ══════════════════════════════════════════════════════
+# API 路由 - 遊牧民選股掃描
+# ══════════════════════════════════════════════════════
+
+@app.route("/api/nomad_scan")
+def nomad_scan():
+    """
+    遊牧民選股策略掃描（後端計算所有均線）
+    Query params:
+      strategies  : 逗號分隔，e.g. "1,2,3"
+      min_vol     : 最低成交量（張），預設 500
+      min_price   : 最低股價，預設 10
+      max_price   : 最高股價，預設 1000
+      max_count   : 最多掃描幾支，預設 300
+    """
+    strategies  = [int(x) for x in request.args.get("strategies","1,2,3").split(",") if x.strip().isdigit()]
+    min_vol     = int(request.args.get("min_vol",  500))
+    min_price   = float(request.args.get("min_price", 10))
+    max_price   = float(request.args.get("max_price", 1000))
+    max_count   = int(request.args.get("max_count", 300))
+
+    print(f"\n[遊牧民掃描] 策略:{strategies} 量>={min_vol} 價{min_price}~{max_price} 最多{max_count}支")
+
+    # ── 取得今日全市場清單 ──
+    try:
+        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        resp = SESSION.get(url, timeout=15)
+        resp.raise_for_status()
+        all_rows = resp.json()
+    except Exception as e:
+        return jsonify({"error": f"TWSE API 失敗: {e}"}), 500
+
+    # 初步過濾
+    candidates = []
+    for row in all_rows:
+        code = str(row.get("Code",""))
+        if not code.isdigit() or len(code) != 4: continue
+        price = safe_float(row.get("ClosingPrice"))
+        vol   = round(safe_float(row.get("TradeVolume")) / 1000)
+        if price < min_price or price > max_price: continue
+        if vol < min_vol: continue
+        candidates.append({"code": code, "name": row.get("Name",""),
+                           "price": price, "vol": vol,
+                           "change": safe_float(row.get("Change"))})
+
+    candidates = candidates[:max_count]
+    print(f"  候選 {len(candidates)} 支")
+
+    results = []
+    today = datetime.today()
+    # 需要 18 個月資料才能算 MA360（約 360 交易日）
+    start_dt  = today - timedelta(days=550)
+    start_str = start_dt.strftime("%Y-%m-%d")
+    end_str   = today.strftime("%Y-%m-%d")
+
+    for idx, c in enumerate(candidates):
+        code = c["code"]
+        try:
+            recs = fetch_history_range(code, start_str, end_str)
+            if len(recs) < 10:
+                continue
+
+            closes = [r["close"] for r in recs]
+            vols   = [r["vol"]   for r in recs]
+            n      = len(closes)
+
+            def ma(period):
+                if n < period: return None
+                return sum(closes[-period:]) / period
+
+            def ma_at(offset, period):
+                """從倒數 offset 位置算均線"""
+                end_i = n - offset
+                if end_i < period: return None
+                return sum(closes[end_i-period:end_i]) / period
+
+            close     = closes[-1]
+            prevClose = closes[-2] if n >= 2 else close
+            chg_pct   = round((close - prevClose) / prevClose * 100, 2) if prevClose > 0 else 0
+
+            today_vol = vols[-1] if vols else 0
+            prev_vol  = vols[-2] if len(vols) >= 2 else 0
+            prev2_vol = vols[-3] if len(vols) >= 3 else 0
+
+            ma3  = ma(3)
+            ma5  = ma(5)
+            ma360     = ma(360)
+            ma360_old = ma_at(5, 360)  # 5天前的MA360，判斷趨勢向上
+
+            # 近5日最大單日漲幅
+            max_gain5 = 0.0
+            for i in range(max(0, n-6), n-1):
+                c0 = closes[i]; c1 = closes[i+1]
+                if c0 > 0:
+                    max_gain5 = max(max_gain5, (c1-c0)/c0*100)
+
+            # 近5日均量（不含今日）
+            avg_vol5 = sum(vols[max(0,n-6):n-1]) / min(5, n-1) if n > 1 else 0
+
+            triggered = []
+            score     = 0
+
+            # ── 策略一：爆量縮量黑K ──
+            if 1 in strategies and prev2_vol > 0:
+                explosion  = prev_vol  >= prev2_vol * 5
+                shrink     = today_vol <= prev_vol  * 0.75
+                black_k    = chg_pct   < 0
+                near_ma5   = ma5 and abs(close - ma5) / ma5 <= 0.03
+                if explosion and shrink and black_k and near_ma5:
+                    triggered.append({"label":"爆量縮量黑K","cls":"tag-s1","color":"#f0a500"})
+                    score += 40
+                    if prev_vol >= prev2_vol * 8: score += 10  # 超級爆量加分
+
+            # ── 策略二：底部暴漲 3日線 ──
+            if 2 in strategies:
+                big_rise   = max_gain5 >= 7
+                above_ma3  = ma3 and close >= ma3
+                has_vol    = avg_vol5 > 0 and today_vol >= avg_vol5
+                if big_rise and above_ma3 and has_vol:
+                    triggered.append({"label":"暴漲3日線","cls":"tag-s2","color":"#00e676"})
+                    score += 35
+                    if max_gain5 >= 15: score += 10
+
+            # ── 策略三：360日線超跌反彈 ──
+            if 3 in strategies and ma360 and ma360_old:
+                ma360_up    = ma360 > ma360_old
+                over_sold   = close < ma360 * 0.95
+                not_crashed = close > ma360 * 0.80
+                if ma360_up and over_sold and not_crashed:
+                    triggered.append({"label":"360超跌反彈","cls":"tag-s3","color":"#448aff"})
+                    score += 30
+
+            if not triggered:
+                continue
+
+            if len(triggered) > 1:
+                score += 15  # 多策略同觸發加分
+
+            results.append({
+                "code":      code,
+                "name":      c["name"],
+                "close":     round(close, 1),
+                "change":    chg_pct,
+                "vol":       today_vol,
+                "score":     score,
+                "triggered": triggered,
+                "ma5":       round(ma5,   1) if ma5   else None,
+                "ma3":       round(ma3,   1) if ma3   else None,
+                "ma360":     round(ma360, 1) if ma360 else None,
+                "max_gain5": round(max_gain5, 1),
+                "stop_loss": round(close * 0.95, 1),  # 遊牧民：跌5%停損
+            })
+
+            print(f"  ✅ [{idx+1}] {code} {c['name']} 觸發:{[t['label'] for t in triggered]} 分:{score}")
+
+        except Exception as e:
+            print(f"  [跳過] {code}: {e}")
+            continue
+
+    results.sort(key=lambda x: x["score"], reverse=True)
+    print(f"\n  [遊牧民掃描] 完成！找到 {len(results)} 支")
+    return jsonify({
+        "count":   len(results),
+        "scanned": len(candidates),
+        "results": results,
+        "time":    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    })
+
 
 if __name__ == "__main__":
     print("="*50)

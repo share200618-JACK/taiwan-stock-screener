@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>遊牧民選股策略</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{
+  --bg:#0a0a0f;--surface:#12121a;--surface2:#1a1a26;--border:#2a2a3e;
+  --accent:#f0a500;--accent2:#ff6b35;--green:#00e676;--red:#ff1744;--blue:#448aff;
+  --text:#e8e8f0;--muted:#6b6b8a;
+  --font:'Noto Sans TC',sans-serif;--mono:'JetBrains Mono',monospace;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--font);background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body::before{
+  content:'';position:fixed;inset:0;pointer-events:none;z-index:0;
+  background-image:linear-gradient(rgba(240,165,0,.03)1px,transparent 1px),linear-gradient(90deg,rgba(240,165,0,.03)1px,transparent 1px);
+  background-size:40px 40px;
+}
+.wrap{max-width:1200px;margin:0 auto;padding:0 20px;position:relative;z-index:1}
+
+/* Header */
+header{
+  padding:16px 20px;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;background:rgba(10,10,15,.96);backdrop-filter:blur(12px);z-index:100;
+}
+.hdr-left{display:flex;align-items:center;gap:14px}
+.back-btn{
+  display:flex;align-items:center;gap:5px;padding:7px 13px;
+  border:1px solid var(--border);border-radius:8px;background:transparent;
+  color:var(--muted);font-family:var(--font);font-size:13px;cursor:pointer;
+  text-decoration:none;transition:all .2s;
+}
+.back-btn:hover{border-color:var(--accent);color:var(--accent)}
+.hdr-title{font-size:15px;font-weight:700}
+.status-pill{
+  display:flex;align-items:center;gap:7px;padding:5px 12px;
+  border:1px solid var(--border);border-radius:20px;font-family:var(--mono);font-size:12px;color:var(--muted);
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0}
+.dot.on{background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 2s infinite}
+.dot.off{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Hero */
+.hero{padding:44px 0 32px;text-align:center}
+.badge{
+  display:inline-flex;align-items:center;gap:6px;margin-bottom:16px;
+  padding:5px 14px;border-radius:20px;font-size:12px;font-weight:500;letter-spacing:.5px;
+  background:rgba(240,165,0,.1);border:1px solid rgba(240,165,0,.3);color:var(--accent);
+}
+h1{font-size:clamp(26px,5vw,44px);font-weight:900;line-height:1.2;margin-bottom:10px}
+.gold{color:var(--accent)}.orange{color:var(--accent2)}
+.sub{font-size:13px;color:var(--muted);max-width:500px;margin:0 auto 28px;line-height:1.7}
+.nav-row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap}
+.nav-link{
+  padding:7px 15px;border:1px solid var(--border);border-radius:8px;
+  color:var(--muted);text-decoration:none;font-size:13px;transition:all .2s;
+}
+.nav-link:hover{border-color:var(--accent);color:var(--accent)}
+
+/* Strategy Cards */
+.s-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;margin-bottom:28px}
+.s-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:14px;
+  padding:18px;cursor:pointer;transition:all .25s;position:relative;overflow:hidden;
+}
+.s-card.active{border-color:var(--accent);background:var(--surface2)}
+.s-card:hover:not(.active){border-color:rgba(240,165,0,.4);transform:translateY(-2px)}
+.s-tag{display:inline-block;font-size:10px;font-weight:700;letter-spacing:1.5px;padding:3px 8px;border-radius:4px;margin-bottom:9px}
+.t1{background:rgba(240,165,0,.15);color:var(--accent)}
+.t2{background:rgba(0,230,118,.15);color:var(--green)}
+.t3{background:rgba(68,138,255,.15);color:var(--blue)}
+.s-title{font-size:14px;font-weight:700;margin-bottom:5px}
+.s-desc{font-size:11px;color:var(--muted);line-height:1.6}
+.s-conds{margin-top:12px;display:flex;flex-direction:column;gap:5px}
+.ci{display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);padding:4px 7px;background:rgba(255,255,255,.03);border-radius:5px;font-family:var(--mono)}
+.cd{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.cd1{background:var(--accent)}.cd2{background:var(--green)}.cd3{background:var(--blue)}
+.sel-circle{
+  position:absolute;top:14px;right:14px;width:21px;height:21px;
+  border:1.5px solid var(--border);border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:11px;transition:all .2s;
+}
+.s-card.active .sel-circle{background:var(--accent);border-color:var(--accent);color:#000}
+
+/* Scan panel */
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;margin-bottom:20px}
+.panel-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.panel-title{font-size:14px;font-weight:700;display:flex;align-items:center;gap:8px}
+.ptag{padding:2px 8px;border-radius:4px;font-size:11px;background:rgba(240,165,0,.15);color:var(--accent)}
+.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:14px;margin-bottom:20px}
+.pg label{display:block;font-size:11px;color:var(--muted);font-weight:500;margin-bottom:6px}
+.pg input,.pg select{
+  width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;
+  padding:9px 11px;color:var(--text);font-family:var(--mono);font-size:13px;
+  outline:none;transition:border-color .2s;
+}
+.pg input:focus,.pg select:focus{border-color:var(--accent)}
+.pg select option{background:var(--surface)}
+.divider{height:1px;background:var(--border);margin:16px 0}
+.pills-label{font-size:11px;color:var(--muted);font-weight:500;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px}
+.pills{display:flex;flex-wrap:wrap;gap:7px}
+.pill{display:flex;align-items:center;gap:5px;padding:5px 11px;border-radius:20px;font-size:11px;font-family:var(--mono);animation:fin .3s ease}
+@keyframes fin{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+.pill.gold{background:rgba(240,165,0,.08);border:1px solid rgba(240,165,0,.2);color:var(--accent)}
+.pill.grn{background:rgba(0,230,118,.08);border:1px solid rgba(0,230,118,.2);color:var(--green)}
+.pill.blu{background:rgba(68,138,255,.08);border:1px solid rgba(68,138,255,.2);color:var(--blue)}
+.pill.red{background:rgba(255,23,68,.08);border:1px solid rgba(255,23,68,.2);color:var(--red)}
+
+/* Run btn */
+.run-btn{
+  width:100%;padding:15px;background:var(--accent);color:#000;
+  font-family:var(--font);font-size:15px;font-weight:700;border:none;border-radius:10px;
+  cursor:pointer;display:flex;align-items:center;justify-content:center;gap:9px;
+  transition:all .2s;letter-spacing:.4px;margin-top:20px;
+}
+.run-btn:hover:not(:disabled){background:#f5b800;transform:translateY(-1px);box-shadow:0 8px 24px rgba(240,165,0,.3)}
+.run-btn:disabled{background:var(--surface2);color:var(--muted);cursor:not-allowed;transform:none;box-shadow:none}
+.spinner{width:17px;height:17px;border:2px solid rgba(0,0,0,.2);border-top-color:#000;border-radius:50%;animation:spin .7s linear infinite;display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Progress */
+.prog-area{display:none;margin-top:18px;padding:14px;background:var(--bg);border:1px solid var(--border);border-radius:10px}
+.prog-area.show{display:block}
+.prog-top{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:var(--mono);margin-bottom:8px}
+.prog-track{height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.prog-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0%;transition:width .4s ease;border-radius:2px}
+.prog-log{margin-top:8px;font-size:11px;color:var(--muted);font-family:var(--mono);max-height:70px;overflow-y:auto;display:flex;flex-direction:column;gap:2px}
+.ll.ok{color:var(--green)}.ll.warn{color:var(--accent)}
+
+/* Results */
+.results{display:none;margin-top:20px}
+.results.show{display:block}
+.res-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.res-count{font-size:13px;color:var(--muted)}
+.res-count span{font-size:20px;font-weight:900;color:var(--accent);font-family:var(--mono)}
+.sort-btns{display:flex;gap:6px}
+.srt{padding:5px 11px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--muted);font-size:11px;cursor:pointer;font-family:var(--font);transition:all .2s}
+.srt:hover,.srt.on{border-color:var(--accent);color:var(--accent);background:rgba(240,165,0,.08)}
+.tbl-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead tr{background:var(--surface2);border-bottom:1px solid var(--border)}
+thead th{padding:11px 14px;text-align:left;font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.5px;white-space:nowrap}
+tbody tr{border-bottom:1px solid rgba(42,42,62,.5);transition:background .15s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:rgba(255,255,255,.03)}
+tbody td{padding:11px 14px;vertical-align:middle;white-space:nowrap}
+.sc{font-family:var(--mono);font-weight:700;font-size:14px}
+.sn{font-size:11px;color:var(--muted);margin-top:2px}
+.stag{padding:3px 8px;border-radius:4px;font-size:10px;font-weight:700;display:inline-block;margin:2px 2px 0 0}
+.up{color:var(--green);font-family:var(--mono);font-weight:700}
+.dn{color:var(--red);font-family:var(--mono);font-weight:700}
+.neu{color:var(--muted);font-family:var(--mono)}
+.score-row{display:flex;align-items:center;gap:7px}
+.snum{font-family:var(--mono);font-size:13px;font-weight:700;min-width:26px}
+.strk{width:56px;height:5px;background:var(--border);border-radius:3px;overflow:hidden}
+.sfil{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),var(--accent2))}
+.act-btns{display:flex;gap:5px}
+.ab{padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:var(--font);border:none;transition:all .2s}
+.ab.bt{background:rgba(240,165,0,.15);color:var(--accent);border:1px solid rgba(240,165,0,.2)}
+.ab.bt:hover{background:rgba(240,165,0,.25)}
+.ab.pr{background:rgba(68,138,255,.15);color:var(--blue);border:1px solid rgba(68,138,255,.2)}
+.ab.pr:hover{background:rgba(68,138,255,.25)}
+.empty{text-align:center;padding:48px;color:var(--muted);font-size:14px}
+
+/* Wakeup toast */
+#toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--surface2);border:1px solid var(--accent);border-radius:12px;
+  padding:12px 22px;font-size:13px;color:var(--accent);z-index:200;display:none;
+  align-items:center;gap:9px;box-shadow:0 8px 32px rgba(240,165,0,.2);
+}
+#toast.show{display:flex}
+
+/* Risk note */
+.risk{margin-top:28px;padding:14px 18px;background:rgba(255,23,68,.05);border:1px solid rgba(255,23,68,.15);border-radius:10px;font-size:12px;color:var(--muted);line-height:1.7;text-align:center;margin-bottom:32px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hdr-left">
+    <a href="/index.html" class="back-btn">← 選股</a>
+    <span class="hdr-title">📖 遊牧民選股策略</span>
+  </div>
+  <div class="status-pill">
+    <div class="dot" id="dot"></div>
+    <span id="statusTxt">連線中...</span>
+  </div>
+</header>
+
+<div id="toast">⏳ 正在喚醒 Render 伺服器，約 30～60 秒...</div>
+
+<div class="wrap">
+  <div class="hero">
+    <div class="badge">📚 社畜的財務自由計畫 Vol.1 &amp; Vol.2</div>
+    <h1>遊牧民 <span class="gold">量化</span><span class="orange">選股</span>系統</h1>
+    <p class="sub">三大核心策略程式化掃描：爆量縮量黑K、底部暴漲3日線、360日線反彈，後端計算全部指標，找出符合書中條件的潛力標的。</p>
+    <div class="nav-row">
+      <a href="/index.html"    class="nav-link">📊 自訂選股</a>
+      <a href="/backtest.html" class="nav-link">📈 回測系統</a>
+      <a href="/predict.html"  class="nav-link">🤖 AI 預測</a>
+    </div>
+  </div>
+
+  <!-- Strategy cards -->
+  <div class="s-grid">
+    <div class="s-card active" id="c1" onclick="toggle(1)">
+      <div class="sel-circle" id="sel1">✓</div>
+      <div class="s-tag t1">策略一 · Vol.1</div>
+      <div class="s-title">爆量縮量黑K</div>
+      <div class="s-desc">前日爆量（≥5倍），今日黑K縮量，股價貼近MA5 → 隔日暴漲機率高</div>
+      <div class="s-conds">
+        <div class="ci"><div class="cd cd1"></div>前日量 ≥ 前前日量 × 5倍</div>
+        <div class="ci"><div class="cd cd1"></div>今日量 ≤ 前日量 × 75%（縮量）</div>
+        <div class="ci"><div class="cd cd1"></div>今日漲跌幅 &lt; 0（收黑）</div>
+        <div class="ci"><div class="cd cd1"></div>收盤在 MA5 ± 3% 範圍內</div>
+      </div>
+    </div>
+    <div class="s-card active" id="c2" onclick="toggle(2)">
+      <div class="sel-circle" id="sel2">✓</div>
+      <div class="s-tag t2">策略二 · Vol.1</div>
+      <div class="s-title">底部暴漲 3日線</div>
+      <div class="s-desc">近5日曾大漲（≥7%），今日站上3日均線且有量支撐 → 強勢股持續強</div>
+      <div class="s-conds">
+        <div class="ci"><div class="cd cd2"></div>近5日最大漲幅 ≥ 7%</div>
+        <div class="ci"><div class="cd cd2"></div>今日收盤 ≥ MA3</div>
+        <div class="ci"><div class="cd cd2"></div>今日量 ≥ 5日均量</div>
+      </div>
+    </div>
+    <div class="s-card active" id="c3" onclick="toggle(3)">
+      <div class="sel-circle" id="sel3">✓</div>
+      <div class="s-tag t3">策略三 · Vol.1+2</div>
+      <div class="s-title">360日線超跌反彈</div>
+      <div class="s-desc">360日均線向上，但股價跌破360均線5% → 中長線反彈潛力</div>
+      <div class="s-conds">
+        <div class="ci"><div class="cd cd3"></div>MA360 趨勢向上</div>
+        <div class="ci"><div class="cd cd3"></div>收盤 &lt; MA360 × 95%（超跌）</div>
+        <div class="ci"><div class="cd cd3"></div>收盤 &gt; MA360 × 80%（未崩）</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scan panel -->
+  <div class="panel">
+    <div class="panel-hdr">
+      <div class="panel-title">🔍 掃描設定 <span class="ptag" id="actTag">3 策略啟用</span></div>
+    </div>
+    <div class="params">
+      <div class="pg">
+        <label>掃描數量</label>
+        <select id="maxCount">
+          <option value="100">前 100 支（快，約 2 分鐘）</option>
+          <option value="300" selected>前 300 支（建議，約 5 分鐘）</option>
+          <option value="500">前 500 支（約 8 分鐘）</option>
+          <option value="9999">全部上市（慢，約 20+ 分鐘）</option>
+        </select>
+      </div>
+      <div class="pg">
+        <label>最低成交量（張）</label>
+        <input type="number" id="minVol" value="500" min="0" step="100">
+      </div>
+      <div class="pg">
+        <label>股價最低（元）</label>
+        <input type="number" id="minPrice" value="10" min="1">
+      </div>
+      <div class="pg">
+        <label>股價最高（元）</label>
+        <input type="number" id="maxPrice" value="1000">
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="pills-label">啟用中條件</div>
+    <div class="pills" id="pills"></div>
+    <button class="run-btn" id="runBtn" onclick="startScan()">
+      <div class="spinner" id="spin"></div>
+      <span id="btnTxt">🚀 開始掃描全市場</span>
+    </button>
+    <div class="prog-area" id="progArea">
+      <div class="prog-top">
+        <span id="progTxt">準備中...</span>
+        <span id="progPct">0%</span>
+      </div>
+      <div class="prog-track"><div class="prog-fill" id="progFill"></div></div>
+      <div class="prog-log" id="progLog"></div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="results" id="results">
+    <div class="res-hdr">
+      <div class="res-count">找到 <span id="cnt">0</span> 檔符合</div>
+      <div class="sort-btns">
+        <button class="srt on" id="ss" onclick="setSort('score')">評分</button>
+        <button class="srt"    id="sv" onclick="setSort('vol')">成交量</button>
+        <button class="srt"    id="sc2" onclick="setSort('change')">漲跌</button>
+      </div>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>股票</th><th>收盤</th><th>漲跌幅</th><th>成交量(張)</th>
+            <th>觸發策略</th><th>訊號評分</th><th>停損建議</th><th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="risk">⚠️ 本系統依據遊牧民《社畜的財務自由計畫》策略量化，數據來源 TWSE，僅供學習參考。不構成任何投資建議。</div>
+</div>
+
+<script>
+const API = '';   // 同源，空字串即可
+let active = new Set([1,2,3]);
+let data = [];
+let sortKey = 'score';
+
+/* ── Strategy toggle ── */
+function toggle(n){
+  if(active.has(n)){
+    if(active.size>1){ active.delete(n); document.getElementById('c'+n).classList.remove('active'); }
+  } else {
+    active.add(n); document.getElementById('c'+n).classList.add('active');
+  }
+  document.getElementById('actTag').textContent = active.size+' 策略啟用';
+  renderPills();
+}
+
+/* ── Condition pills ── */
+function renderPills(){
+  const el = document.getElementById('pills');
+  el.innerHTML='';
+  pill('紅','量 ≥ '+document.getElementById('minVol').value+'張');
+  pill('紅','價 '+document.getElementById('minPrice').value+'~'+document.getElementById('maxPrice').value+'元');
+  if(active.has(1)){pill('gold','前日爆量≥5倍');pill('gold','縮量黑K');pill('gold','貼近MA5');}
+  if(active.has(2)){pill('grn','近5日漲≥7%');pill('grn','站上MA3');pill('grn','有量支撐');}
+  if(active.has(3)){pill('blu','MA360向上');pill('blu','超跌≥5%');pill('blu','未崩>80%');}
+}
+function pill(cls,txt){
+  document.getElementById('pills').insertAdjacentHTML('beforeend',
+    `<div class="pill ${cls}">${txt}</div>`);
+}
+renderPills();
+['minVol','minPrice','maxPrice'].forEach(id=>
+  document.getElementById(id).addEventListener('input',renderPills));
+
+/* ── Server status ── */
+async function ping(){
+  try{
+    const r=await fetch(API+'/api/health',{signal:AbortSignal.timeout(8000)});
+    if(r.ok){ setDot('on','伺服器就緒'); return true; }
+  }catch{}
+  setDot('off','伺服器離線'); return false;
+}
+function setDot(cls,txt){ document.getElementById('dot').className='dot '+cls; document.getElementById('statusTxt').textContent=txt; }
+
+/* ── Main scan ── */
+async function startScan(){
+  if(!active.size){ alert('請至少選一個策略'); return; }
+  setLoading(true);
+  document.getElementById('progArea').classList.add('show');
+  document.getElementById('results').classList.remove('show');
+  document.getElementById('progLog').innerHTML='';
+  setProgress(0,'連線中...');
+
+  const ok = await ping();
+  if(!ok){
+    addLog('⏳ 喚醒伺服器中...','warn');
+    document.getElementById('toast').classList.add('show');
+    // 等待最多 65 秒
+    let awake=false;
+    for(let i=0;i<13;i++){
+      await sleep(5000);
+      setProgress(Math.round((i+1)/13*15), `等待伺服器啟動... ${(i+1)*5}s`);
+      awake = await ping();
+      if(awake) break;
+    }
+    document.getElementById('toast').classList.remove('show');
+    if(!awake){ addLog('❌ 無法連線，請稍後再試',''); setLoading(false); return; }
+  }
+
+  addLog('✓ 已連線，送出掃描請求...','ok');
+  setProgress(5,'後端掃描中，請耐心等待...');
+
+  const params = new URLSearchParams({
+    strategies: [...active].join(','),
+    min_vol:    document.getElementById('minVol').value,
+    min_price:  document.getElementById('minPrice').value,
+    max_price:  document.getElementById('maxPrice').value,
+    max_count:  document.getElementById('maxCount').value,
+  });
+
+  // 模擬進度（後端掃描耗時，前端假進度讓使用者知道在跑）
+  let fakePct = 5;
+  const fakeTimer = setInterval(()=>{
+    fakePct = Math.min(fakePct + Math.random()*3, 90);
+    const count = parseInt(document.getElementById('maxCount').value)||300;
+    setProgress(Math.round(fakePct), `後端計算中（掃描 ${count} 支股票）...`);
+  }, 2000);
+
+  try{
+    const r = await fetch(API+'/api/nomad_scan?'+params, {signal: AbortSignal.timeout(600000)});
+    clearInterval(fakeTimer);
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const json = await r.json();
+    if(json.error) throw new Error(json.error);
+    data = json.results || [];
+    setProgress(100,'掃描完成！');
+    addLog(`✅ 掃描 ${json.scanned} 支，找到 ${data.length} 支符合`,'ok');
+    renderTable();
+    document.getElementById('results').classList.add('show');
+  } catch(e){
+    clearInterval(fakeTimer);
+    addLog('❌ 錯誤：'+e.message,'');
+  }
+  setLoading(false);
+}
+
+/* ── Render table ── */
+function renderTable(){
+  const sorted = [...data].sort((a,b)=>{
+    if(sortKey==='score')  return b.score  - a.score;
+    if(sortKey==='vol')    return b.vol    - a.vol;
+    if(sortKey==='change') return b.change - a.change;
+    return 0;
+  });
+  document.getElementById('cnt').textContent = sorted.length;
+  const tb = document.getElementById('tbody');
+  if(!sorted.length){
+    tb.innerHTML='<tr><td colspan="8"><div class="empty">🔍 無符合條件的股票，試試調低門檻或選擇更多策略</div></td></tr>';
+    return;
+  }
+  tb.innerHTML = sorted.map(s=>{
+    const scoreColor = s.score>=60?'var(--green)':s.score>=40?'var(--accent)':'var(--muted)';
+    const volFmt = s.vol>=1000?(s.vol/1000).toFixed(1)+'K':s.vol;
+    const tags = s.triggered.map(t=>
+      `<span class="stag" style="background:${t.color}22;color:${t.color};border:1px solid ${t.color}44">${t.label}</span>`
+    ).join('');
+    return `<tr>
+      <td><div class="sc">${s.code}</div><div class="sn">${s.name}</div></td>
+      <td class="neu">${s.close}</td>
+      <td class="${s.change>=0?'up':'dn'}">${s.change>=0?'+':''}${s.change}%</td>
+      <td class="neu">${volFmt}</td>
+      <td>${tags}</td>
+      <td><div class="score-row">
+        <span class="snum" style="color:${scoreColor}">${s.score}</span>
+        <div class="strk"><div class="sfil" style="width:${Math.min(s.score,100)}%"></div></div>
+      </div></td>
+      <td style="font-size:11px;color:var(--red);font-family:var(--mono)">≤ ${s.stop_loss}</td>
+      <td><div class="act-btns">
+        <button class="ab bt" onclick="goPage('/backtest.html','${s.code}')">回測</button>
+        <button class="ab pr" onclick="goPage('/predict.html','${s.code}')">預測</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function setSort(k){
+  sortKey=k;
+  ['score','vol','change'].forEach(x=>{
+    const id=x==='change'?'sc2':x==='vol'?'sv':'ss';
+    document.getElementById(id).classList.toggle('on',x===k);
+  });
+  renderTable();
+}
+
+function goPage(path, code){
+  window.location.href = path+'?code='+code;
+}
+
+/* ── Helpers ── */
+function setLoading(on){
+  document.getElementById('runBtn').disabled=on;
+  document.getElementById('spin').style.display=on?'block':'none';
+  document.getElementById('btnTxt').textContent=on?'掃描中...':'🚀 開始掃描全市場';
+}
+function setProgress(pct,txt){
+  document.getElementById('progFill').style.width=pct+'%';
+  document.getElementById('progTxt').textContent=txt;
+  document.getElementById('progPct').textContent=pct+'%';
+}
+function addLog(msg,cls){
+  const log=document.getElementById('progLog');
+  log.insertAdjacentHTML('beforeend',`<div class="ll ${cls}">${msg}</div>`);
+  log.scrollTop=log.scrollHeight;
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+/* ── Init ── */
+ping();
+</script>
+</body>
+</html>
