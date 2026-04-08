@@ -609,14 +609,6 @@ def run_market_backtest(codes, conditions, start_date, end_date,
     return all_trades, daily_eq, day_signals
 
 # ══════════════════════════════════════════════════════
-# API 路由 - 健康檢查
-# ══════════════════════════════════════════════════════
-
-@app.route("/api/health")
-def health():
-    return jsonify({"status": "ok", "time": datetime.now().isoformat()})
-
-# ══════════════════════════════════════════════════════
 # API 路由 - 選股
 # ══════════════════════════════════════════════════════
 
@@ -1276,10 +1268,6 @@ def send_tg(token, chat_id, msg):
     except: return False
 
 # ── 持股 API ──────────────────────────────────────────
-
-@app.route("/portfolio")
-def portfolio_page():
-    return send_from_directory(".", "portfolio.html")
 
 @app.route("/api/portfolio", methods=["GET"])
 def get_portfolio():
