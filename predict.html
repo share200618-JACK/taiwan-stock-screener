@@ -109,6 +109,38 @@ tr:hover td{background:rgba(255,255,255,.015);}
 </style>
 </head>
 <body>
+<!-- 伺服器喚醒遮罩 -->
+<div id="wakeOverlay" style="display:none;position:fixed;inset:0;background:#0a0c10;z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
+  <div style="width:40px;height:40px;border:3px solid #252a38;border-top-color:#a855f7;
+    border-radius:50%;animation:wkspin 0.8s linear infinite;"></div>
+  <div style="color:#e4eaf5;font-size:1rem;font-weight:600;">正在喚醒伺服器...</div>
+  <div id="wakeMsg" style="color:#6a748f;font-size:.82rem;">Render 免費版需要約 30~60 秒</div>
+  <style>@keyframes wkspin{to{transform:rotate(360deg);}}</style>
+</div>
+<script>
+(async function wakeUp() {
+  const API = (location.hostname==='localhost'||location.hostname==='127.0.0.1'||location.protocol==='file:')
+    ? 'http://localhost:5000' : '';
+  if (!API) { // 只在 Render 上執行
+    const overlay = document.getElementById('wakeOverlay');
+    const msg     = document.getElementById('wakeMsg');
+    let tries = 0;
+    while (tries < 12) { // 最多等 2 分鐘
+      try {
+        const r = await fetch(`${location.origin}/api/health`, {signal: AbortSignal.timeout(8000)});
+        if (r.ok) { overlay.style.display='none'; return; }
+      } catch(e) {}
+      tries++;
+      msg.textContent = `連線中... (${tries}/12)，請稍候`;
+      await new Promise(r => setTimeout(r, 8000));
+    }
+    msg.textContent = '連線逾時，請重新整理頁面';
+  } else {
+    document.getElementById('wakeOverlay').style.display='none';
+  }
+})();
+</script>
 <div class="w">
 <header>
   <div class="logo">
@@ -297,14 +329,26 @@ function setTrees(v) {
 }
 
 async function pollPredictProgress(taskId) {
+  let failCount = 0;
   while (true) {
-    await new Promise(r => setTimeout(r, 1500));
-    const r    = await fetch(`${API}/api/predict/progress/${taskId}`);
-    const prog = await r.json();
-    if (prog.error) throw new Error(prog.error);
-    setProgress(prog.pct, prog.msg);
-    if (prog.done && prog.result) return prog.result;
-    if (prog.done && !prog.result) throw new Error('預測失敗，請重試');
+    await new Promise(r => setTimeout(r, 2000));
+    try {
+      const r    = await fetch(`${API}/api/predict/progress/${taskId}`,
+                               {signal: AbortSignal.timeout(10000)});
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const prog = await r.json();
+      if (prog.error) throw new Error(prog.error);
+      setProgress(prog.pct, prog.msg);
+      failCount = 0; // 成功重置失敗計數
+      if (prog.done && prog.result) return prog.result;
+      if (prog.done && !prog.result) throw new Error('預測失敗，請重試');
+    } catch(e) {
+      failCount++;
+      // 允許最多 5 次網路失敗（Render 喚醒時間）
+      if (failCount >= 5) throw new Error(`連線失敗：${e.message}，請重新整理再試`);
+      setProgress(0, `網路暫時中斷，重試中（${failCount}/5）...`);
+      await new Promise(r => setTimeout(r, 3000)); // 等3秒再重試
+    }
   }
 }
 

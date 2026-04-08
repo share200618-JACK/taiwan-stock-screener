@@ -42,6 +42,18 @@ def index():
 def backtest_page():
     return send_from_directory(".", "backtest.html")
 
+@app.route("/predict")
+def predict_page():
+    return send_from_directory(".", "predict.html")
+
+@app.route("/portfolio")
+def portfolio_page_route():
+    return send_from_directory(".", "portfolio.html")
+
+@app.route("/api/health")
+def health():
+    return jsonify({"ok": True, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+
 # ══════════════════════════════════════════════════════
 # 工具函式
 # ══════════════════════════════════════════════════════

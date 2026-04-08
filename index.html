@@ -177,6 +177,38 @@ input.fs{width:95px;}
 </style>
 </head>
 <body>
+<!-- 伺服器喚醒遮罩 -->
+<div id="wakeOverlay" style="display:none;position:fixed;inset:0;background:#0a0c10;z-index:9999;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;">
+  <div style="width:40px;height:40px;border:3px solid #252a38;border-top-color:#a855f7;
+    border-radius:50%;animation:wkspin 0.8s linear infinite;"></div>
+  <div style="color:#e4eaf5;font-size:1rem;font-weight:600;">正在喚醒伺服器...</div>
+  <div id="wakeMsg" style="color:#6a748f;font-size:.82rem;">Render 免費版需要約 30~60 秒</div>
+  <style>@keyframes wkspin{to{transform:rotate(360deg);}}</style>
+</div>
+<script>
+(async function wakeUp() {
+  const API = (location.hostname==="localhost"||location.hostname==="127.0.0.1"||location.protocol==="file:")
+    ? "http://localhost:5000" : "";
+  if (!API) {
+    const overlay = document.getElementById("wakeOverlay");
+    const msg     = document.getElementById("wakeMsg");
+    let tries = 0;
+    while (tries < 12) {
+      try {
+        const r = await fetch(location.origin+"/api/health", {signal: AbortSignal.timeout(8000)});
+        if (r.ok) { overlay.style.display="none"; return; }
+      } catch(e) {}
+      tries++;
+      msg.textContent = "連線中... ("+tries+"/12)，請稍候";
+      await new Promise(r => setTimeout(r, 8000));
+    }
+    msg.textContent = "連線逾時，請重新整理頁面";
+  } else {
+    document.getElementById("wakeOverlay").style.display="none";
+  }
+})();
+</script>
 <div class="w">
 <header>
   <div class="hd">
