@@ -314,6 +314,24 @@ tr:hover td{background:rgba(255,255,255,.015);}
       <strong>買入條件：</strong> 尚未設定，請先在<a href="index.html" style="color:var(--gold)">選股頁面</a>設定條件
     </div>
 
+    <!-- 遊牧民賣出策略 -->
+    <div style="grid-column:1/-1;background:rgba(168,85,247,.05);border:1px solid rgba(168,85,247,.18);border-radius:11px;padding:14px;margin-bottom:4px;">
+      <div style="font-size:.75rem;font-weight:700;color:#a855f7;margin-bottom:10px;">
+        📖 遊牧民賣出策略快速套用
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="ivb" onclick="applyNomadSell(1)"
+          style="border-color:rgba(168,85,247,.4);color:#a855f7;font-size:.78rem;padding:6px 13px;">
+          📖① 5日短線出場
+        </button>
+        <button class="ivb" onclick="applyNomadSell(2)"
+          style="border-color:rgba(61,139,255,.4);color:#3d8bff;font-size:.78rem;padding:6px 13px;">
+          📖② 波段+追蹤出場
+        </button>
+      </div>
+      <div id="nomadSellDesc" style="font-size:.72rem;color:var(--dim);margin-top:8px;line-height:1.6;display:none;"></div>
+    </div>
+
     <!-- 策略優化 -->
     <div style="grid-column:1/-1;background:rgba(168,85,247,.06);border:1px solid rgba(168,85,247,.2);border-radius:11px;padding:16px;">
       <div style="font-size:.76rem;font-weight:700;color:#a855f7;text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px;">
@@ -526,6 +544,52 @@ function setMarketMa(v) {
   document.getElementById('mktMa20').classList.toggle('active', v===20);
   document.getElementById('mktMa60').classList.toggle('active', v===60);
   document.getElementById('marketMa').value = v;
+}
+
+// 遊牧民賣出策略快速套用
+function applyNomadSell(version) {
+  const desc = document.getElementById('nomadSellDesc');
+  if (version === 1) {
+    // 第一本：早餐投資法，5日短線出場
+    // 核心：固定5日持有到期 + 8%停損（快速停損是關鍵）
+    document.getElementById('useTp').checked  = true;
+    document.getElementById('tpVal').value    = 10;   // 停利10%
+    document.getElementById('useSl').checked  = true;
+    document.getElementById('slVal').value    = 8;    // 停損8%（遊牧民強調快速停損）
+    document.getElementById('useHd').checked  = true;
+    document.getElementById('hdVal').value    = 5;    // 5日到期
+    document.getElementById('useTs').checked  = false;
+    document.getElementById('useMa').checked  = false;
+    document.getElementById('useMarketFilter').checked = false;
+    document.getElementById('usePartial').checked = false;
+    desc.style.display = 'block';
+    desc.innerHTML = `<strong style="color:#a855f7;">📖① 早餐投資法賣出邏輯：</strong>
+      停利+10%、停損-8%（快速停損是關鍵！）、5日到期強制出場。
+      遊牧民原則：「停損速度越快，越能捍衛資產」，到了5天不論盈虧都要出場，拚翻桌率。`;
+  } else {
+    // 第二本：波段升級版
+    // 核心：追蹤高點7%回落 + 跌破33日均線 + 分批出場
+    document.getElementById('useTp').checked  = false;
+    document.getElementById('useSl').checked  = true;
+    document.getElementById('slVal').value    = 10;   // 停損10%
+    document.getElementById('useHd').checked  = false;
+    document.getElementById('useTs').checked  = true;
+    // 設定 trailing stop 10%
+    const tsRadios = document.querySelectorAll('input[name="tsMode"]');
+    tsRadios.forEach(r => { if(r.value === '10') r.checked = true; });
+    document.getElementById('useMa').checked  = true;
+    setMaPeriod(33); // 跌破33日均線（遊牧民②偵察兵均線）
+    document.getElementById('useMarketFilter').checked = true;
+    setMarketMa(60);
+    document.getElementById('usePartial').checked = true;
+    document.getElementById('partialPct').value   = 8;   // 漲8%先出50%
+    document.getElementById('partialRatio').value = 50;
+    desc.style.display = 'block';
+    desc.innerHTML = `<strong style="color:#3d8bff;">📖② 波段升級賣出邏輯：</strong>
+      追蹤高點回落10%賣出、跌破33日均線（偵察兵）賣出、漲8%先分批出50%倉。
+      大盤在季線下不買。遊牧民②原則：「當心中出現再多一點的慾望時就要減碼」。`;
+  }
+  showToast(`✅ 已套用遊牧民${version===1?'①':'②'}賣出策略`);
 }
 
 function setAtrMult(v) {
@@ -953,6 +1017,22 @@ function init() {
   renderCondPreview(conds.filter(c=>c.enabled));
 }
 init();
+
+function showToast(msg) {
+  let el = document.getElementById('bt-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'bt-toast';
+    el.style.cssText = 'position:fixed;bottom:22px;left:50%;transform:translateX(-50%);' +
+      'background:#1e2330;border:1px solid #252a38;border-radius:8px;padding:9px 18px;' +
+      'font-size:.82rem;color:#e4eaf5;box-shadow:0 8px 24px rgba(0,0,0,.4);' +
+      'opacity:0;transition:opacity .2s;z-index:999;white-space:nowrap;pointer-events:none;' +
+      'border-color:rgba(39,217,129,.4);color:#27d981;';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg; el.style.opacity = '1';
+  setTimeout(() => el.style.opacity = '0', 2800);
+}
 </script>
 </body>
 </html>

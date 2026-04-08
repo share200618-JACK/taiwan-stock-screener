@@ -243,6 +243,10 @@ input.fs{width:95px;}
       <button class="preset" onclick="loadPreset('s1')">⚡ 高獲利</button>
       <button class="preset" onclick="loadPreset('s2')">🚀 高報酬</button>
       <button class="preset" onclick="loadPreset('both')">🔥 整合</button>
+      <button class="preset" onclick="loadPreset('nomad1')" style="border-color:rgba(168,85,247,.4);color:#a855f7;"
+        title="遊牧民第一本：早餐投資法，爆量短線5日策略">📖 遊牧民①</button>
+      <button class="preset" onclick="loadPreset('nomad2')" style="border-color:rgba(61,139,255,.4);color:#3d8bff;"
+        title="遊牧民第二本：訊號+趨勢波段策略，45日線支撐+KD低檔交叉">📖 遊牧民②</button>
     </div>
     <div class="clist" id="clist"><div class="ec">尚無條件，請新增或載入預設策略</div></div>
     <div class="aa">
@@ -416,6 +420,27 @@ const PRESETS={
     {key:'priceVsMA20',cat:'price',op:'>',val:0,   label:'股價 > 20日均線'},
     {key:'ma20VsMA60',cat:'ma',  op:'>',val:0,     label:'20日均線 > 60日均線'},
     {key:'kdCross',   cat:'kd',  op:'=',val:true,  label:'KD黃金交叉（K 20~50）',kdMin:20,kdMax:50,kdPer:9},
+  ],
+  // ── 遊牧民策略 ────────────────────────────────────
+  // 第一本：早餐投資法（短線5日爆量策略）
+  // 核心：爆量突破 + 8日均線支撐 + 股價在15日均線上 + 成交量活躍
+  nomad1:[
+    {key:'volVsAvg5', cat:'vol',  op:'>',val:3,    label:'遊牧民：今日爆量 > 5日均量 3倍'},
+    {key:'chgPct',    cat:'price',op:'>',val:2,    label:'遊牧民：漲幅 > 2%（確認上漲動能）'},
+    {key:'priceVsMA20',cat:'price',op:'>',val:0,   label:'遊牧民：股價站上20日均線（15日線）'},
+    {key:'avg20Vol',  cat:'vol',  op:'>',val:1000, label:'遊牧民：近20日均量 > 1000張（流動性）'},
+    {key:'rsi14',     cat:'osc',  op:'>',val:40,   label:'遊牧民：RSI > 40（避免弱勢股）'},
+    {key:'rsi14',     cat:'osc',  op:'<',val:80,   label:'遊牧民：RSI < 80（避免過買）'},
+  ],
+  // 第二本：訊號+趨勢策略（波段升級版）
+  // 核心：8日均線反彈 + 45日均線支撐 + KD低檔交叉 + 量縮後放量
+  nomad2:[
+    {key:'priceVsMA60',cat:'price',op:'>',val:-5,  label:'遊牧民②：股價在45日均線 -5% 內（支撐帶）'},
+    {key:'priceVsMA60',cat:'price',op:'>',val:0,   label:'遊牧民②：股價站上60日均線'},
+    {key:'ma20VsMA60', cat:'ma',  op:'>',val:0,    label:'遊牧民②：月線 > 季線（多頭結構）'},
+    {key:'kdCross',    cat:'kd',  op:'=',val:true, label:'遊牧民②：KD黃金交叉（低檔20~40）',kdMin:20,kdMax:40,kdPer:9},
+    {key:'volVsAvg20', cat:'vol',  op:'>',val:1.5, label:'遊牧民②：今日量 > 20日均量 1.5倍（放量確認）'},
+    {key:'avg20Vol',   cat:'vol',  op:'>',val:500, label:'遊牧民②：近20日均量 > 500張'},
   ],
 };
 
