@@ -144,7 +144,7 @@ tr:hover td{background:rgba(255,255,255,.015);}
     let tries = 0;
     while (tries < 12) {
       try {
-        const r = await fetch(location.origin+"/api/health", {signal: AbortSignal.timeout(8000)});
+        const r = await fetch(location.origin+"/api/health", {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),8000); return c.signal; })()});
         if (r.ok) { overlay.style.display="none"; return; }
       } catch(e) {}
       tries++;
@@ -703,7 +703,7 @@ async function runSingleBacktest() {
     const resp = await fetch(`${API}/api/backtest`, {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ code, start_date:startDate, end_date:endDate, conditions:conds, ...sell }),
-      signal: AbortSignal.timeout(120000),
+      signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),120000); return c.signal; })(),
     });
     const data = await resp.json();
     if (data.error) throw new Error(data.error);

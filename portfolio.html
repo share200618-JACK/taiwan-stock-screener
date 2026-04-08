@@ -257,7 +257,7 @@ header{padding:16px 0 13px;border-bottom:1px solid var(--bd);margin-bottom:18px;
     let tries = 0;
     while (tries < 12) {
       try {
-        const r = await fetch(location.origin+"/api/health", {signal: AbortSignal.timeout(8000)});
+        const r = await fetch(location.origin+"/api/health", {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),8000); return c.signal; })()});
         if (r.ok) { overlay.style.display="none"; return; }
       } catch(e) {}
       tries++;
@@ -784,7 +784,7 @@ document.addEventListener('DOMContentLoaded', () => {
     nameTimer = setTimeout(async () => {
       try {
         const r = await fetch(`${API}/api/stock_name/${code}`,
-                               {signal: AbortSignal.timeout(6000)});
+                               {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),6000); return c.signal; })()});
         const d = await r.json();
         nameHint.textContent = d.name !== code ? `✓ ${d.name}` : '（查無名稱）';
         nameHint.style.color = d.name !== code ? 'var(--grn)' : 'var(--dim)';
@@ -1076,7 +1076,7 @@ async function runPredict(){
     // 最多等 60 秒讓 Render 喚醒
     for (let i=0; i<6; i++) {
       try {
-        const h = await fetch(`${API}/api/health`, {signal: AbortSignal.timeout(12000)});
+        const h = await fetch(`${API}/api/health`, {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),12000); return c.signal; })()});
         if (h.ok) break;
       } catch(e) {
         setProgress2(`等待伺服器喚醒... (${i+1}/6)`);
@@ -1087,7 +1087,7 @@ async function runPredict(){
     setProgress2('啟動預測任務...');
     const startR = await fetch(`${API}/api/portfolio/run_predict`,
       {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}',
-       signal: AbortSignal.timeout(15000)});
+       signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),15000); return c.signal; })()});
     if (!startR.ok) throw new Error('啟動失敗');
 
     let pct=10, failCount=0, lastUpdate='';
@@ -1095,7 +1095,7 @@ async function runPredict(){
       pct = Math.min(pct+2, 92);
       progInner.style.width = pct+'%';
       try {
-        const rr   = await fetch(`${API}/api/portfolio`, {signal: AbortSignal.timeout(10000)});
+        const rr   = await fetch(`${API}/api/portfolio`, {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),10000); return c.signal; })()});
         if (!rr.ok) throw new Error('fetch failed');
         const data = await rr.json();
         const updated = data.stocks?.[0]?.last_update || '';

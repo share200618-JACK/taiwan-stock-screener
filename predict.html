@@ -128,7 +128,7 @@ tr:hover td{background:rgba(255,255,255,.015);}
     let tries = 0;
     while (tries < 12) { // 最多等 2 分鐘
       try {
-        const r = await fetch(`${location.origin}/api/health`, {signal: AbortSignal.timeout(8000)});
+        const r = await fetch(`${location.origin}/api/health`, {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),8000); return c.signal; })()});
         if (r.ok) { overlay.style.display='none'; return; }
       } catch(e) {}
       tries++;
@@ -418,7 +418,7 @@ async function pollPredictProgress(taskId) {
     await new Promise(r => setTimeout(r, 2000));
     try {
       const r    = await fetch(`${API}/api/predict/progress/${taskId}`,
-                               {signal: AbortSignal.timeout(10000)});
+                               {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),10000); return c.signal; })()});
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const prog = await r.json();
       if (prog.error) throw new Error(prog.error);
