@@ -278,6 +278,9 @@ input.fs{width:95px;}
             </optgroup>
             <optgroup label="── RSI ──">
               <option value="rsi14|rsi">RSI (14日)</option>
+              <option value="rsi10|rsi">RSI (10日)</option>
+              <option value="rsi5|rsi">RSI (5日)</option>
+              <option value="rsiCross|rsiCross">RSI(5) 黃金交叉 RSI(10)（券商常用）</option>
             </optgroup>
           </select>
         </div>
@@ -392,6 +395,9 @@ const META={
   dVal:      {name:'D值',          unit:'',   bool:false},
   kdCross:   {name:'KD黃金交叉',  unit:'',   bool:true },
   rsi14:     {name:'RSI(14)',      unit:'',   bool:false},
+  rsi10:     {name:'RSI(10)',      unit:'',   bool:false},
+  rsi5:      {name:'RSI(5)',       unit:'',   bool:false},
+  rsiCross:  {name:'RSI(5)穿RSI(10)', unit:'', bool:true},
 };
 const CAT={price:'price',vol:'vol',ma:'ma',kd:'kd',rsi:'rsi'};
 const CATL={price:'價格',vol:'成交量',ma:'均線',kd:'KD',rsi:'RSI'};
@@ -495,12 +501,14 @@ function openEdit(id){
 function onCatChange(){
   const [key]=document.getElementById('bCat').value.split('|');
   const isKD=key==='kdCross';
-  document.getElementById('numRow').style.display=isKD?'none':'flex';
+  const isRsiCross=key==='rsiCross';
+  document.getElementById('numRow').style.display=(isKD||isRsiCross)?'none':'flex';
   document.getElementById('kdp').classList.toggle('open',isKD);
 }
 function saveCondition(){
   const [key,cat]=document.getElementById('bCat').value.split('|');
   const isKD=key==='kdCross';
+  const isRsiCross=key==='rsiCross';
   const customLabel=document.getElementById('bLabel').value.trim();
   let obj={key,cat,op:'=',val:true,enabled:true};
   if(isKD){
@@ -508,6 +516,8 @@ function saveCondition(){
     const mx=parseFloat(document.getElementById('kdMax').value)||100;
     const pr=parseInt(document.getElementById('kdPer').value)||9;
     obj={...obj,kdMin:mn,kdMax:mx,kdPer:pr,label:customLabel||`KD黃金交叉（K ${mn}~${mx}，${pr}日）`};
+  }else if(isRsiCross){
+    obj={...obj,label:customLabel||'RSI(5) 黃金交叉 RSI(10)（當日RSI5>RSI10，前日RSI5≤RSI10）'};
   }else{
     const op=document.getElementById('bOp').value;
     const v=parseFloat(document.getElementById('bVal').value);
@@ -580,6 +590,10 @@ function evalCond(s,c){
     const mn=c.kdMin??0,mx=c.kdMax??100;
     return s.kVal>s.dVal && s.prevK<=s.prevD && s.kVal>=mn && s.kVal<mx;
   }
+  // RSI(5) 黃金交叉 RSI(10)：今日 RSI5>RSI10，前日 RSI5<=RSI10
+  if(c.key==='rsiCross'){
+    return s.rsi5>s.rsi10 && s.prevRsi5<=s.prevRsi10 && s.rsi5<100;
+  }
   const v=s[c.key];
   if(v===undefined||v===null)return false;
   if(c.op==='>') return v>c.val;
@@ -599,25 +613,44 @@ async function run(){
   document.getElementById('sg').innerHTML='';
   document.getElementById('stats').style.display='none';
   document.getElementById('disc').style.display='none';
-  
+
   setDot('wait','連線中...');
   clearLog();setBar(5);
-  addLog('🔌 連線到本地後端伺服器...');
+  addLog('🔌 啟動選股任務（上市+上櫃 約 1700 支）...');
 
   try{
-    addLog('📡 後端正在向 TWSE 抓取今日資料...');
-    setBar(20);
-    const resp=await fetch(`${API}/api/stocks`,{signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),120000); return c.signal; })()});
-    if(!resp.ok) throw new Error(`後端回傳 HTTP ${resp.status}`);
-    setBar(70);
-    addLog('📊 解析資料並計算技術指標...');
-    const data=await resp.json();
-    if(data.error) throw new Error(data.error);
+    // 啟動背景任務
+    setBar(10);
+    addLog('📡 後端開始抓取上市+上櫃資料...');
+    const startResp = await fetch(`${API}/api/stocks/start`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:'{}',
+    });
+    if(!startResp.ok) throw new Error(`後端回傳 HTTP ${startResp.status}`);
+    const {task_id, error} = await startResp.json();
+    if(error) throw new Error(error);
 
-    const stocks=data.stocks||[];
-    addLog(`✅ 取得 ${stocks.length} 支股票（資料時間：${data.time}）`);
-    setBar(85);
+    // 輪詢進度
+    addLog(`📊 任務已啟動，正在計算指標...（約 3~5 分鐘）`);
+    let data = null;
+    while(true){
+      await new Promise(r=>setTimeout(r,3000));
+      const prog = await fetch(`${API}/api/stocks/progress/${task_id}`);
+      const p = await prog.json();
+      if(p.pct) setBar(Math.min(10+p.pct*0.8, 90));
+      if(p.msg) addLog(`⏳ ${p.msg}`);
+      if(p.error) throw new Error(p.error);
+      if(p.done){
+        data = p.result;
+        break;
+      }
+    }
+
+    setBar(92);
     addLog('🔍 套用篩選條件...');
+    const stocks = data.stocks||[];
+    addLog(`✅ 取得 ${stocks.length} 支股票（上市+上櫃，${data.time}）`);
 
     results=stocks.filter(s=>active.every(c=>evalCond(s,c)));
     results.forEach(s=>{
