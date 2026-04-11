@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 自動選股分析</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background:
+  radial-gradient(ellipse 60% 40% at 15% 0%,rgba(168,85,247,.07) 0%,transparent 60%),
+  radial-gradient(ellipse 45% 55% at 85% 100%,rgba(240,180,41,.05) 0%,transparent 60%);
+  pointer-events:none;z-index:0;}
+.w{max-width:1000px;margin:0 auto;padding:0 20px 48px;position:relative;z-index:1;}
+
+header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.logo{display:flex;align-items:center;gap:11px;}
+.li{width:36px;height:36px;background:linear-gradient(135deg,var(--pur),#7c3aed);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 18px rgba(168,85,247,.35);}
+.logo h1{font-size:1.2rem;font-weight:700;}
+.logo h1 span{color:var(--pur);}
+.back-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.82rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.back-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+/* 設定區 */
+.settings{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:20px;margin-bottom:20px;}
+.settings-row{display:flex;gap:16px;align-items:flex-end;flex-wrap:wrap;}
+.fg{display:flex;flex-direction:column;gap:6px;}
+.fl{font-size:.72rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;}
+.fi{padding:9px 12px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'Noto Sans TC',sans-serif;font-size:.85rem;width:120px;}
+.fi:focus{outline:none;border-color:var(--pur);}
+.run-btn{padding:11px 28px;border-radius:10px;border:none;background:linear-gradient(135deg,var(--pur),#7c3aed);color:#fff;font-family:'Noto Sans TC',sans-serif;font-size:.92rem;font-weight:700;cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(168,85,247,.3);white-space:nowrap;}
+.run-btn:hover{transform:translateY(-1px);box-shadow:0 6px 22px rgba(168,85,247,.45);}
+.run-btn:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+.note{font-size:.74rem;color:var(--dim);margin-top:10px;line-height:1.7;}
+.note strong{color:var(--txt);}
+
+/* 模式切換 tab */
+.mode-tab{padding:8px 18px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.85rem;font-weight:500;cursor:pointer;transition:all .18s;}
+.mode-tab:hover{border-color:var(--pur);color:var(--pur);}
+.mode-tab.active{background:rgba(168,85,247,.12);border-color:var(--pur);color:var(--pur);font-weight:700;}
+
+/* 快速選股按鈕 */
+.quick-btn{padding:5px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.76rem;cursor:pointer;transition:all .15s;}
+.quick-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+/* 進度 */
+.progress-wrap{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:18px;display:none;}
+.prog-hd{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
+.spinner{width:22px;height:22px;border:2px solid var(--bd);border-top-color:var(--pur);border-radius:50%;animation:sp .7s linear infinite;flex-shrink:0;}
+@keyframes sp{to{transform:rotate(360deg);}}
+.prog-title{font-size:.95rem;font-weight:600;}
+.prog-bar-wrap{height:7px;background:var(--bd);border-radius:4px;overflow:hidden;margin-bottom:8px;}
+.prog-bar{height:100%;background:linear-gradient(90deg,var(--pur),#a855f7);border-radius:4px;transition:width .4s ease;width:0;}
+.prog-msg{font-size:.78rem;color:var(--dim);}
+
+/* 結果 */
+.result-header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:16px;}
+.result-title{font-size:1rem;font-weight:700;}
+.result-sub{font-size:.78rem;color:var(--dim);}
+.refresh-btn{padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.78rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;transition:all .15s;}
+.refresh-btn:hover{border-color:var(--pur);color:var(--pur);}
+
+/* 股票卡片 */
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px;transition:border-color .2s,transform .2s;position:relative;overflow:hidden;}
+.card:hover{border-color:rgba(168,85,247,.4);transform:translateY(-2px);}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;border-radius:14px 14px 0 0;}
+.card.bull::before{background:linear-gradient(90deg,var(--red),#ff8c69);}
+.card.bear::before{background:linear-gradient(90deg,var(--grn),#5eead4);}
+.card.neutral::before{background:linear-gradient(90deg,var(--dim),#8899bb);}
+
+.card-rank{position:absolute;top:14px;right:14px;font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--dim);}
+.card-code{font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--dim);margin-bottom:2px;}
+.card-name{font-size:1.05rem;font-weight:700;margin-bottom:10px;}
+.card-signal{font-size:.8rem;font-weight:600;margin-bottom:12px;}
+
+.prob-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.prob-label{font-size:.72rem;color:var(--dim);width:55px;flex-shrink:0;}
+.prob-bar-wrap{flex:1;height:6px;background:var(--bd);border-radius:3px;overflow:hidden;}
+.prob-bar{height:100%;border-radius:3px;}
+.prob-val{font-family:'JetBrains Mono',monospace;font-size:.78rem;width:38px;text-align:right;flex-shrink:0;}
+
+.card-footer{margin-top:12px;padding-top:10px;border-top:1px solid rgba(255,255,255,.04);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:4px;}
+.card-price{font-family:'JetBrains Mono',monospace;font-size:.9rem;font-weight:700;}
+.card-chg{font-size:.75rem;padding:2px 8px;border-radius:4px;}
+.card-chg.up{background:rgba(255,77,94,.1);color:var(--red);}
+.card-chg.dn{background:rgba(39,217,129,.1);color:var(--grn);}
+.card-vol{font-size:.72rem;color:var(--dim);}
+.acc-badge{font-size:.7rem;padding:2px 7px;border-radius:4px;background:rgba(168,85,247,.12);color:var(--pur);border:1px solid rgba(168,85,247,.2);}
+
+/* 空狀態 */
+.empty{text-align:center;padding:60px 20px;color:var(--dim);}
+.empty-icon{font-size:3rem;margin-bottom:14px;opacity:.4;}
+
+/* 免責聲明 */
+.disclaimer{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;font-size:.74rem;color:var(--dim);line-height:1.8;margin-top:18px;}
+</style>
+</head>
+<body>
+<div class="w">
+<header>
+  <div class="logo">
+    <div class="li">🤖</div>
+    <h1>AI <span>自動選股</span>分析</h1>
+  </div>
+  <a class="back-btn" href="/">← 回到選股</a>
+</header>
+
+<!-- 設定區：模式切換 -->
+<div class="settings">
+
+  <!-- 模式切換 tab -->
+  <div style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--bd);padding-bottom:14px;">
+    <button class="mode-tab active" id="tabMarket" onclick="switchTab('market')">🌏 全市場掃描</button>
+    <button class="mode-tab" id="tabCustom" onclick="switchTab('custom')">🔍 自訂個股分析</button>
+  </div>
+
+  <!-- 全市場模式 -->
+  <div id="panelMarket">
+    <div class="settings-row">
+      <div class="fg">
+        <label class="fl">掃描股票數量</label>
+        <input class="fi" type="number" id="maxStocks" value="80" min="20" max="200" step="10">
+      </div>
+      <div class="fg">
+        <label class="fl">顯示推薦數</label>
+        <input class="fi" type="number" id="topN" value="10" min="5" max="20">
+      </div>
+      <div class="fg">
+        <label class="fl">模型版本</label>
+        <select class="fi" id="modelVer" style="width:130px;">
+          <option value="v2">v2.0 強化版 ⭐</option>
+          <option value="v1">v1.0 基礎版</option>
+        </select>
+      </div>
+      <button class="run-btn" id="runBtn" onclick="startAnalysis()">🤖 開始 AI 分析</button>
+    </div>
+    <div class="note">
+      <strong>v2.0 強化版：</strong>28 個特徵｜2 年訓練資料｜大盤相對強弱｜量價型態｜時間序列驗證｜預期準確率 62~68%<br>
+      <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
+      ⏱ 掃描 80 支約需 <strong>8~15 分鐘</strong>，請耐心等待
+    </div>
+  </div>
+
+  <!-- 自訂個股模式 -->
+  <div id="panelCustom" style="display:none;">
+    <div class="fg" style="margin-bottom:12px;">
+      <label class="fl">輸入股票代號（可多個，用逗號分隔）</label>
+      <input class="fi" type="text" id="customCodes"
+        placeholder="例：2330, 2454, 2317, 0050"
+        style="width:100%;max-width:500px;font-family:'JetBrains Mono',monospace;">
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="fg" style="margin-bottom:0;">
+        <label class="fl">模型版本</label>
+        <select class="fi" id="modelVerCustom" style="width:130px;">
+          <option value="v2">v2.0 強化版 ⭐</option>
+          <option value="v1">v1.0 基礎版</option>
+        </select>
+      </div>
+      <button class="run-btn" id="runBtnCustom" onclick="startCustomAnalysis()" style="margin-top:18px;">🔍 分析選定個股</button>
+    </div>
+    <!-- 快速選股按鈕 -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      <span style="font-size:.72rem;color:var(--dim);align-self:center;">快速填入：</span>
+      <button class="quick-btn" onclick="fillCodes('2330,2454,2317,2382,2308')">電子五哥</button>
+      <button class="quick-btn" onclick="fillCodes('0050,0056,00878,00919,00929')">熱門ETF</button>
+      <button class="quick-btn" onclick="fillCodes('2330,2412,2881,2882,1301')">權值股</button>
+      <button class="quick-btn" onclick="fillCodes('')">清除</button>
+    </div>
+    <div class="note">
+      輸入你想分析的股票代號，系統會對每支進行 v2.0 隨機森林分析<br>
+      ⏱ 每支約需 <strong>1~2 分鐘</strong>，5 支約 5~10 分鐘
+    </div>
+  </div>
+</div>
+
+<!-- 每日自動分析結果區 -->
+<div style="background:var(--s1);border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:16px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+  <div>
+    <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
+    <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 14:35 自動執行，結果直接顯示在此</div>
+  </div>
+  <button class="run-btn" style="padding:8px 18px;font-size:.82rem;" onclick="loadLatestResult()">📂 載入最新結果</button>
+</div>
+
+<!-- 進度條 -->
+<div class="progress-wrap" id="progressWrap">
+  <div class="prog-hd">
+    <div class="spinner"></div>
+    <div class="prog-title">AI 分析進行中...</div>
+  </div>
+  <div class="prog-bar-wrap"><div class="prog-bar" id="progBar"></div></div>
+  <div class="prog-msg" id="progMsg">準備中...</div>
+</div>
+
+<!-- 空狀態 -->
+<div class="empty" id="emptyState">
+  <div class="empty-icon">🤖</div>
+  <p>設定好掃描數量<br>點「開始 AI 分析」即可</p>
+</div>
+
+<!-- 結果 -->
+<div id="results" style="display:none">
+  <div class="result-header">
+    <div>
+      <div class="result-title" id="resultTitle">分析結果</div>
+      <div class="result-sub" id="resultSub"></div>
+    </div>
+    <button class="refresh-btn" onclick="startAnalysis()">🔄 重新分析</button>
+  </div>
+  <div class="cards" id="cardsGrid"></div>
+
+  <div class="disclaimer">
+    ⚠️ <strong style="color:var(--txt)">重要提醒</strong><br>
+    本分析基於技術指標的歷史規律，模型無法預測突發消息、主力行為、國際情勢等因素。<br>
+    上漲機率 > 65% 且信心度 > 50% 的標的，歷史回測勝率約 60~68%。<br>
+    請搭配自身判斷使用，<strong style="color:var(--red)">投資有風險，本工具不構成投資建議！</strong>
+  </div>
+</div>
+</div>
+
+<script>
+const API = (window.location.hostname==='localhost'||window.location.hostname==='127.0.0.1'||window.location.protocol==='file:')
+  ? 'http://localhost:5000' : '';
+
+let pollTimer = null;
+
+// ── 模式切換 ──────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('tabMarket').classList.toggle('active', tab==='market');
+  document.getElementById('tabCustom').classList.toggle('active', tab==='custom');
+  document.getElementById('panelMarket').style.display = tab==='market' ? '' : 'none';
+  document.getElementById('panelCustom').style.display = tab==='custom' ? '' : 'none';
+}
+
+function fillCodes(codes) {
+  document.getElementById('customCodes').value = codes;
+}
+
+// ── 自訂個股分析 ──────────────────────────────────
+async function startCustomAnalysis() {
+  const codesRaw = document.getElementById('customCodes').value;
+  const codes = codesRaw.split(/[,，\s]+/).map(c=>c.trim()).filter(c=>c);
+  const modelVer = document.getElementById('modelVerCustom').value;
+
+  if (!codes.length) { alert('請輸入至少一個股票代號！'); return; }
+  if (codes.length > 10) { alert('最多一次分析 10 支！'); return; }
+
+  const btn = document.getElementById('runBtnCustom');
+  btn.disabled = true; btn.textContent = '⏳ 分析中...';
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('emptyState').style.display   = 'none';
+  document.getElementById('results').style.display      = 'none';
+  setProgress(0, `分析 ${codes.join(', ')} ...`);
+
+  try {
+    const r = await fetch(`${API}/api/analyze/custom`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({codes, model_ver: modelVer}),
+    });
+    const {task_id, error} = await r.json();
+    if (error) throw new Error(error);
+    pollProgress(task_id, ()=>{ btn.disabled=false; btn.textContent='🔍 分析選定個股'; });
+  } catch(e) {
+    showError(e.message);
+    btn.disabled=false; btn.textContent='🔍 分析選定個股';
+  }
+}
+
+async function loadLatestResult() {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('results').style.display    = 'none';
+  setProgress(50, '載入最新分析結果...');
+  document.getElementById('progressWrap').style.display = 'block';
+  try {
+    const r    = await fetch(`${API}/api/analyze/latest`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    document.getElementById('progressWrap').style.display = 'none';
+    // 補上 model_ver 讓 renderResults 正確顯示
+    data.model_ver = data.model_ver || 'v2';
+    renderResults(data);
+  } catch(e) {
+    document.getElementById('progressWrap').style.display = 'none';
+    showError(e.message);
+  }
+}
+
+async function startAnalysis() {
+  const maxStocks = parseInt(document.getElementById('maxStocks').value)||80;
+  const topN      = parseInt(document.getElementById('topN').value)||10;
+  const modelVer  = document.getElementById('modelVer').value;
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '⏳ 分析中...';
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('emptyState').style.display   = 'none';
+  document.getElementById('results').style.display      = 'none';
+  setProgress(0, `啟動 ${modelVer==='v2'?'v2.0 強化版':'v1.0 基礎版'} 分析...`);
+
+  try {
+    const r = await fetch(`${API}/api/analyze/start`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({max_stocks:maxStocks, top_n:topN, model_ver:modelVer}),
+    });
+    const {task_id, error} = await r.json();
+    if (error) throw new Error(error);
+    pollProgress(task_id);
+  } catch(e) {
+    showError(e.message);
+    btn.disabled=false; btn.textContent='🤖 開始 AI 分析';
+  }
+}
+
+function pollProgress(taskId, onDone) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const r    = await fetch(`${API}/api/analyze/progress/${taskId}`);
+      const prog = await r.json();
+      setProgress(prog.pct, prog.msg);
+      if (prog.error) {
+        clearInterval(pollTimer);
+        showError(prog.error);
+        if(onDone) onDone(); else resetBtn();
+        return;
+      }
+      if (prog.done && prog.result) {
+        clearInterval(pollTimer);
+        document.getElementById('progressWrap').style.display = 'none';
+        renderResults(prog.result);
+        if(onDone) onDone(); else resetBtn();
+      }
+    } catch(e) {
+      clearInterval(pollTimer);
+      showError(e.message);
+      if(onDone) onDone(); else resetBtn();
+    }
+  }, 2000);
+}
+
+function setProgress(pct, msg) {
+  document.getElementById('progBar').style.width = pct + '%';
+  document.getElementById('progMsg').textContent = `${pct}%  ${msg}`;
+}
+
+function resetBtn() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled=false; btn.textContent='🤖 開始 AI 分析';
+}
+
+function showError(msg) {
+  document.getElementById('progressWrap').style.display='none';
+  document.getElementById('emptyState').style.display='block';
+  document.getElementById('emptyState').innerHTML=`<div class="empty-icon">⚠️</div><p>${msg}</p>`;
+}
+
+function renderResults(data) {
+  const stocks = data.stocks || [];
+  const ver    = data.model_ver || 'v1';
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('resultTitle').textContent =
+    `AI 推薦 ${stocks.length} 支股票（${ver==='v2'?'v2.0 強化版 ⭐':'v1.0 基礎版'}）`;
+  document.getElementById('resultSub').textContent =
+    `掃描 ${data.total_scanned} 支，${data.total_analyzed} 支通過篩選`;
+
+  if (!stocks.length) {
+    document.getElementById('cardsGrid').innerHTML =
+      '<div style="color:var(--dim);padding:24px;text-align:center;">本次無有效推薦</div>';
+    return;
+  }
+
+  document.getElementById('cardsGrid').innerHTML = stocks.map((s, i) => {
+    const prob = s.rise_prob;
+    const conf = s.confidence;
+    const acc  = s.accuracy;
+    const prec = s.precision || null;
+    const chgCls = (s.chg_pct||0) >= 0 ? 'up' : 'dn';
+    const chgTxt = ((s.chg_pct||0) >= 0 ? '+' : '') + (s.chg_pct||0) + '%';
+
+    let cardCls='neutral', signal='→ 中性';
+    if (prob >= 72)      { cardCls='bull'; signal='🔥🔥 極強看漲'; }
+    else if (prob >= 65) { cardCls='bull'; signal='🔥 強烈看漲'; }
+    else if (prob >= 58) { cardCls='bull'; signal='📈 看漲'; }
+    else if (prob >= 52) { cardCls='bull'; signal='↗️ 略偏看漲'; }
+    else if (prob <= 30) { cardCls='bear'; signal='📉 看跌'; }
+    else if (prob <= 42) { cardCls='bear'; signal='↘️ 略偏看跌'; }
+
+    const probColor = prob >= 50 ? 'var(--red)' : 'var(--grn)';
+    const confColor = conf >= 50 ? 'var(--pur)' : 'var(--dim)';
+
+    // 資料不足的錯誤狀態
+    if (s.error) {
+      return `<div class="card neutral">
+        <div class="card-rank">#${i+1}</div>
+        <div class="card-code">${s.code}</div>
+        <div class="card-name">${s.name||s.code}</div>
+        <div style="font-size:.78rem;color:var(--red);margin:8px 0;">⚠️ ${s.error}</div>
+        <div class="card-footer">
+          <div class="card-price">${s.price||'—'} 元</div>
+          <span class="card-chg ${(s.chg_pct||0)>=0?'up':'dn'}">${(s.chg_pct||0)>=0?'+':''}${s.chg_pct||0}%</span>
+        </div>
+      </div>`;
+    }
+
+    // v2.0 額外資訊
+    const v2extras = ver==='v2' ? `
+      ${s.rel_strength !== undefined ? `
+      <div class="prob-row" style="margin-top:2px;">
+        <span class="prob-label" style="font-size:.65rem;">vs大盤</span>
+        <span style="font-size:.75rem;color:${s.rel_strength>=0?'var(--red)':'var(--grn)'}">
+          ${s.rel_strength>=0?'+':''}${(s.rel_strength||0).toFixed(1)}%
+        </span>
+      </div>` : ''}
+      ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
+      <span class="acc-badge" style="background:rgba(168,85,247,.12);color:var(--pur);border-color:rgba(168,85,247,.2);">訓練 ${s.data_years||'?'} 年</span>
+    ` : '';
+
+    return `<div class="card ${cardCls}">
+      <div class="card-rank">#${i+1}</div>
+      <div class="card-code">${s.code}</div>
+      <div class="card-name">${s.name||s.code}</div>
+      <div class="card-signal" style="color:${probColor}">${signal}</div>
+
+      <div class="prob-row">
+        <span class="prob-label">上漲機率</span>
+        <div class="prob-bar-wrap">
+          <div class="prob-bar" style="width:${prob}%;background:${probColor}"></div>
+        </div>
+        <span class="prob-val" style="color:${probColor}">${prob}%</span>
+      </div>
+      <div class="prob-row">
+        <span class="prob-label">信心度</span>
+        <div class="prob-bar-wrap">
+          <div class="prob-bar" style="width:${conf}%;background:${confColor}"></div>
+        </div>
+        <span class="prob-val" style="color:${confColor}">${conf}%</span>
+      </div>
+      ${ver==='v2' && s.rel_strength !== undefined ? `<div class="prob-row">
+        <span class="prob-label">vs大盤</span>
+        <div class="prob-bar-wrap">
+          <div class="prob-bar" style="width:${Math.min(Math.abs(s.rel_strength||0)*3,100)}%;background:${(s.rel_strength||0)>=0?'var(--red)':'var(--grn)'}"></div>
+        </div>
+        <span class="prob-val" style="color:${(s.rel_strength||0)>=0?'var(--red)':'var(--grn);font-size:.72rem'}">${(s.rel_strength||0)>=0?'+':''}${(s.rel_strength||0).toFixed(1)}%</span>
+      </div>` : ''}
+
+      <div class="card-footer">
+        <div>
+          <div class="card-price">${s.price} 元</div>
+          <div class="card-vol">${(s.vol||0).toLocaleString()} 張</div>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+          <span class="card-chg ${chgCls}">${chgTxt}</span>
+          <span class="acc-badge">準確率 ${acc}%</span>
+          ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+</script>
+</body>
+</html>

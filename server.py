@@ -2666,6 +2666,124 @@ def trigger_auto_analysis():
     threading.Thread(target=run_bg, daemon=True).start()
     return jsonify({"ok": True, "msg": "已啟動 v2.0 分析，約 10~15 分鐘完成，請稍後重新整理"})
 
+@app.route("/api/analyze/custom", methods=["POST"])
+def start_custom_analyze():
+    """自訂個股分析"""
+    import uuid
+    body      = request.get_json() or {}
+    codes     = body.get("codes", [])
+    model_ver = body.get("model_ver", "v2")
+
+    if not codes:
+        return jsonify({"error": "請提供股票代號"}), 400
+    codes = [c.strip() for c in codes if c.strip()][:10]
+
+    task_id = str(uuid.uuid4())[:8]
+    _analyze_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
+
+    def run_custom():
+        try:
+            prog = _analyze_tasks[task_id]
+            def cb(msg, pct):
+                prog["msg"]=msg; prog["pct"]=round(pct,1)
+
+            is_v2 = (model_ver == 'v2')
+            history_months = 24 if is_v2 else 8
+
+            # 取得大盤資料（v2 需要）
+            market_closes = []
+            if is_v2:
+                cb("抓取大盤資料...", 3)
+                try:
+                    today = datetime.today()
+                    for delta in range(history_months, -1, -1):
+                        d  = today - timedelta(days=delta*31)
+                        ym = f"{d.year}{d.month:02d}01"
+                        r2 = SESSION.get(
+                            f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+                            f"?response=json&date={ym}&stockNo=Y9999", timeout=10)
+                        d2 = r2.json()
+                        if d2.get("stat")=="OK" and d2.get("data"):
+                            for row in d2["data"]:
+                                c2 = safe_float(row[6])
+                                if c2 > 0: market_closes.append(c2)
+                except: pass
+
+            # 取得股票今日資訊
+            cb("取得股票報價...", 5)
+            stock_info = {}
+            try:
+                url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+                resp = SESSION.get(url, timeout=15); resp.raise_for_status()
+                for r in resp.json():
+                    code = r.get("Code","")
+                    if code in codes:
+                        price = safe_float(r.get("ClosingPrice"))
+                        chg   = safe_float(r.get("Change"))
+                        vol   = round(safe_float(r.get("TradeVolume"))/1000)
+                        prev  = price-chg
+                        pct_  = round(chg/prev*100,2) if prev>0 else 0
+                        stock_info[code] = {
+                            "name":  r.get("Name",""),
+                            "price": price, "pct": pct_, "vol": vol
+                        }
+            except: pass
+
+            results = []
+            total   = len(codes)
+            for idx, code in enumerate(codes):
+                info = stock_info.get(code, {})
+                name = info.get("name", code)
+                pct_done = 5 + idx/total*88
+                cb(f"分析 {code} {name} ({idx+1}/{total})...", pct_done)
+                try:
+                    if is_v2:
+                        r = _analyze_one_v2(code, name, market_closes, history_months)
+                    else:
+                        r = _analyze_one(code, name)
+                    if r:
+                        r["vol"]     = info.get("vol", 0)
+                        r["chg_pct"] = info.get("pct", 0)
+                        if not r.get("name"): r["name"] = name
+                        results.append(r)
+                    else:
+                        # 資料不足仍顯示，標記為無法分析
+                        results.append({
+                            "code": code, "name": name,
+                            "rise_prob": 50, "confidence": 0, "accuracy": 0,
+                            "precision": 0, "price": info.get("price",0),
+                            "chg_pct": info.get("pct",0), "vol": info.get("vol",0),
+                            "data_years": 0, "error": "資料不足，無法分析",
+                        })
+                except Exception as e:
+                    results.append({
+                        "code": code, "name": name,
+                        "rise_prob": 50, "confidence": 0, "accuracy": 0,
+                        "precision": 0, "price": 0, "chg_pct": 0, "vol": 0,
+                        "data_years": 0, "error": str(e),
+                    })
+
+            # 有效結果排前面，無效放後面
+            valid   = [r for r in results if not r.get("error")]
+            invalid = [r for r in results if r.get("error")]
+            valid.sort(key=lambda x: x["rise_prob"]*0.6+x["confidence"]*0.4, reverse=True)
+            final = valid + invalid
+
+            prog.update({"pct":100,"msg":"完成！","done":True,"error":None,
+                         "result":{
+                             "stocks":        final,
+                             "total_scanned": len(codes),
+                             "total_analyzed":len(valid),
+                             "model_ver":     model_ver,
+                             "mode":          "custom",
+                         }})
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            _analyze_tasks[task_id].update({"done":True,"error":str(e)})
+
+    threading.Thread(target=run_custom, daemon=True).start()
+    return jsonify({"task_id": task_id})
+
 @app.route("/analyze")
 def analyze_page():
     return send_from_directory(".", "analyze.html")
