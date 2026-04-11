@@ -943,7 +943,30 @@ def _save_finmind_token(token):
 def get_finmind_token_api():
     token = _get_finmind_token()
     masked = token[:6]+"****"+token[-4:] if len(token) > 10 else ("已設定" if token else "")
-    return jsonify({"has_token": bool(token), "masked": masked})
+    return jsonify({"has_token": bool(token), "token": bool(token), "masked": masked})
+
+@app.route("/api/settings/finmind_token/test", methods=["POST"])
+def test_finmind_token_api():
+    """測試 FinMind Token 是否有效"""
+    token = _get_finmind_token()
+    if not token:
+        return jsonify({"ok": False, "msg": "尚未設定 Token，請先到警報設定頁面填入"})
+    try:
+        r = SESSION.get(FINMIND_URL, params={
+            "dataset": "TaiwanStockInfo",
+        }, headers={"Authorization": f"Bearer {token}"}, timeout=12)
+        d = r.json()
+        status = d.get("status", 0)
+        if status == 200:
+            return jsonify({"ok": True, "msg": "FinMind 連線成功！籌碼資料可用"})
+        elif status == 402:
+            return jsonify({"ok": True, "msg": "Token 有效，但已達免費使用量上限（明日重置）"})
+        elif status == 401:
+            return jsonify({"ok": False, "msg": "Token 無效，請重新申請"})
+        else:
+            return jsonify({"ok": False, "msg": f"連線異常（狀態碼 {status}）"})
+    except Exception as e:
+        return jsonify({"ok": False, "msg": f"連線失敗：{str(e)}"})
 
 @app.route("/api/settings/finmind_token", methods=["POST"])
 def set_finmind_token_api():

@@ -301,10 +301,20 @@ async function saveFinmindToken(){
 
 async function testFinmindToken(){
   try{
-    const r=await fetch(`${API}/api/settings/finmind_token`);
+    const r=await fetch(`${API}/api/settings/finmind_token/test`,{
+      method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+    });
     const d=await r.json();
-    showToast(d.token?'✅ Token 有效，籌碼資料可用':'⚠️ 尚未設定 Token', d.token?'ok':'err');
-  }catch(e){ showToast('連線失敗','err'); }
+    if(d.ok) showToast('✅ FinMind 連線成功，籌碼資料可用','ok');
+    else showToast('❌ 連線失敗：'+( d.msg||'Token 無效'),'err');
+  }catch(e){
+    // fallback：直接讀設定確認是否有 token
+    try{
+      const r2=await fetch(`${API}/api/settings/finmind_token`);
+      const d2=await r2.json();
+      showToast(d2.token?'✅ Token 已設定（伺服器確認）':'⚠️ 尚未設定 Token', d2.token?'ok':'err');
+    }catch(e2){ showToast('連線失敗，請確認伺服器運行中','err'); }
+  }
 }
 
 // ── 開關 ───────────────────────────────────────
