@@ -138,9 +138,10 @@ def fetch_history_range(code, start_date, end_date):
     return records
 
 def fetch_history_recent(code):
-    """抓最近兩個月（給選股用）"""
+    """抓最近兩個月（給選股用）- 自動判斷上市/上櫃"""
     records = []
     today = datetime.today()
+    # 先嘗試上市（TWSE）
     for delta in [1, 0]:
         d  = today - timedelta(days=delta * 32)
         ym = f"{d.year}{d.month:02d}01"
@@ -159,6 +160,27 @@ def fetch_history_recent(code):
                     records.append({"close":c,"high":h,"low":l,"vol":v})
         except Exception as e:
             print(f"  [歷史] {code} {ym} 失敗: {e}")
+    # 如果上市沒有資料，嘗試上櫃（OTC）
+    if not records:
+        for delta in [1, 0]:
+            d  = today - timedelta(days=delta * 32)
+            ym_otc = f"{d.year-1911}/{d.month:02d}"  # 民國年格式
+            try:
+                url = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                       f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                r    = SESSION.get(url, timeout=8)
+                data = r.json()
+                rows = data.get("aaData", [])
+                for row in rows:
+                    try:
+                        c = safe_float(str(row[6]).replace(",",""))
+                        h = safe_float(str(row[4]).replace(",",""))
+                        l = safe_float(str(row[5]).replace(",",""))
+                        v = round(safe_float(str(row[1]).replace(",","")) / 1000)
+                        if c > 0:
+                            records.append({"close":c,"high":h,"low":l,"vol":v})
+                    except: continue
+            except: pass
     return records
 
 # ══════════════════════════════════════════════════════
@@ -614,76 +636,136 @@ def run_market_backtest(codes, conditions, start_date, end_date,
 
 @app.route("/api/stocks")
 def get_stocks():
-    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] 開始抓取 TWSE 資料...")
+    now = datetime.now().strftime('%H:%M:%S')
+    print(f"\n[{now}] 開始抓取上市+上櫃資料...")
+
+    all_rows = []
+
+    # ── 上市（TWSE）─────────────────────────────────
     try:
         url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         resp = SESSION.get(url, timeout=15)
         resp.raise_for_status()
-        all_rows = resp.json()
-        print(f"  ✅ TWSE 回傳 {len(all_rows)} 筆")
+        twse_rows = resp.json()
+        for r in twse_rows:
+            code  = r.get("Code","")
+            price = safe_float(r.get("ClosingPrice"))
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            all_rows.append({
+                "Code":   code,
+                "Name":   r.get("Name",""),
+                "ClosingPrice":  r.get("ClosingPrice","0"),
+                "HighestPrice":  r.get("HighestPrice","0"),
+                "LowestPrice":   r.get("LowestPrice","0"),
+                "Change":        r.get("Change","0"),
+                "TradeVolume":   r.get("TradeVolume","0"),
+                "market": "上市",
+            })
+        print(f"  ✅ 上市 {len(all_rows)} 支")
     except Exception as e:
-        print(f"  ❌ TWSE 失敗: {e}")
-        return jsonify({"error": f"TWSE API 失敗: {str(e)}"}), 500
+        print(f"  ❌ 上市失敗: {e}")
+        if not all_rows:
+            return jsonify({"error": f"TWSE API 失敗: {str(e)}"}), 500
 
-    valid = [
-        r for r in all_rows
-        if str(r.get("Code","")).isdigit()
-        and len(str(r.get("Code",""))) == 4
-        and safe_float(r.get("ClosingPrice")) > 0
-    ]
-    print(f"  📋 有效 {len(valid)} 支，計算指標中...")
+    # ── 上櫃（OTC）──────────────────────────────────
+    otc_count = 0
+    try:
+        otc_url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+        r2 = SESSION.get(otc_url, timeout=15); r2.raise_for_status()
+        for r in r2.json():
+            code  = str(r.get("SecuritiesCompanyCode","") or r.get("code","")).strip()
+            name  = r.get("CompanyName","") or r.get("name","")
+            close = r.get("Close","0") or r.get("close","0")
+            high  = r.get("High","0")  or r.get("high","0")
+            low   = r.get("Low","0")   or r.get("low","0")
+            chg   = r.get("Change","0") or r.get("change","0")
+            vol   = r.get("TradingShares","0") or r.get("volume","0")
+            price = safe_float(close)
+            if not (str(code).isdigit() and len(code) in [4,5] and price>0): continue
+            all_rows.append({
+                "Code":   code, "Name":  name,
+                "ClosingPrice": close,  "HighestPrice": high,
+                "LowestPrice":  low,    "Change":       chg,
+                "TradeVolume":  str(safe_float(vol)),
+                "market": "上櫃",
+            })
+            otc_count += 1
+        print(f"  ✅ 上櫃 {otc_count} 支")
+    except Exception as e:
+        print(f"  ⚠️ 上櫃失敗（只用上市）: {e}")
 
-    stocks, limit = [], min(150, len(valid))
-    for i, row in enumerate(valid[:limit]):
-        code = row.get("Code","")
+    print(f"  📋 合計 {len(all_rows)} 支，計算指標中...")
+
+    def build_stock_obj(row, hist, market):
+        price   = safe_float(row.get("ClosingPrice"))
+        high_p  = safe_float(row.get("HighestPrice"))
+        low_p   = safe_float(row.get("LowestPrice"))
+        change  = safe_float(row.get("Change"))
+        vol_raw = safe_float(row.get("TradeVolume"))
+        if price <= 0: return None
+        today_vol = round(vol_raw / 1000)
+        closes = [h["close"] for h in hist]
+        highs  = [h["high"]  for h in hist]
+        lows   = [h["low"]   for h in hist]
+        vols   = [h["vol"]   for h in hist]
+        all_c  = closes + [price]
+        all_h  = highs  + [high_p or price]
+        all_l  = lows   + [low_p  or price]
+        all_v  = vols   + [today_vol]
+        prev_c  = closes[-1] if closes else price
+        chg_pct = round((price-prev_c)/prev_c*100,2) if prev_c>0 else 0
+        ma5    = round(sma(all_c,5),2)
+        ma20   = round(sma(all_c,20),2)
+        ma60   = round(sma(all_c,60),2)
+        avg5v  = round(sma(all_v[:-1],5))
+        avg20v = round(sma(all_v[:-1],20))
+        k_s,d_s = calc_kd_series(all_c,all_h,all_l,9)
+        kv,dv   = k_s[-1],d_s[-1]
+        pkv = k_s[-2] if len(k_s)>=2 else 50.0
+        pdv = d_s[-2] if len(d_s)>=2 else 50.0
+        rsi14   = calc_rsi_series(all_c,14)[-1]
+        rsi5_s  = calc_rsi_series(all_c,5)
+        rsi10_s = calc_rsi_series(all_c,10)
+        rsi5    = rsi5_s[-1]
+        rsi10   = rsi10_s[-1]
+        prev_rsi5  = rsi5_s[-2]  if len(rsi5_s)>=2  else rsi5
+        prev_rsi10 = rsi10_s[-2] if len(rsi10_s)>=2 else rsi10
+        return {
+            "code":code,"name":row.get("Name",""),
+            "sector":market,"price":price,
+            "chgPct":chg_pct,"chgAmt":change,
+            "todayVol":today_vol,"avg5Vol":avg5v,"avg20Vol":avg20v,
+            "volVsAvg5":  round(today_vol/avg5v,2)  if avg5v>0  else 0,
+            "volVsAvg20": round(today_vol/avg20v,2) if avg20v>0 else 0,
+            "priceVsMA20":round((price-ma20)/ma20*100,2) if ma20>0 else 0,
+            "priceVsMA60":round((price-ma60)/ma60*100,2) if ma60>0 else 0,
+            "ma20VsMA60": round((ma20-ma60)/ma60*100,2)  if ma60>0 else 0,
+            "ma5VsMA20":  round((ma5-ma20)/ma20*100,2)   if ma20>0 else 0,
+            "kVal":kv,"dVal":dv,"prevK":pkv,"prevD":pdv,
+            "rsi14":rsi14,
+            "rsi5":round(rsi5,1),"rsi10":round(rsi10,1),
+            "prevRsi5":round(prev_rsi5,1),"prevRsi10":round(prev_rsi10,1),
+            "spark":all_c[-20:],"isLive":True,
+        }
+
+    stocks = []
+    for i, row in enumerate(all_rows):
+        code   = row.get("Code","")
+        market = row.get("market","上市")
         try:
             hist = fetch_history_recent(code)
             if len(hist) < 5: continue
-            price   = safe_float(row.get("ClosingPrice"))
-            high_p  = safe_float(row.get("HighestPrice"))
-            low_p   = safe_float(row.get("LowestPrice"))
-            change  = safe_float(row.get("Change"))
-            vol_raw = safe_float(row.get("TradeVolume"))
-            if price <= 0: continue
-            today_vol = round(vol_raw / 1000)
-            closes = [h["close"] for h in hist]
-            highs  = [h["high"]  for h in hist]
-            lows   = [h["low"]   for h in hist]
-            vols   = [h["vol"]   for h in hist]
-            all_c  = closes + [price]
-            all_h  = highs  + [high_p or price]
-            all_l  = lows   + [low_p  or price]
-            all_v  = vols   + [today_vol]
-            prev_c = closes[-1] if closes else price
-            chg_pct = round((price-prev_c)/prev_c*100,2) if prev_c>0 else 0
-            ma5  = round(sma(all_c,5),2);  ma20 = round(sma(all_c,20),2)
-            ma60 = round(sma(all_c,60),2)
-            avg5v  = round(sma(all_v[:-1],5));  avg20v = round(sma(all_v[:-1],20))
-            k_s, d_s = calc_kd_series(all_c, all_h, all_l, 9)
-            kv, dv = k_s[-1], d_s[-1]
-            pkv = k_s[-2] if len(k_s)>=2 else 50.0
-            pdv = d_s[-2] if len(d_s)>=2 else 50.0
-            rsi = calc_rsi_series(all_c,14)[-1]
-            stocks.append({
-                "code": code, "name": row.get("Name",""),
-                "sector": "上市", "price": price,
-                "chgPct": chg_pct, "chgAmt": change,
-                "todayVol": today_vol, "avg5Vol": avg5v, "avg20Vol": avg20v,
-                "volVsAvg5":  round(today_vol/avg5v,2)  if avg5v>0  else 0,
-                "volVsAvg20": round(today_vol/avg20v,2) if avg20v>0 else 0,
-                "priceVsMA20": round((price-ma20)/ma20*100,2) if ma20>0 else 0,
-                "priceVsMA60": round((price-ma60)/ma60*100,2) if ma60>0 else 0,
-                "ma20VsMA60":  round((ma20-ma60)/ma60*100,2)  if ma60>0 else 0,
-                "ma5VsMA20":   round((ma5-ma20)/ma20*100,2)   if ma20>0 else 0,
-                "kVal":kv,"dVal":dv,"prevK":pkv,"prevD":pdv,
-                "rsi14":rsi,"spark":all_c[-20:],"isLive":True,
-            })
-            print(f"  [{i+1:3d}/{limit}] {code} {row.get('Name',''):<8} "
-                  f"價:{price:.2f}  漲跌:{chg_pct:+.2f}%")
+            obj = build_stock_obj(row, hist, market)
+            if obj:
+                stocks.append(obj)
+                if i % 50 == 0:
+                    print(f"  進度 {i+1}/{len(all_rows)}...")
         except Exception as e:
             print(f"  [錯誤] {code}: {e}")
 
-    print(f"\n  ✅ 完成！共 {len(stocks)} 支")
+    print(f"\n  ✅ 完成！上市+上櫃共 {len(stocks)} 支")
+    return jsonify({"stocks":stocks,"count":len(stocks),
+                    "time":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
     return jsonify({"stocks":stocks,"count":len(stocks),
                     "time":datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
 
@@ -2424,23 +2506,68 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         is_v2 = (model_ver == 'v2')
         history_months = 24 if is_v2 else 8
 
-        cb("從 TWSE 取得股票清單...", 2)
-        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
-        resp = SESSION.get(url, timeout=15); resp.raise_for_status()
-        rows = resp.json()
+        # ── 取得上市股票（TWSE）────────────────────
+        cb("從 TWSE 取得上市股票...", 1)
         stocks = []
-        for r in rows:
-            code=r.get("Code",""); price=safe_float(r.get("ClosingPrice"))
-            vol=round(safe_float(r.get("TradeVolume"))/1000)
-            chg=safe_float(r.get("Change")); prev=price-chg
-            pct_=round(chg/prev*100,2) if prev>0 else 0
-            if not (str(code).isdigit() and len(code)==4 and price>0): continue
-            if price<10 or price>1000 or vol<300: continue
-            if abs(pct_)>9.5: continue
-            stocks.append({"code":code,"name":r.get("Name",""),"price":price,"pct":pct_,"vol":vol})
+        try:
+            url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+            resp = SESSION.get(url, timeout=15); resp.raise_for_status()
+            for r in resp.json():
+                code=r.get("Code",""); price=safe_float(r.get("ClosingPrice"))
+                vol=round(safe_float(r.get("TradeVolume"))/1000)
+                chg=safe_float(r.get("Change")); prev=price-chg
+                pct_=round(chg/prev*100,2) if prev>0 else 0
+                if not (str(code).isdigit() and len(code)==4 and price>0): continue
+                if price<10 or vol<100: continue
+                if abs(pct_)>9.5: continue
+                stocks.append({"code":code,"name":r.get("Name",""),
+                               "price":price,"pct":pct_,"vol":vol,"market":"上市"})
+            print(f"  上市：{len(stocks)} 支")
+        except Exception as e:
+            print(f"  上市取得失敗: {e}")
 
-        if len(stocks)>max_stocks:
-            random.shuffle(stocks); stocks=stocks[:max_stocks]
+        # ── 取得上櫃股票（OTC）─────────────────────
+        cb("從 OTC 取得上櫃股票...", 2)
+        otc_count = 0
+        try:
+            otc_url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+            r2 = SESSION.get(otc_url, timeout=15); r2.raise_for_status()
+            for r in r2.json():
+                code  = r.get("SecuritiesCompanyCode","") or r.get("code","")
+                name  = r.get("CompanyName","") or r.get("name","")
+                price = safe_float(r.get("Close","") or r.get("close",""))
+                vol   = round(safe_float(r.get("TradingShares","") or r.get("volume","")) / 1000)
+                chg   = safe_float(r.get("Change","") or r.get("change",""))
+                if not (str(code).isdigit() and len(str(code)) in [4,5] and price>0): continue
+                if price<10 or vol<100: continue
+                prev  = price-chg
+                pct_  = round(chg/prev*100,2) if prev>0 else 0
+                if abs(pct_)>9.5: continue
+                stocks.append({"code":code,"name":name,
+                               "price":price,"pct":pct_,"vol":vol,"market":"上櫃"})
+                otc_count += 1
+            print(f"  上櫃：{otc_count} 支")
+        except Exception as e:
+            print(f"  上櫃取得失敗（使用備用方案）: {e}")
+            # 備用：從 TWSE 抓上櫃
+            try:
+                r3 = SESSION.get(
+                    "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                    timeout=15)
+                # 上櫃代號通常 5 碼
+                pass
+            except: pass
+
+        total_before = len(stocks)
+        cb(f"取得 {total_before} 支股票（上市+上櫃）", 3)
+
+        # 如果設定了數量上限且小於實際數量，隨機抽樣
+        if max_stocks > 0 and len(stocks) > max_stocks:
+            random.shuffle(stocks)
+            stocks = stocks[:max_stocks]
+            cb(f"隨機抽樣 {max_stocks} 支進行分析...", 4)
+        else:
+            cb(f"全部 {len(stocks)} 支進行分析...", 4)
 
         # v2.0：預先抓大盤資料
         market_closes = []

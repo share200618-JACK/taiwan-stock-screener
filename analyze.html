@@ -126,8 +126,8 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   <div id="panelMarket">
     <div class="settings-row">
       <div class="fg">
-        <label class="fl">掃描股票數量</label>
-        <input class="fi" type="number" id="maxStocks" value="80" min="20" max="200" step="10">
+        <label class="fl">掃描數量（0=全部）</label>
+        <input class="fi" type="number" id="maxStocks" value="200" min="0" max="2000" step="50">
       </div>
       <div class="fg">
         <label class="fl">顯示推薦數</label>
@@ -145,7 +145,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     <div class="note">
       <strong>v2.0 強化版：</strong>28 個特徵｜2 年訓練資料｜大盤相對強弱｜量價型態｜時間序列驗證｜預期準確率 62~68%<br>
       <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
-      ⏱ 掃描 80 支約需 <strong>8~15 分鐘</strong>，請耐心等待
+      📊 掃描範圍：<strong>上市 + 上櫃</strong>共約 1700 支｜掃描數量設 <strong>0 = 全部掃描</strong>（約 2~3 小時）｜建議先用 200 支測試（約 15 分鐘）
     </div>
   </div>
 
