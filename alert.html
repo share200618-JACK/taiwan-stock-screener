@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telegram 警報設定</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
+  --tg:#2aabee;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background:
+  radial-gradient(ellipse 55% 40% at 10% 0%,rgba(42,171,238,.06) 0%,transparent 60%),
+  radial-gradient(ellipse 45% 55% at 90% 100%,rgba(240,180,41,.04) 0%,transparent 60%);
+  pointer-events:none;z-index:0;}
+.w{max-width:900px;margin:0 auto;padding:0 24px 48px;position:relative;z-index:1;}
+
+header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.logo{display:flex;align-items:center;gap:11px;}
+.li{width:36px;height:36px;background:linear-gradient(135deg,var(--tg),#1a8fc4);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 18px rgba(42,171,238,.35);}
+.logo h1{font-size:1.25rem;font-weight:700;}
+.logo h1 span{color:var(--tg);}
+.back-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.82rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.back-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+.section{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:22px;margin-bottom:18px;}
+.sec-title{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin-bottom:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.sec-title .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+
+.fg{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
+.fl{font-size:.74rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;}
+.fi{padding:10px 13px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'Noto Sans TC',sans-serif;font-size:.87rem;transition:border-color .15s;width:100%;}
+.fi:focus{outline:none;border-color:var(--tg);}
+.fi.mono{font-family:'JetBrains Mono',monospace;}
+.hint{font-size:.74rem;color:var(--dim);margin-top:4px;line-height:1.7;}
+.hint code{background:var(--s2);padding:1px 6px;border-radius:4px;font-size:.76rem;}
+
+.toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+.toggle-row:last-child{border-bottom:none;}
+.toggle-label{font-size:.88rem;}
+.toggle-sub{font-size:.74rem;color:var(--dim);margin-top:2px;}
+.sw{position:relative;width:44px;height:24px;flex-shrink:0;}
+.sw input{opacity:0;width:0;height:0;}
+.sw-slider{position:absolute;inset:0;background:var(--bd);border-radius:12px;cursor:pointer;transition:.2s;}
+.sw input:checked+.sw-slider{background:var(--grn);}
+.sw-slider::after{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
+.sw input:checked+.sw-slider::after{left:23px;}
+
+.btn{padding:10px 20px;border-radius:9px;border:none;font-family:'Noto Sans TC',sans-serif;font-size:.88rem;font-weight:700;cursor:pointer;transition:all .2s;}
+.btn-tg{background:var(--tg);color:#fff;}
+.btn-tg:hover{background:#1a8fc4;}
+.btn-gold{background:var(--gold);color:#000;}
+.btn-gold:hover{background:var(--gold2);}
+.btn-outline{background:transparent;border:1px solid var(--bd);color:var(--dim);}
+.btn-outline:hover{border-color:var(--gold);color:var(--gold);}
+.btn-red{background:transparent;border:1px solid rgba(255,77,94,.3);color:var(--red);font-size:.78rem;padding:6px 12px;}
+.btn-red:hover{background:rgba(255,77,94,.1);}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;}
+
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600;}
+.status-badge.on{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
+.status-badge.off{background:rgba(106,116,143,.12);color:var(--dim);border:1px solid var(--bd);}
+
+.watch-card{background:var(--s2);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:10px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;}
+.watch-code{font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:700;}
+.watch-name{font-size:.85rem;color:var(--dim);margin-top:2px;}
+.watch-prices{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
+.wp{font-size:.73rem;padding:3px 8px;border-radius:5px;}
+.wp.tp{background:rgba(255,77,94,.1);color:var(--red);border:1px solid rgba(255,77,94,.2);}
+.wp.sl{background:rgba(39,217,129,.1);color:var(--grn);border:1px solid rgba(39,217,129,.2);}
+.wp.ri{background:rgba(240,180,41,.1);color:var(--gold);border:1px solid rgba(240,180,41,.2);}
+.wp.fa{background:rgba(61,139,255,.1);color:var(--blu);border:1px solid rgba(61,139,255,.2);}
+
+.add-form{background:var(--s3);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-top:12px;display:none;}
+.add-form.open{display:block;}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px;}
+.form-grid .fg{margin-bottom:0;}
+
+.interval-btns{display:flex;gap:6px;flex-wrap:wrap;}
+.ivb{padding:6px 14px;border-radius:7px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.8rem;cursor:pointer;transition:all .15s;font-family:'Noto Sans TC',sans-serif;}
+.ivb:hover{border-color:var(--tg);color:var(--tg);}
+.ivb.active{background:rgba(42,171,238,.12);border-color:var(--tg);color:var(--tg);}
+
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:12px 22px;font-size:.85rem;color:var(--txt);box-shadow:0 8px 32px rgba(0,0,0,.4);opacity:0;transition:opacity .3s;z-index:999;pointer-events:none;white-space:nowrap;}
+.toast.show{opacity:1;}
+.toast.ok{border-color:rgba(39,217,129,.4);color:var(--grn);}
+.toast.err{border-color:rgba(255,77,94,.4);color:var(--red);}
+</style>
+</head>
+<body>
+<div class="w">
+<header>
+  <div class="logo">
+    <div class="li">✈️</div>
+    <h1>Telegram <span>警報</span>設定</h1>
+  </div>
+  <a class="back-btn" href="/">← 回到選股</a>
+</header>
+
+<!-- Bot 設定 -->
+<div class="section">
+  <div class="sec-title">
+    <div class="dot" style="background:var(--tg)"></div>
+    Telegram Bot 設定
+    <span id="statusBadge" class="status-badge off">● 未啟用</span>
+  </div>
+
+  <div class="fg">
+    <label class="fl">Bot Token</label>
+    <input class="fi mono" type="text" id="tgToken" placeholder="例：7123456789:AAFxxxxxxxxxxxxx">
+    <div class="hint">
+      從 @BotFather 取得。發送 /newbot → 依指示建立 → 複製 Token
+    </div>
+  </div>
+
+  <div class="fg">
+    <label class="fl">Chat ID</label>
+    <input class="fi mono" type="text" id="tgChatId" placeholder="例：2036351531">
+    <div class="hint">
+      1. 對你的 Bot 發任意訊息<br>
+      2. 瀏覽器開啟：<code>https://api.telegram.org/bot你的Token/getUpdates</code><br>
+      3. 找 <code>"chat":{"id":數字}</code>，那個數字就是 Chat ID
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button class="btn btn-tg" onclick="testTelegram()">📨 傳送測試訊息</button>
+    <button class="btn btn-gold" onclick="saveBasicSettings()">💾 儲存設定</button>
+  </div>
+</div>
+
+<!-- 通知開關 -->
+<div class="section">
+  <div class="sec-title"><div class="dot" style="background:var(--grn)"></div>通知開關</div>
+
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">啟用 Telegram 警報</div>
+      <div class="toggle-sub">交易時間（09:00~13:35）自動掃描並發送通知</div>
+    </div>
+    <label class="sw"><input type="checkbox" id="enabled" onchange="saveBasicSettings()"><span class="sw-slider"></span></label>
+  </div>
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">📈 買入訊號通知</div>
+      <div class="toggle-sub">選股條件觸發時發送通知</div>
+    </div>
+    <label class="sw"><input type="checkbox" id="notifyBuy" checked onchange="saveBasicSettings()"><span class="sw-slider"></span></label>
+  </div>
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">📉 賣出訊號通知</div>
+      <div class="toggle-sub">停利、停損、追蹤高點觸發時發送通知</div>
+    </div>
+    <label class="sw"><input type="checkbox" id="notifySell" checked onchange="saveBasicSettings()"><span class="sw-slider"></span></label>
+  </div>
+
+  <div style="margin-top:16px;">
+    <div class="fl" style="margin-bottom:10px;">掃描頻率（分鐘）</div>
+    <div class="interval-btns" id="intervalBtns">
+      <button class="ivb" data-v="1"  onclick="setInterval_(1)">1 分</button>
+      <button class="ivb active" data-v="5"  onclick="setInterval_(5)">5 分</button>
+      <button class="ivb" data-v="10" onclick="setInterval_(10)">10 分</button>
+      <button class="ivb" data-v="15" onclick="setInterval_(15)">15 分</button>
+      <button class="ivb" data-v="30" onclick="setInterval_(30)">30 分</button>
+    </div>
+    <div class="hint" style="margin-top:6px;">建議 5~15 分鐘，過短可能影響 TWSE API 穩定性</div>
+  </div>
+
+  <div style="margin-top:14px;">
+    <button class="btn btn-outline" onclick="triggerNow()" style="font-size:.82rem;padding:8px 16px;">
+      🔍 立即掃描一次
+    </button>
+  </div>
+</div>
+
+<!-- 監控清單 -->
+<div class="section">
+  <div class="sec-title">
+    <div class="dot" style="background:var(--gold)"></div>
+    股票監控清單
+    <span style="margin-left:auto;font-size:.75rem;font-weight:400;color:var(--dim);">設定個股停利/停損/漲跌幅通知</span>
+  </div>
+
+  <div id="watchList">
+    <div style="text-align:center;padding:24px;color:var(--dim);font-size:.84rem;">尚無監控股票，點下方按鈕新增</div>
+  </div>
+
+  <button class="btn btn-outline" onclick="toggleAddForm()" style="margin-top:10px;width:100%;">＋ 新增監控股票</button>
+
+  <div class="add-form" id="addForm">
+    <div class="form-grid">
+      <div class="fg">
+        <label class="fl">股票代號 *</label>
+        <input class="fi" type="text" id="newCode" placeholder="例：2330" maxlength="6">
+      </div>
+      <div class="fg">
+        <label class="fl">買入成本（元）</label>
+        <input class="fi" type="number" id="newBuy" placeholder="例：150" step="0.01">
+      </div>
+      <div class="fg">
+        <label class="fl">🟢 停利價（元）</label>
+        <input class="fi" type="number" id="newTarget" placeholder="到達此價通知" step="0.01">
+      </div>
+      <div class="fg">
+        <label class="fl">🔴 停損價（元）</label>
+        <input class="fi" type="number" id="newStop" placeholder="跌破此價通知" step="0.01">
+      </div>
+      <div class="fg">
+        <label class="fl">📈 漲幅警報（%）</label>
+        <input class="fi" type="number" id="newRise" placeholder="例：5" step="0.1">
+      </div>
+      <div class="fg">
+        <label class="fl">📉 跌幅警報（%）</label>
+        <input class="fi" type="number" id="newFall" placeholder="例：3" step="0.1">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-gold" onclick="addWatch()">➕ 加入監控</button>
+      <button class="btn btn-outline" onclick="toggleAddForm()">取消</button>
+    </div>
+  </div>
+</div>
+
+<!-- 說明 -->
+<div style="background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;font-size:.76rem;color:var(--dim);line-height:1.9;">
+  📋 <strong style="color:var(--txt)">通知說明</strong><br>
+  • <strong style="color:var(--grn)">停利/停損</strong>：當股價到達你設定的價位時發通知<br>
+  • <strong style="color:var(--gold)">漲跌幅警報</strong>：當日漲幅/跌幅超過設定百分比時發通知<br>
+  • 通知只在 <strong style="color:var(--txt)">週一至週五 09:00~13:35</strong> 台股交易時間內發送<br>
+  • 需保持 <code style="background:var(--s2);padding:1px 5px;border-radius:3px;">server.py</code> 持續執行（或部署到 Render）
+</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000' : '';
+let currentInterval = 5;
+
+async function init() {
+  try {
+    const r = await fetch(`${API}/api/alert/settings`);
+    const s = await r.json();
+    document.getElementById('tgToken').value    = s.telegram_token   || '';
+    document.getElementById('tgChatId').value   = s.telegram_chat_id || '';
+    document.getElementById('enabled').checked    = !!s.enabled;
+    document.getElementById('notifyBuy').checked  = s.notify_buy  !== false;
+    document.getElementById('notifySell').checked = s.notify_sell !== false;
+    currentInterval = s.check_interval || 5;
+    updateIntervalBtns(currentInterval);
+    updateStatusBadge(!!s.enabled);
+    renderWatchList(s.watch_list || []);
+  } catch(e) {
+    showToast('無法連線到後端伺服器', 'err');
+  }
+}
+
+async function saveBasicSettings() {
+  const body = {
+    telegram_token:   document.getElementById('tgToken').value.trim(),
+    telegram_chat_id: document.getElementById('tgChatId').value.trim(),
+    enabled:          document.getElementById('enabled').checked,
+    notify_buy:       document.getElementById('notifyBuy').checked,
+    notify_sell:      document.getElementById('notifySell').checked,
+    check_interval:   currentInterval,
+  };
+  try {
+    const r = await fetch(`${API}/api/alert/settings`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.ok) { updateStatusBadge(body.enabled); showToast('✅ 設定已儲存', 'ok'); }
+  } catch(e) { showToast('儲存失敗：' + e.message, 'err'); }
+}
+
+async function testTelegram() {
+  const token   = document.getElementById('tgToken').value.trim();
+  const chat_id = document.getElementById('tgChatId').value.trim();
+  if (!token || !chat_id) { showToast('請先填入 Token 和 Chat ID', 'err'); return; }
+  try {
+    const r = await fetch(`${API}/api/alert/test`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ token, chat_id }),
+    });
+    const d = await r.json();
+    showToast(d.ok ? '✅ 測試訊息已發送！' : '❌ 發送失敗，請確認 Token 和 Chat ID', d.ok?'ok':'err');
+  } catch(e) { showToast('連線失敗', 'err'); }
+}
+
+async function triggerNow() {
+  try {
+    await fetch(`${API}/api/alert/trigger_now`, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+    showToast('🔍 掃描已觸發', 'ok');
+  } catch(e) { showToast('連線失敗', 'err'); }
+}
+
+function setInterval_(v) {
+  currentInterval = v;
+  updateIntervalBtns(v);
+  saveBasicSettings();
+}
+function updateIntervalBtns(v) {
+  document.querySelectorAll('.ivb').forEach(b => b.classList.toggle('active', parseInt(b.dataset.v) === v));
+}
+
+function renderWatchList(list) {
+  const el = document.getElementById('watchList');
+  if (!list.length) {
+    el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--dim);font-size:.84rem;">尚無監控股票</div>';
+    return;
+  }
+  el.innerHTML = list.map(w => {
+    const tags = [];
+    if (w.target_price   > 0) tags.push(`<span class="wp tp">停利 ${w.target_price}元</span>`);
+    if (w.stop_price     > 0) tags.push(`<span class="wp sl">停損 ${w.stop_price}元</span>`);
+    if (w.rise_alert_pct > 0) tags.push(`<span class="wp ri">漲 +${w.rise_alert_pct}%</span>`);
+    if (w.fall_alert_pct > 0) tags.push(`<span class="wp fa">跌 -${w.fall_alert_pct}%</span>`);
+    return `<div class="watch-card">
+      <div>
+        <div class="watch-code">${w.code}</div>
+        <div class="watch-name">${w.name||'—'}</div>
+        ${w.buy_price>0?`<div style="font-size:.72rem;color:var(--dim);margin-top:2px;">成本 ${w.buy_price}元</div>`:''}
+      </div>
+      <div><div class="watch-prices">${tags.join('')}</div></div>
+      <button class="btn btn-red" onclick="removeWatch('${w.code}')">✕ 移除</button>
+    </div>`;
+  }).join('');
+}
+
+function toggleAddForm() {
+  document.getElementById('addForm').classList.toggle('open');
+}
+
+async function addWatch() {
+  const code = document.getElementById('newCode').value.trim();
+  if (!code) { showToast('請輸入股票代號', 'err'); return; }
+  const body = {
+    code,
+    buy_price:      parseFloat(document.getElementById('newBuy').value)||0,
+    target_price:   parseFloat(document.getElementById('newTarget').value)||0,
+    stop_price:     parseFloat(document.getElementById('newStop').value)||0,
+    rise_alert_pct: parseFloat(document.getElementById('newRise').value)||0,
+    fall_alert_pct: parseFloat(document.getElementById('newFall').value)||0,
+  };
+  try {
+    const r = await fetch(`${API}/api/alert/watch`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      renderWatchList(d.watch_list);
+      toggleAddForm();
+      ['newCode','newBuy','newTarget','newStop','newRise','newFall'].forEach(id => document.getElementById(id).value='');
+      showToast('✅ 已加入監控清單', 'ok');
+    }
+  } catch(e) { showToast('加入失敗', 'err'); }
+}
+
+async function removeWatch(code) {
+  try {
+    await fetch(`${API}/api/alert/watch/${code}`, {method:'DELETE'});
+    const s = await (await fetch(`${API}/api/alert/settings`)).json();
+    renderWatchList(s.watch_list||[]);
+    showToast('已移除', 'ok');
+  } catch(e) { showToast('移除失敗', 'err'); }
+}
+
+function updateStatusBadge(enabled) {
+  const el = document.getElementById('statusBadge');
+  el.className = 'status-badge ' + (enabled?'on':'off');
+  el.textContent = enabled ? '● 警報啟用中' : '● 未啟用';
+}
+
+function showToast(msg, type='ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = `toast show ${type}`;
+  setTimeout(() => el.className = 'toast', 3000);
+}
+
+init();
+</script>
+</body>
+</html>

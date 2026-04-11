@@ -196,7 +196,7 @@ input.fs{width:95px;}
     let tries = 0;
     while (tries < 12) {
       try {
-        const r = await fetch(location.origin+"/api/health", {signal: AbortSignal.timeout(8000)});
+        const r = await fetch(location.origin+"/api/health", {signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),8000); return c.signal; })()});
         if (r.ok) { overlay.style.display="none"; return; }
       } catch(e) {}
       tries++;
@@ -606,7 +606,7 @@ async function run(){
   try{
     addLog('📡 後端正在向 TWSE 抓取今日資料...');
     setBar(20);
-    const resp=await fetch(`${API}/api/stocks`,{signal:AbortSignal.timeout(120000)});
+    const resp=await fetch(`${API}/api/stocks`,{signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),120000); return c.signal; })()});
     if(!resp.ok) throw new Error(`後端回傳 HTTP ${resp.status}`);
     setBar(70);
     addLog('📊 解析資料並計算技術指標...');
@@ -732,7 +732,7 @@ function buildSpark(pts){
 // 啟動時檢查後端連線
 (async()=>{
   try{
-    const r=await fetch(`${API}/api/health`,{signal:AbortSignal.timeout(5000)});
+    const r=await fetch(`${API}/api/health`,{signal: (()=>{ const c=new AbortController(); setTimeout(()=>c.abort(),5000); return c.signal; })()});
     if(r.ok) setDot('ok','TWSE 即時');
     else setDot('wait','連線中...');
   }catch{
