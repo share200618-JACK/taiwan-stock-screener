@@ -115,13 +115,19 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       <label class="fl">顯示推薦數</label>
       <input class="fi" type="number" id="topN" value="10" min="5" max="20">
     </div>
+    <div class="fg">
+      <label class="fl">模型版本</label>
+      <select class="fi" id="modelVer" style="width:130px;">
+        <option value="v2">v2.0 強化版 ⭐</option>
+        <option value="v1">v1.0 基礎版</option>
+      </select>
+    </div>
     <button class="run-btn" id="runBtn" onclick="startAnalysis()">🤖 開始 AI 分析</button>
   </div>
   <div class="note">
-    <strong>分析方式：</strong>隨機森林（Random Forest）｜
-    <strong>預測區間：</strong>約 3 週後漲跌｜
-    <strong>訓練資料：</strong>近 2 年歷史 + 技術指標 23 個特徵<br>
-    ⏱ 掃描 80 支約需 <strong>8~12 分鐘</strong>，請耐心等待
+    <strong>v2.0 強化版：</strong>28 個特徵｜2 年訓練資料｜大盤相對強弱｜量價型態｜時間序列驗證｜預期準確率 62~68%<br>
+    <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
+    ⏱ 掃描 80 支約需 <strong>8~15 分鐘</strong>，請耐心等待
   </div>
 </div>
 
@@ -170,18 +176,19 @@ let pollTimer = null;
 async function startAnalysis() {
   const maxStocks = parseInt(document.getElementById('maxStocks').value)||80;
   const topN      = parseInt(document.getElementById('topN').value)||10;
+  const modelVer  = document.getElementById('modelVer').value;
 
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = '⏳ 分析中...';
   document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('emptyState').style.display   = 'none';
   document.getElementById('results').style.display      = 'none';
-  setProgress(0, '啟動分析任務...');
+  setProgress(0, `啟動 ${modelVer==='v2'?'v2.0 強化版':'v1.0 基礎版'} 分析...`);
 
   try {
     const r = await fetch(`${API}/api/analyze/start`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({max_stocks:maxStocks, top_n:topN}),
+      body: JSON.stringify({max_stocks:maxStocks, top_n:topN, model_ver:modelVer}),
     });
     const {task_id, error} = await r.json();
     if (error) throw new Error(error);
@@ -237,9 +244,10 @@ function showError(msg) {
 
 function renderResults(data) {
   const stocks = data.stocks || [];
+  const ver    = data.model_ver || 'v1';
   document.getElementById('results').style.display = 'block';
   document.getElementById('resultTitle').textContent =
-    `AI 推薦 ${stocks.length} 支股票`;
+    `AI 推薦 ${stocks.length} 支股票（${ver==='v2'?'v2.0 強化版 ⭐':'v1.0 基礎版'}）`;
   document.getElementById('resultSub').textContent =
     `掃描 ${data.total_scanned} 支，${data.total_analyzed} 支通過篩選`;
 
@@ -253,23 +261,38 @@ function renderResults(data) {
     const prob = s.rise_prob;
     const conf = s.confidence;
     const acc  = s.accuracy;
-    const chgCls = s.chg_pct >= 0 ? 'up' : 'dn';
-    const chgTxt = (s.chg_pct >= 0 ? '+' : '') + s.chg_pct + '%';
+    const prec = s.precision || null;
+    const chgCls = (s.chg_pct||0) >= 0 ? 'up' : 'dn';
+    const chgTxt = ((s.chg_pct||0) >= 0 ? '+' : '') + (s.chg_pct||0) + '%';
 
     let cardCls='neutral', signal='→ 中性';
-    if (prob >= 65)      { cardCls='bull'; signal='🔥 強烈看漲'; }
+    if (prob >= 72)      { cardCls='bull'; signal='🔥🔥 極強看漲'; }
+    else if (prob >= 65) { cardCls='bull'; signal='🔥 強烈看漲'; }
     else if (prob >= 58) { cardCls='bull'; signal='📈 看漲'; }
     else if (prob >= 52) { cardCls='bull'; signal='↗️ 略偏看漲'; }
-    else if (prob <= 35) { cardCls='bear'; signal='📉 看跌'; }
+    else if (prob <= 30) { cardCls='bear'; signal='📉 看跌'; }
     else if (prob <= 42) { cardCls='bear'; signal='↘️ 略偏看跌'; }
 
     const probColor = prob >= 50 ? 'var(--red)' : 'var(--grn)';
     const confColor = conf >= 50 ? 'var(--pur)' : 'var(--dim)';
 
+    // v2.0 額外資訊
+    const v2extras = ver==='v2' ? `
+      ${s.rel_strength !== undefined ? `
+      <div class="prob-row" style="margin-top:2px;">
+        <span class="prob-label" style="font-size:.65rem;">vs大盤</span>
+        <span style="font-size:.75rem;color:${s.rel_strength>=0?'var(--red)':'var(--grn)'}">
+          ${s.rel_strength>=0?'+':''}${(s.rel_strength||0).toFixed(1)}%
+        </span>
+      </div>` : ''}
+      ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
+      <span class="acc-badge" style="background:rgba(168,85,247,.12);color:var(--pur);border-color:rgba(168,85,247,.2);">訓練 ${s.data_years||'?'} 年</span>
+    ` : '';
+
     return `<div class="card ${cardCls}">
       <div class="card-rank">#${i+1}</div>
       <div class="card-code">${s.code}</div>
-      <div class="card-name">${s.name}</div>
+      <div class="card-name">${s.name||s.code}</div>
       <div class="card-signal" style="color:${probColor}">${signal}</div>
 
       <div class="prob-row">
@@ -286,6 +309,13 @@ function renderResults(data) {
         </div>
         <span class="prob-val" style="color:${confColor}">${conf}%</span>
       </div>
+      ${ver==='v2' && s.rel_strength !== undefined ? `<div class="prob-row">
+        <span class="prob-label">vs大盤</span>
+        <div class="prob-bar-wrap">
+          <div class="prob-bar" style="width:${Math.min(Math.abs(s.rel_strength||0)*3,100)}%;background:${(s.rel_strength||0)>=0?'var(--red)':'var(--grn)'}"></div>
+        </div>
+        <span class="prob-val" style="color:${(s.rel_strength||0)>=0?'var(--red)':'var(--grn);font-size:.72rem'}">${(s.rel_strength||0)>=0?'+':''}${(s.rel_strength||0).toFixed(1)}%</span>
+      </div>` : ''}
 
       <div class="card-footer">
         <div>
@@ -295,6 +325,7 @@ function renderResults(data) {
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
           <span class="card-chg ${chgCls}">${chgTxt}</span>
           <span class="acc-badge">準確率 ${acc}%</span>
+          ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
         </div>
       </div>
     </div>`;

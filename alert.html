@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Telegram 警報設定</title>
+<title>警報設定</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
 :root{
@@ -11,35 +11,32 @@
   --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
   --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
   --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
-  --tg:#2aabee;
 }
 *{margin:0;padding:0;box-sizing:border-box;}
 body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;}
 body::before{content:'';position:fixed;inset:0;background:
-  radial-gradient(ellipse 55% 40% at 10% 0%,rgba(42,171,238,.06) 0%,transparent 60%),
-  radial-gradient(ellipse 45% 55% at 90% 100%,rgba(240,180,41,.04) 0%,transparent 60%);
+  radial-gradient(ellipse 55% 40% at 10% 0%,rgba(240,180,41,.06) 0%,transparent 60%),
+  radial-gradient(ellipse 45% 55% at 90% 100%,rgba(61,139,255,.04) 0%,transparent 60%);
   pointer-events:none;z-index:0;}
 .w{max-width:900px;margin:0 auto;padding:0 24px 48px;position:relative;z-index:1;}
 
 header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
 .logo{display:flex;align-items:center;gap:11px;}
-.li{width:36px;height:36px;background:linear-gradient(135deg,var(--tg),#1a8fc4);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 18px rgba(42,171,238,.35);}
+.li{width:36px;height:36px;background:linear-gradient(135deg,var(--gold),var(--gold2));border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 18px rgba(240,180,41,.3);}
 .logo h1{font-size:1.25rem;font-weight:700;}
-.logo h1 span{color:var(--tg);}
-.back-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.82rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.logo h1 span{color:var(--gold);}
+.back-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.82rem;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
 .back-btn:hover{border-color:var(--gold);color:var(--gold);}
 
 .section{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:22px;margin-bottom:18px;}
 .sec-title{font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin-bottom:16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-.sec-title .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;}
 
 .fg{display:flex;flex-direction:column;gap:6px;margin-bottom:14px;}
 .fl{font-size:.74rem;font-weight:700;color:var(--dim);text-transform:uppercase;letter-spacing:.07em;}
-.fi{padding:10px 13px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'Noto Sans TC',sans-serif;font-size:.87rem;transition:border-color .15s;width:100%;}
-.fi:focus{outline:none;border-color:var(--tg);}
-.fi.mono{font-family:'JetBrains Mono',monospace;}
+.fi{padding:10px 13px;background:var(--s2);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-family:'Noto Sans TC',sans-serif;font-size:.87rem;width:100%;}
+.fi:focus{outline:none;border-color:var(--gold);}
 .hint{font-size:.74rem;color:var(--dim);margin-top:4px;line-height:1.7;}
-.hint code{background:var(--s2);padding:1px 6px;border-radius:4px;font-size:.76rem;}
 
 .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:12px 0;border-bottom:1px solid rgba(255,255,255,.04);}
 .toggle-row:last-child{border-bottom:none;}
@@ -47,136 +44,122 @@ header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:28px;
 .toggle-sub{font-size:.74rem;color:var(--dim);margin-top:2px;}
 .sw{position:relative;width:44px;height:24px;flex-shrink:0;}
 .sw input{opacity:0;width:0;height:0;}
-.sw-slider{position:absolute;inset:0;background:var(--bd);border-radius:12px;cursor:pointer;transition:.2s;}
-.sw input:checked+.sw-slider{background:var(--grn);}
-.sw-slider::after{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
-.sw input:checked+.sw-slider::after{left:23px;}
+.sw-s{position:absolute;inset:0;background:var(--bd);border-radius:12px;cursor:pointer;transition:.2s;}
+.sw input:checked+.sw-s{background:var(--grn);}
+.sw-s::after{content:'';position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s;}
+.sw input:checked+.sw-s::after{left:23px;}
 
 .btn{padding:10px 20px;border-radius:9px;border:none;font-family:'Noto Sans TC',sans-serif;font-size:.88rem;font-weight:700;cursor:pointer;transition:all .2s;}
-.btn-tg{background:var(--tg);color:#fff;}
-.btn-tg:hover{background:#1a8fc4;}
 .btn-gold{background:var(--gold);color:#000;}
 .btn-gold:hover{background:var(--gold2);}
 .btn-outline{background:transparent;border:1px solid var(--bd);color:var(--dim);}
 .btn-outline:hover{border-color:var(--gold);color:var(--gold);}
 .btn-red{background:transparent;border:1px solid rgba(255,77,94,.3);color:var(--red);font-size:.78rem;padding:6px 12px;}
 .btn-red:hover{background:rgba(255,77,94,.1);}
-.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;}
-
-.status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600;}
-.status-badge.on{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
-.status-badge.off{background:rgba(106,116,143,.12);color:var(--dim);border:1px solid var(--bd);}
+.btn-row{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;}
 
 .watch-card{background:var(--s2);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:10px;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;}
-.watch-code{font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:700;}
-.watch-name{font-size:.85rem;color:var(--dim);margin-top:2px;}
-.watch-prices{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;}
-.wp{font-size:.73rem;padding:3px 8px;border-radius:5px;}
-.wp.tp{background:rgba(255,77,94,.1);color:var(--red);border:1px solid rgba(255,77,94,.2);}
-.wp.sl{background:rgba(39,217,129,.1);color:var(--grn);border:1px solid rgba(39,217,129,.2);}
-.wp.ri{background:rgba(240,180,41,.1);color:var(--gold);border:1px solid rgba(240,180,41,.2);}
-.wp.fa{background:rgba(61,139,255,.1);color:var(--blu);border:1px solid rgba(61,139,255,.2);}
+.wcode{font-family:'JetBrains Mono',monospace;font-size:1rem;font-weight:700;}
+.wname{font-size:.85rem;color:var(--dim);margin-top:2px;}
+.wtags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;}
+.wtag{font-size:.72rem;padding:2px 8px;border-radius:4px;}
+.wtag.tp{background:rgba(255,77,94,.1);color:var(--red);border:1px solid rgba(255,77,94,.2);}
+.wtag.sl{background:rgba(39,217,129,.1);color:var(--grn);border:1px solid rgba(39,217,129,.2);}
+.wtag.ri{background:rgba(240,180,41,.1);color:var(--gold);border:1px solid rgba(240,180,41,.2);}
+.wtag.fa{background:rgba(61,139,255,.1);color:var(--blu);border:1px solid rgba(61,139,255,.2);}
 
 .add-form{background:var(--s3);border:1px solid var(--bd);border-radius:10px;padding:16px;margin-top:12px;display:none;}
 .add-form.open{display:block;}
 .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px;}
 .form-grid .fg{margin-bottom:0;}
 
-.interval-btns{display:flex;gap:6px;flex-wrap:wrap;}
-.ivb{padding:6px 14px;border-radius:7px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.8rem;cursor:pointer;transition:all .15s;font-family:'Noto Sans TC',sans-serif;}
-.ivb:hover{border-color:var(--tg);color:var(--tg);}
-.ivb.active{background:rgba(42,171,238,.12);border-color:var(--tg);color:var(--tg);}
+/* 通知歷史 */
+.notif-hist{max-height:300px;overflow-y:auto;}
+.nh-item{display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+.nh-item:last-child{border-bottom:none;}
+.nh-icon{font-size:1rem;flex-shrink:0;}
+.nh-body{flex:1;}
+.nh-title{font-size:.82rem;font-weight:600;}
+.nh-msg{font-size:.74rem;color:var(--dim);margin-top:2px;}
+.nh-time{font-size:.68rem;color:var(--dim);margin-top:3px;}
+.empty-hist{text-align:center;padding:24px;color:var(--dim);font-size:.82rem;}
 
 .toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);background:var(--s2);border:1px solid var(--bd);border-radius:10px;padding:12px 22px;font-size:.85rem;color:var(--txt);box-shadow:0 8px 32px rgba(0,0,0,.4);opacity:0;transition:opacity .3s;z-index:999;pointer-events:none;white-space:nowrap;}
 .toast.show{opacity:1;}
 .toast.ok{border-color:rgba(39,217,129,.4);color:var(--grn);}
 .toast.err{border-color:rgba(255,77,94,.4);color:var(--red);}
+
+.status-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600;}
+.status-badge.on{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.25);}
+.status-badge.off{background:rgba(106,116,143,.12);color:var(--dim);border:1px solid var(--bd);}
+
+.ivb{padding:6px 14px;border-radius:7px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.8rem;cursor:pointer;transition:all .15s;font-family:'Noto Sans TC',sans-serif;}
+.ivb:hover{border-color:var(--gold);color:var(--gold);}
+.ivb.active{background:rgba(240,180,41,.12);border-color:var(--gold);color:var(--gold);}
 </style>
 </head>
 <body>
 <div class="w">
 <header>
   <div class="logo">
-    <div class="li">✈️</div>
-    <h1>Telegram <span>警報</span>設定</h1>
+    <div class="li">🔔</div>
+    <h1>股票<span>警報</span>設定</h1>
   </div>
   <a class="back-btn" href="/">← 回到選股</a>
 </header>
 
-<!-- Bot 設定 -->
+<!-- 說明 -->
+<div style="background:rgba(240,180,41,.06);border:1px solid rgba(240,180,41,.2);border-radius:12px;padding:14px 18px;margin-bottom:20px;font-size:.8rem;line-height:1.8;color:var(--dim);">
+  💡 <strong style="color:var(--txt)">網頁警報說明</strong><br>
+  當你開著這個網頁時，系統會定期掃描你設定的股票，達到條件時在頁面頂部顯示提醒。<br>
+  如需隨時隨地的手機通知，建議搭配「我的持股」頁面的自動更新功能。
+</div>
+
+<!-- 警報開關 -->
 <div class="section">
   <div class="sec-title">
-    <div class="dot" style="background:var(--tg)"></div>
-    Telegram Bot 設定
+    <div class="dot" style="background:var(--grn)"></div>
+    警報開關
     <span id="statusBadge" class="status-badge off">● 未啟用</span>
   </div>
 
-  <div class="fg">
-    <label class="fl">Bot Token</label>
-    <input class="fi mono" type="text" id="tgToken" placeholder="例：7123456789:AAFxxxxxxxxxxxxx">
-    <div class="hint">
-      從 @BotFather 取得。發送 /newbot → 依指示建立 → 複製 Token
-    </div>
-  </div>
-
-  <div class="fg">
-    <label class="fl">Chat ID</label>
-    <input class="fi mono" type="text" id="tgChatId" placeholder="例：2036351531">
-    <div class="hint">
-      1. 對你的 Bot 發任意訊息<br>
-      2. 瀏覽器開啟：<code>https://api.telegram.org/bot你的Token/getUpdates</code><br>
-      3. 找 <code>"chat":{"id":數字}</code>，那個數字就是 Chat ID
-    </div>
-  </div>
-
-  <div class="btn-row">
-    <button class="btn btn-tg" onclick="testTelegram()">📨 傳送測試訊息</button>
-    <button class="btn btn-gold" onclick="saveBasicSettings()">💾 儲存設定</button>
-  </div>
-</div>
-
-<!-- 通知開關 -->
-<div class="section">
-  <div class="sec-title"><div class="dot" style="background:var(--grn)"></div>通知開關</div>
-
   <div class="toggle-row">
     <div>
-      <div class="toggle-label">啟用 Telegram 警報</div>
-      <div class="toggle-sub">交易時間（09:00~13:35）自動掃描並發送通知</div>
+      <div class="toggle-label">啟用網頁警報掃描</div>
+      <div class="toggle-sub">開啟後每 N 分鐘自動掃描股價並顯示提醒</div>
     </div>
-    <label class="sw"><input type="checkbox" id="enabled" onchange="saveBasicSettings()"><span class="sw-slider"></span></label>
+    <label class="sw"><input type="checkbox" id="enabled" onchange="toggleEnabled()"><span class="sw-s"></span></label>
   </div>
   <div class="toggle-row">
     <div>
-      <div class="toggle-label">📈 買入訊號通知</div>
-      <div class="toggle-sub">選股條件觸發時發送通知</div>
+      <div class="toggle-label">🟢 停利提醒</div>
+      <div class="toggle-sub">股價到達停利價時顯示提醒</div>
     </div>
-    <label class="sw"><input type="checkbox" id="notifyBuy" checked onchange="saveBasicSettings()"><span class="sw-slider"></span></label>
+    <label class="sw"><input type="checkbox" id="notifyTp" checked><span class="sw-s"></span></label>
   </div>
   <div class="toggle-row">
     <div>
-      <div class="toggle-label">📉 賣出訊號通知</div>
-      <div class="toggle-sub">停利、停損、追蹤高點觸發時發送通知</div>
+      <div class="toggle-label">🔴 停損提醒</div>
+      <div class="toggle-sub">股價跌破停損價時顯示提醒</div>
     </div>
-    <label class="sw"><input type="checkbox" id="notifySell" checked onchange="saveBasicSettings()"><span class="sw-slider"></span></label>
+    <label class="sw"><input type="checkbox" id="notifySl" checked><span class="sw-s"></span></label>
+  </div>
+  <div class="toggle-row">
+    <div>
+      <div class="toggle-label">📈 漲跌幅提醒</div>
+      <div class="toggle-sub">當日漲跌幅超過設定值時提醒</div>
+    </div>
+    <label class="sw"><input type="checkbox" id="notifyChg" checked><span class="sw-s"></span></label>
   </div>
 
   <div style="margin-top:16px;">
-    <div class="fl" style="margin-bottom:10px;">掃描頻率（分鐘）</div>
-    <div class="interval-btns" id="intervalBtns">
-      <button class="ivb" data-v="1"  onclick="setInterval_(1)">1 分</button>
-      <button class="ivb active" data-v="5"  onclick="setInterval_(5)">5 分</button>
-      <button class="ivb" data-v="10" onclick="setInterval_(10)">10 分</button>
-      <button class="ivb" data-v="15" onclick="setInterval_(15)">15 分</button>
-      <button class="ivb" data-v="30" onclick="setInterval_(30)">30 分</button>
+    <div class="fl" style="margin-bottom:10px;">掃描頻率</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;" id="ivBtns">
+      <button class="ivb" data-v="1" onclick="setIv(1)">1 分鐘</button>
+      <button class="ivb active" data-v="5" onclick="setIv(5)">5 分鐘</button>
+      <button class="ivb" data-v="10" onclick="setIv(10)">10 分鐘</button>
+      <button class="ivb" data-v="15" onclick="setIv(15)">15 分鐘</button>
     </div>
-    <div class="hint" style="margin-top:6px;">建議 5~15 分鐘，過短可能影響 TWSE API 穩定性</div>
-  </div>
-
-  <div style="margin-top:14px;">
-    <button class="btn btn-outline" onclick="triggerNow()" style="font-size:.82rem;padding:8px 16px;">
-      🔍 立即掃描一次
-    </button>
   </div>
 </div>
 
@@ -185,41 +168,23 @@ header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:28px;
   <div class="sec-title">
     <div class="dot" style="background:var(--gold)"></div>
     股票監控清單
-    <span style="margin-left:auto;font-size:.75rem;font-weight:400;color:var(--dim);">設定個股停利/停損/漲跌幅通知</span>
+    <span style="margin-left:auto;font-size:.74rem;font-weight:400;color:var(--dim);">可設定停利/停損/漲跌幅</span>
   </div>
 
   <div id="watchList">
-    <div style="text-align:center;padding:24px;color:var(--dim);font-size:.84rem;">尚無監控股票，點下方按鈕新增</div>
+    <div class="empty-hist">尚無監控股票，點下方按鈕新增</div>
   </div>
 
   <button class="btn btn-outline" onclick="toggleAddForm()" style="margin-top:10px;width:100%;">＋ 新增監控股票</button>
 
   <div class="add-form" id="addForm">
     <div class="form-grid">
-      <div class="fg">
-        <label class="fl">股票代號 *</label>
-        <input class="fi" type="text" id="newCode" placeholder="例：2330" maxlength="6">
-      </div>
-      <div class="fg">
-        <label class="fl">買入成本（元）</label>
-        <input class="fi" type="number" id="newBuy" placeholder="例：150" step="0.01">
-      </div>
-      <div class="fg">
-        <label class="fl">🟢 停利價（元）</label>
-        <input class="fi" type="number" id="newTarget" placeholder="到達此價通知" step="0.01">
-      </div>
-      <div class="fg">
-        <label class="fl">🔴 停損價（元）</label>
-        <input class="fi" type="number" id="newStop" placeholder="跌破此價通知" step="0.01">
-      </div>
-      <div class="fg">
-        <label class="fl">📈 漲幅警報（%）</label>
-        <input class="fi" type="number" id="newRise" placeholder="例：5" step="0.1">
-      </div>
-      <div class="fg">
-        <label class="fl">📉 跌幅警報（%）</label>
-        <input class="fi" type="number" id="newFall" placeholder="例：3" step="0.1">
-      </div>
+      <div class="fg"><label class="fl">股票代號 *</label><input class="fi" type="text" id="nCode" placeholder="例：2330" maxlength="6"></div>
+      <div class="fg"><label class="fl">買入成本（元）</label><input class="fi" type="number" id="nBuy" placeholder="例：150"></div>
+      <div class="fg"><label class="fl">🟢 停利價（元）</label><input class="fi" type="number" id="nTp" placeholder="到此價提醒"></div>
+      <div class="fg"><label class="fl">🔴 停損價（元）</label><input class="fi" type="number" id="nSl" placeholder="跌破此價提醒"></div>
+      <div class="fg"><label class="fl">📈 漲幅警報（%）</label><input class="fi" type="number" id="nRise" placeholder="例：5"></div>
+      <div class="fg"><label class="fl">📉 跌幅警報（%）</label><input class="fi" type="number" id="nFall" placeholder="例：3"></div>
     </div>
     <div class="btn-row">
       <button class="btn btn-gold" onclick="addWatch()">➕ 加入監控</button>
@@ -228,163 +193,244 @@ header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:28px;
   </div>
 </div>
 
-<!-- 說明 -->
-<div style="background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;font-size:.76rem;color:var(--dim);line-height:1.9;">
-  📋 <strong style="color:var(--txt)">通知說明</strong><br>
-  • <strong style="color:var(--grn)">停利/停損</strong>：當股價到達你設定的價位時發通知<br>
-  • <strong style="color:var(--gold)">漲跌幅警報</strong>：當日漲幅/跌幅超過設定百分比時發通知<br>
-  • 通知只在 <strong style="color:var(--txt)">週一至週五 09:00~13:35</strong> 台股交易時間內發送<br>
-  • 需保持 <code style="background:var(--s2);padding:1px 5px;border-radius:3px;">server.py</code> 持續執行（或部署到 Render）
+<!-- 通知歷史 -->
+<div class="section">
+  <div class="sec-title">
+    <div class="dot" style="background:var(--blu)"></div>
+    今日通知記錄
+    <button class="btn btn-outline" style="margin-left:auto;padding:4px 12px;font-size:.74rem;" onclick="clearHistory()">清除</button>
+  </div>
+  <div class="notif-hist" id="notifHist">
+    <div class="empty-hist">尚無通知記錄</div>
+  </div>
 </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
+<!-- 浮動通知（右上角） -->
+<div id="floatNotifs" style="position:fixed;top:20px;right:20px;z-index:9999;width:320px;display:flex;flex-direction:column;gap:8px;"></div>
+
 <script>
-const API = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.protocol === 'file:') ? 'http://localhost:5000' : '';
-let currentInterval = 5;
+const API = (window.location.hostname==='localhost'||window.location.hostname==='127.0.0.1'||window.location.protocol==='file:')
+  ? 'http://localhost:5000' : '';
 
-async function init() {
-  try {
-    const r = await fetch(`${API}/api/alert/settings`);
-    const s = await r.json();
-    document.getElementById('tgToken').value    = s.telegram_token   || '';
-    document.getElementById('tgChatId').value   = s.telegram_chat_id || '';
-    document.getElementById('enabled').checked    = !!s.enabled;
-    document.getElementById('notifyBuy').checked  = s.notify_buy  !== false;
-    document.getElementById('notifySell').checked = s.notify_sell !== false;
-    currentInterval = s.check_interval || 5;
-    updateIntervalBtns(currentInterval);
-    updateStatusBadge(!!s.enabled);
-    renderWatchList(s.watch_list || []);
-  } catch(e) {
-    showToast('無法連線到後端伺服器', 'err');
-  }
+const KEY_WATCH   = 'alert_watchlist_v2';
+const KEY_HIST    = 'alert_history_v2';
+const KEY_CONFIG  = 'alert_config_v2';
+
+let watchList     = [];
+let notifHistory  = [];
+let config        = {enabled:false,interval:5,notifyTp:true,notifySl:true,notifyChg:true};
+let scanTimer     = null;
+let triggeredKeys = new Set();
+let priceCache    = {};
+
+function loadAll(){
+  try{ watchList    = JSON.parse(localStorage.getItem(KEY_WATCH)||'[]'); }catch{ watchList=[]; }
+  try{ notifHistory = JSON.parse(localStorage.getItem(KEY_HIST) ||'[]'); }catch{ notifHistory=[]; }
+  try{ Object.assign(config, JSON.parse(localStorage.getItem(KEY_CONFIG)||'{}')); }catch{}
+}
+function saveAll(){
+  localStorage.setItem(KEY_WATCH,  JSON.stringify(watchList));
+  localStorage.setItem(KEY_HIST,   JSON.stringify(notifHistory.slice(0,50)));
+  localStorage.setItem(KEY_CONFIG, JSON.stringify(config));
 }
 
-async function saveBasicSettings() {
-  const body = {
-    telegram_token:   document.getElementById('tgToken').value.trim(),
-    telegram_chat_id: document.getElementById('tgChatId').value.trim(),
-    enabled:          document.getElementById('enabled').checked,
-    notify_buy:       document.getElementById('notifyBuy').checked,
-    notify_sell:      document.getElementById('notifySell').checked,
-    check_interval:   currentInterval,
-  };
-  try {
-    const r = await fetch(`${API}/api/alert/settings`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (d.ok) { updateStatusBadge(body.enabled); showToast('✅ 設定已儲存', 'ok'); }
-  } catch(e) { showToast('儲存失敗：' + e.message, 'err'); }
+// ── 初始化 ─────────────────────────────────────
+function init(){
+  loadAll();
+  document.getElementById('enabled').checked   = config.enabled;
+  document.getElementById('notifyTp').checked  = config.notifyTp;
+  document.getElementById('notifySl').checked  = config.notifySl;
+  document.getElementById('notifyChg').checked = config.notifyChg;
+  updateIvBtns(config.interval);
+  updateStatusBadge(config.enabled);
+  renderWatchList();
+  renderHistory();
+  if(config.enabled) startScan();
 }
 
-async function testTelegram() {
-  const token   = document.getElementById('tgToken').value.trim();
-  const chat_id = document.getElementById('tgChatId').value.trim();
-  if (!token || !chat_id) { showToast('請先填入 Token 和 Chat ID', 'err'); return; }
-  try {
-    const r = await fetch(`${API}/api/alert/test`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ token, chat_id }),
-    });
-    const d = await r.json();
-    showToast(d.ok ? '✅ 測試訊息已發送！' : '❌ 發送失敗，請確認 Token 和 Chat ID', d.ok?'ok':'err');
-  } catch(e) { showToast('連線失敗', 'err'); }
+// ── 開關 ───────────────────────────────────────
+function toggleEnabled(){
+  config.enabled = document.getElementById('enabled').checked;
+  config.notifyTp  = document.getElementById('notifyTp').checked;
+  config.notifySl  = document.getElementById('notifySl').checked;
+  config.notifyChg = document.getElementById('notifyChg').checked;
+  saveAll();
+  updateStatusBadge(config.enabled);
+  if(config.enabled){ startScan(); showToast('✅ 警報已啟用','ok'); }
+  else { stopScan(); showToast('警報已關閉',''); }
 }
 
-async function triggerNow() {
-  try {
-    await fetch(`${API}/api/alert/trigger_now`, {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
-    showToast('🔍 掃描已觸發', 'ok');
-  } catch(e) { showToast('連線失敗', 'err'); }
+function setIv(v){
+  config.interval=v; saveAll(); updateIvBtns(v);
+  if(config.enabled){ stopScan(); startScan(); }
+}
+function updateIvBtns(v){
+  document.querySelectorAll('.ivb').forEach(b=>b.classList.toggle('active',parseInt(b.dataset.v)===v));
+}
+function updateStatusBadge(on){
+  const el=document.getElementById('statusBadge');
+  el.className='status-badge '+(on?'on':'off');
+  el.textContent=on?'● 警報啟用中':'● 未啟用';
 }
 
-function setInterval_(v) {
-  currentInterval = v;
-  updateIntervalBtns(v);
-  saveBasicSettings();
+// ── 掃描排程 ───────────────────────────────────
+function startScan(){
+  stopScan();
+  scanOnce();
+  scanTimer = setInterval(scanOnce, config.interval*60000);
 }
-function updateIntervalBtns(v) {
-  document.querySelectorAll('.ivb').forEach(b => b.classList.toggle('active', parseInt(b.dataset.v) === v));
+function stopScan(){ if(scanTimer){ clearInterval(scanTimer); scanTimer=null; } }
+
+async function scanOnce(){
+  if(!watchList.length) return;
+  const codes=watchList.map(w=>w.code).join(',');
+  try{
+    const r=await fetch(`${API}/api/prices?codes=${codes}`);
+    const d=await r.json();
+    if(!d.prices) return;
+    priceCache=d.prices;
+    const today=new Date().toDateString();
+    for(const w of watchList){
+      const p=d.prices[w.code];
+      if(!p) continue;
+      const cur=p.price; const chg=p.chgPct;
+      const name=p.name||w.code;
+
+      if(config.notifyTp && w.tp>0 && cur>=w.tp){
+        const key=`tp_${w.code}_${today}`;
+        if(!triggeredKeys.has(key)){ triggeredKeys.add(key);
+          const roi=w.buy>0?((cur-w.buy)/w.buy*100).toFixed(2):null;
+          addAlert('tp',`🟢 停利觸發：${name}（${w.code}）`,
+            `現價 ${cur} 元 ≥ 停利價 ${w.tp} 元${roi?' | 報酬率 +'+roi+'%':''}`); }
+      }
+      if(config.notifySl && w.sl>0 && cur<=w.sl){
+        const key=`sl_${w.code}_${today}`;
+        if(!triggeredKeys.has(key)){ triggeredKeys.add(key);
+          const roi=w.buy>0?((cur-w.buy)/w.buy*100).toFixed(2):null;
+          addAlert('sl',`🔴 停損觸發：${name}（${w.code}）`,
+            `現價 ${cur} 元 ≤ 停損價 ${w.sl} 元${roi?' | 損益 '+roi+'%':''}`); }
+      }
+      if(config.notifyChg && w.rise>0 && chg>=w.rise){
+        const key=`ri_${w.code}_${today}`;
+        if(!triggeredKeys.has(key)){ triggeredKeys.add(key);
+          addAlert('tp',`📈 漲幅警報：${name}（${w.code}）`,
+            `今日漲幅 +${chg}% ≥ ${w.rise}% | 現價 ${cur} 元`); }
+      }
+      if(config.notifyChg && w.fall>0 && chg<=-w.fall){
+        const key=`fa_${w.code}_${today}`;
+        if(!triggeredKeys.has(key)){ triggeredKeys.add(key);
+          addAlert('sl',`📉 跌幅警報：${name}（${w.code}）`,
+            `今日跌幅 ${chg}% ≤ -${w.fall}% | 現價 ${cur} 元`); }
+      }
+    }
+  }catch(e){ console.log('掃描失敗:',e); }
 }
 
-function renderWatchList(list) {
-  const el = document.getElementById('watchList');
-  if (!list.length) {
-    el.innerHTML = '<div style="text-align:center;padding:24px;color:var(--dim);font-size:.84rem;">尚無監控股票</div>';
-    return;
-  }
-  el.innerHTML = list.map(w => {
-    const tags = [];
-    if (w.target_price   > 0) tags.push(`<span class="wp tp">停利 ${w.target_price}元</span>`);
-    if (w.stop_price     > 0) tags.push(`<span class="wp sl">停損 ${w.stop_price}元</span>`);
-    if (w.rise_alert_pct > 0) tags.push(`<span class="wp ri">漲 +${w.rise_alert_pct}%</span>`);
-    if (w.fall_alert_pct > 0) tags.push(`<span class="wp fa">跌 -${w.fall_alert_pct}%</span>`);
-    return `<div class="watch-card">
+// ── 顯示通知 ───────────────────────────────────
+function addAlert(type, title, msg){
+  const time=new Date().toLocaleTimeString('zh-TW');
+  const item={type,title,msg,time};
+  notifHistory.unshift(item); saveAll();
+  renderHistory();
+  showFloatNotif(type, title, msg, time);
+}
+
+function showFloatNotif(type, title, msg, time){
+  const area=document.getElementById('floatNotifs');
+  const id='fn_'+Date.now();
+  const bg=type==='tp'?'rgba(255,77,94,.15)':'rgba(39,217,129,.15)';
+  const bc=type==='tp'?'rgba(255,77,94,.4)':'rgba(39,217,129,.4)';
+  const el=document.createElement('div');
+  el.id=id;
+  el.style.cssText=`background:var(--s1);border:1px solid ${bc};border-radius:11px;padding:14px 16px;background:${bg};animation:slideIn .3s ease;`;
+  el.innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
       <div>
-        <div class="watch-code">${w.code}</div>
-        <div class="watch-name">${w.name||'—'}</div>
-        ${w.buy_price>0?`<div style="font-size:.72rem;color:var(--dim);margin-top:2px;">成本 ${w.buy_price}元</div>`:''}
+        <div style="font-size:.85rem;font-weight:700;margin-bottom:3px;color:${type==='tp'?'var(--red)':'var(--grn)'};">${title}</div>
+        <div style="font-size:.76rem;color:var(--dim);">${msg}</div>
+        <div style="font-size:.68rem;color:var(--dim);margin-top:4px;">${time}</div>
       </div>
-      <div><div class="watch-prices">${tags.join('')}</div></div>
-      <button class="btn btn-red" onclick="removeWatch('${w.code}')">✕ 移除</button>
+      <button onclick="document.getElementById('${id}').remove()" style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:1rem;padding:0;">✕</button>
+    </div>`;
+  area.prepend(el);
+  setTimeout(()=>{ const e=document.getElementById(id); if(e) e.remove(); },15000);
+}
+
+// ── 監控清單 ───────────────────────────────────
+function toggleAddForm(){ document.getElementById('addForm').classList.toggle('open'); }
+
+function addWatch(){
+  const code=document.getElementById('nCode').value.trim();
+  if(!code){ alert('請輸入股票代號！'); return; }
+  watchList=watchList.filter(w=>w.code!==code);
+  watchList.push({
+    code,
+    buy:   parseFloat(document.getElementById('nBuy').value)||0,
+    tp:    parseFloat(document.getElementById('nTp').value)||0,
+    sl:    parseFloat(document.getElementById('nSl').value)||0,
+    rise:  parseFloat(document.getElementById('nRise').value)||0,
+    fall:  parseFloat(document.getElementById('nFall').value)||0,
+  });
+  saveAll(); renderWatchList(); toggleAddForm();
+  ['nCode','nBuy','nTp','nSl','nRise','nFall'].forEach(id=>document.getElementById(id).value='');
+  showToast('✅ 已加入監控','ok');
+}
+
+function removeWatch(code){
+  watchList=watchList.filter(w=>w.code!==code);
+  saveAll(); renderWatchList();
+}
+
+function renderWatchList(){
+  const el=document.getElementById('watchList');
+  if(!watchList.length){ el.innerHTML='<div class="empty-hist">尚無監控股票</div>'; return; }
+  const p=priceCache;
+  el.innerHTML=watchList.map(w=>{
+    const cur=p[w.code]?p[w.code].price:null;
+    const chg=p[w.code]?p[w.code].chgPct:null;
+    const tags=[];
+    if(w.tp>0)   tags.push(`<span class="wtag tp">停利 ${w.tp}元${cur&&cur>=w.tp?' 🔔':''}</span>`);
+    if(w.sl>0)   tags.push(`<span class="wtag sl">停損 ${w.sl}元${cur&&cur<=w.sl?' 🔔':''}</span>`);
+    if(w.rise>0) tags.push(`<span class="wtag ri">漲 +${w.rise}%</span>`);
+    if(w.fall>0) tags.push(`<span class="wtag fa">跌 -${w.fall}%</span>`);
+    const curStr=cur?`<span style="font-family:'JetBrains Mono',monospace;font-size:.78rem;color:${chg>=0?'var(--red)':'var(--grn)'}"> ${cur} (${chg>=0?'+':''}${chg}%)</span>`:'';
+    return `<div class="watch-card">
+      <div><div class="wcode">${w.code}${curStr}</div>${w.buy>0?`<div class="wname">成本 ${w.buy}元</div>`:''}</div>
+      <div><div class="wtags">${tags.join('')||'<span style="font-size:.72rem;color:var(--dim)">未設定條件</span>'}</div></div>
+      <button class="btn btn-red" onclick="removeWatch('${w.code}')">✕</button>
     </div>`;
   }).join('');
 }
 
-function toggleAddForm() {
-  document.getElementById('addForm').classList.toggle('open');
+// ── 通知歷史 ───────────────────────────────────
+function renderHistory(){
+  const el=document.getElementById('notifHist');
+  if(!notifHistory.length){ el.innerHTML='<div class="empty-hist">尚無通知記錄</div>'; return; }
+  el.innerHTML=notifHistory.slice(0,20).map(h=>{
+    const icon=h.type==='tp'?'🔔':'⚠️';
+    const clr=h.type==='tp'?'var(--red)':'var(--grn)';
+    return `<div class="nh-item">
+      <div class="nh-icon">${icon}</div>
+      <div class="nh-body">
+        <div class="nh-title" style="color:${clr}">${h.title}</div>
+        <div class="nh-msg">${h.msg}</div>
+        <div class="nh-time">${h.time}</div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
-async function addWatch() {
-  const code = document.getElementById('newCode').value.trim();
-  if (!code) { showToast('請輸入股票代號', 'err'); return; }
-  const body = {
-    code,
-    buy_price:      parseFloat(document.getElementById('newBuy').value)||0,
-    target_price:   parseFloat(document.getElementById('newTarget').value)||0,
-    stop_price:     parseFloat(document.getElementById('newStop').value)||0,
-    rise_alert_pct: parseFloat(document.getElementById('newRise').value)||0,
-    fall_alert_pct: parseFloat(document.getElementById('newFall').value)||0,
-  };
-  try {
-    const r = await fetch(`${API}/api/alert/watch`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify(body),
-    });
-    const d = await r.json();
-    if (d.ok) {
-      renderWatchList(d.watch_list);
-      toggleAddForm();
-      ['newCode','newBuy','newTarget','newStop','newRise','newFall'].forEach(id => document.getElementById(id).value='');
-      showToast('✅ 已加入監控清單', 'ok');
-    }
-  } catch(e) { showToast('加入失敗', 'err'); }
+function clearHistory(){
+  notifHistory=[]; saveAll(); renderHistory();
 }
 
-async function removeWatch(code) {
-  try {
-    await fetch(`${API}/api/alert/watch/${code}`, {method:'DELETE'});
-    const s = await (await fetch(`${API}/api/alert/settings`)).json();
-    renderWatchList(s.watch_list||[]);
-    showToast('已移除', 'ok');
-  } catch(e) { showToast('移除失敗', 'err'); }
-}
-
-function updateStatusBadge(enabled) {
-  const el = document.getElementById('statusBadge');
-  el.className = 'status-badge ' + (enabled?'on':'off');
-  el.textContent = enabled ? '● 警報啟用中' : '● 未啟用';
-}
-
-function showToast(msg, type='ok') {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.className = `toast show ${type}`;
-  setTimeout(() => el.className = 'toast', 3000);
+function showToast(msg,type='ok'){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.className=`toast show ${type}`;
+  setTimeout(()=>el.className='toast',3000);
 }
 
 init();

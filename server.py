@@ -17,6 +17,9 @@ import requests
 import urllib3
 from datetime import datetime, timedelta
 import threading
+import random
+import os
+import json
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -42,13 +45,9 @@ def index():
 def backtest_page():
     return send_from_directory(".", "backtest.html")
 
-@app.route("/predict")
-def predict_page():
-    return send_from_directory(".", "predict.html")
-
-@app.route("/portfolio")
-def portfolio_page_route():
-    return send_from_directory(".", "portfolio.html")
+@app.route("/alert")
+def alert_page():
+    return send_from_directory(".", "alert.html")
 
 @app.route("/api/health")
 def health():
@@ -2391,12 +2390,15 @@ def _analyze_one(code, name):
         "data_count":  len(records),
     }
 
-def _run_analyze_task(task_id, max_stocks, top_n):
+def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
     try:
         prog = _analyze_tasks[task_id]
         def cb(msg, pct):
             prog["msg"]=msg; prog["pct"]=round(pct,1)
             print(f"  [AI分析 {pct:.0f}%] {msg}")
+
+        is_v2 = (model_ver == 'v2')
+        history_months = 24 if is_v2 else 8
 
         cb("從 TWSE 取得股票清單...", 2)
         url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
@@ -2416,16 +2418,40 @@ def _run_analyze_task(task_id, max_stocks, top_n):
         if len(stocks)>max_stocks:
             random.shuffle(stocks); stocks=stocks[:max_stocks]
 
-        cb(f"開始分析 {len(stocks)} 支股票...", 5)
+        # v2.0：預先抓大盤資料
+        market_closes = []
+        if is_v2:
+            cb("抓取大盤指數資料（v2.0）...", 4)
+            try:
+                today = datetime.today()
+                for delta in range(history_months, -1, -1):
+                    d = today - timedelta(days=delta*31)
+                    ym = f"{d.year}{d.month:02d}01"
+                    r2 = SESSION.get(
+                        f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+                        f"?response=json&date={ym}&stockNo=Y9999", timeout=10)
+                    data2 = r2.json()
+                    if data2.get("stat")=="OK" and data2.get("data"):
+                        for row in data2["data"]:
+                            c2 = safe_float(row[6])
+                            if c2 > 0: market_closes.append(c2)
+                print(f"  大盤資料：{len(market_closes)} 筆")
+            except Exception as e:
+                print(f"  大盤抓取失敗: {e}")
+
+        cb(f"開始{'v2.0 強化' if is_v2 else 'v1.0 基礎'}分析 {len(stocks)} 支股票...", 5)
         results=[]
         total=len(stocks)
         for idx, s in enumerate(stocks):
             pct_done = 5 + idx/total*88
-            cb(f"分析中 {s['code']} {s['name']} ({idx+1}/{total})", pct_done)
+            cb(f"{'[v2]' if is_v2 else '[v1]'} {s['code']} {s['name']} ({idx+1}/{total})", pct_done)
             try:
-                r=_analyze_one(s["code"],s["name"])
+                if is_v2:
+                    r = _analyze_one_v2(s["code"], s["name"], market_closes, history_months)
+                else:
+                    r = _analyze_one(s["code"], s["name"])
                 if r and r["confidence"]>15:
-                    r["vol"]=s["vol"]; r["pct"]=s["pct"]
+                    r["vol"]=s["vol"]; r["chg_pct"]=s["pct"]
                     results.append(r)
             except Exception as e:
                 print(f"  [{s['code']}] 錯誤: {e}")
@@ -2436,10 +2462,164 @@ def _run_analyze_task(task_id, max_stocks, top_n):
 
         prog.update({"pct":100,"msg":"完成！","done":True,"error":None,
                      "result":{"stocks":top,"total_analyzed":len(results),
-                               "total_scanned":len(stocks)}})
+                               "total_scanned":len(stocks),
+                               "model_ver": model_ver}})
     except Exception as e:
         import traceback; traceback.print_exc()
         _analyze_tasks[task_id].update({"done":True,"error":str(e)})
+
+def _analyze_one_v2(code, name, market_closes, history_months=24):
+    """v2.0 強化版：28個特徵 + 大盤相對強弱 + 時間序列驗證"""
+    records = fetch_all_history(code,
+        (datetime.today()-timedelta(days=history_months*31)).strftime("%Y-%m-%d"),
+        datetime.today().strftime("%Y-%m-%d"))
+    if len(records) < 80: return None
+
+    closes = [r["close"] for r in records]
+    highs  = [r["high"]  for r in records]
+    lows   = [r["low"]   for r in records]
+    opens  = [r["open"]  for r in records]
+    vols   = [r["vol"]   for r in records]
+
+    def feat(recs, mkt_closes):
+        if len(recs) < 40: return None
+        cl = [r["close"] for r in recs]
+        hi = [r["high"]  for r in recs]
+        lo = [r["low"]   for r in recs]
+        op = [r["open"]  for r in recs]
+        vo = [r["vol"]   for r in recs]
+        i = len(recs)-1; c = cl[i]
+
+        def _sma(a,n): sl=a[-n:] if len(a)>=n else a; return sum(sl)/len(sl)
+        def _ema(a,n):
+            e=a[0]; k=2/(n+1)
+            for v in a[1:]: e=v*k+e*(1-k)
+            return e
+
+        ma5=_sma(cl,5); ma10=_sma(cl,10); ma20=_sma(cl,20)
+        ma60=_sma(cl,60) if len(cl)>=60 else _sma(cl,len(cl))
+        ma120=_sma(cl,120) if len(cl)>=120 else _sma(cl,len(cl))
+
+        n9=min(9,len(cl)); rh=max(hi[-n9:]); rl=min(lo[-n9:])
+        rsv=0 if rh==rl else (c-rl)/(rh-rl)*100
+        k,d=50.0,50.0
+        for _ in range(5): k=k*2/3+rsv*1/3; d=d*2/3+k*1/3
+
+        chgs=[cl[j+1]-cl[j] for j in range(len(cl)-1)]
+        r14=chgs[-14:] if len(chgs)>=14 else chgs
+        g14=sum(x for x in r14 if x>0)/max(len(r14),1)
+        l14=sum(-x for x in r14 if x<0)/max(len(r14),1)
+        rsi=100-100/(1+g14/l14) if l14>0 else 100
+
+        e12=_ema(cl[-26:],12); e26=_ema(cl[-26:],26)
+        macd=(e12-e26)/c*100 if c>0 else 0
+
+        mv20=_sma(cl[-20:],20)
+        std20=(sum((x-mv20)**2 for x in cl[-20:])/20)**0.5
+        boll=(c-(mv20-2*std20))/(4*std20+0.001)
+
+        av5=_sma(vo[:-1],5) if len(vo)>5 else vo[-1]
+        av20=_sma(vo[:-1],20) if len(vo)>20 else vo[-1]
+
+        ret3=(c/cl[-4]-1)*100  if len(cl)>=4  else 0
+        ret5=(c/cl[-6]-1)*100  if len(cl)>=6  else 0
+        ret10=(c/cl[-11]-1)*100 if len(cl)>=11 else 0
+        ret20=(c/cl[-21]-1)*100 if len(cl)>=21 else 0
+
+        trs=[max(hi[j]-lo[j],abs(hi[j]-cl[j-1]),abs(lo[j]-cl[j-1]))
+             for j in range(max(1,i-13),i+1)]
+        atr=(sum(trs)/len(trs) if trs else 0)/c*100 if c>0 else 0
+
+        red_k=sum(1 for j in range(max(0,i-4),i+1) if cl[j]>=op[j])/5
+        consec=0
+        for j in range(i,max(-1,i-10),-1):
+            if j==0: break
+            if cl[j]>cl[j-1]: consec+=1
+            else: break
+        hi60=max(hi[-60:]) if len(hi)>=60 else max(hi)
+        lo60=min(lo[-60:])  if len(lo)>=60  else min(lo)
+        ppos=(c-lo60)/(hi60-lo60+0.001)
+
+        # 大盤相對強弱
+        rel=0.0
+        if mkt_closes and len(mkt_closes)>=11:
+            mret10=(mkt_closes[-1]/mkt_closes[-11]-1)*100 if mkt_closes[-11]>0 else 0
+            rel=ret10-mret10
+
+        return [
+            (c-ma5)/ma5*100   if ma5>0  else 0,
+            (c-ma20)/ma20*100 if ma20>0 else 0,
+            (c-ma60)/ma60*100 if ma60>0 else 0,
+            (c-ma120)/ma120*100 if ma120>0 else 0,
+            (ma5-ma20)/ma20*100 if ma20>0 else 0,
+            (ma20-ma60)/ma60*100 if ma60>0 else 0,
+            k, d, rsi, macd, boll,
+            vo[-1]/av5  if av5>0  else 1,
+            vo[-1]/av20 if av20>0 else 1,
+            ret3, ret5, ret10, ret20, atr,
+            red_k, consec, ppos,
+            k-d, rsi-50, rel,
+        ]
+
+    # 建立訓練資料
+    X, y = [], []
+    for i in range(40, len(records)-15):
+        f = feat(records[:i+1], market_closes)
+        if f is None: continue
+        label = 1 if (closes[i+15]-closes[i])/closes[i]*100 >= 3.0 else 0
+        X.append(f); y.append(label)
+
+    if len(X)<50 or sum(y)<8 or sum(1-v for v in y)<8: return None
+
+    # 時間序列 5 折交叉驗證
+    n=len(X); fold=n//5; accs=[]; precs=[]
+    for k in range(5):
+        vs=k*fold; ve=min((k+1)*fold,n)
+        if vs<30: continue
+        rf=_RF(n=30,md=6,ms=4,nf=8)
+        rf.fit(X[:vs],y[:vs])
+        probs=rf.predict_proba(X[vs:ve])
+        preds=[1 if p>=0.5 else 0 for p in probs]
+        vy=y[vs:ve]
+        acc=sum(preds[i]==vy[i] for i in range(len(preds)))/max(len(preds),1)
+        tp=sum(1 for i in range(len(preds)) if preds[i]==1 and vy[i]==1)
+        fp=sum(1 for i in range(len(preds)) if preds[i]==1 and vy[i]==0)
+        prec=tp/(tp+fp) if (tp+fp)>0 else 0
+        accs.append(acc); precs.append(prec)
+
+    if not accs: return None
+    accuracy  = sum(accs)/len(accs)
+    precision = sum(precs)/len(precs)
+
+    rf_final=_RF(n=50,md=7,ms=4,nf=10)
+    rf_final.fit(X,y)
+    cf=feat(records, market_closes)
+    if cf is None: return None
+
+    rise_prob=rf_final.predict_proba([cf])[0]
+    confidence=accuracy*abs(rise_prob-0.5)*2
+
+    # 計算大盤相對強弱（供前端顯示）
+    rel_strength = 0.0
+    if market_closes and len(market_closes)>=11 and len(closes)>=11:
+        mret10=(market_closes[-1]/market_closes[-11]-1)*100 if market_closes[-11]>0 else 0
+        sret10=(closes[-1]/closes[-11]-1)*100 if closes[-11]>0 else 0
+        rel_strength = round(sret10 - mret10, 2)
+
+    return {
+        "code":          code,
+        "name":          name,
+        "rise_prob":     round(rise_prob*100,1),
+        "accuracy":      round(accuracy*100,1),
+        "precision":     round(precision*100,1),
+        "confidence":    round(confidence*100,1),
+        "price":         records[-1]["close"],
+        "chg_pct":       round((records[-1]["close"]/records[-2]["close"]-1)*100,2)
+                         if len(records)>=2 else 0,
+        "data_years":    round(len(records)/250,1),
+        "rel_strength":  rel_strength,
+        "model_ver":     "v2",
+    }
 
 @app.route("/api/analyze/start", methods=["POST"])
 def start_analyze():
@@ -2447,9 +2627,11 @@ def start_analyze():
     body       = request.get_json() or {}
     max_stocks = int(body.get("max_stocks", 80))
     top_n      = int(body.get("top_n", 10))
+    model_ver  = body.get("model_ver", "v2")
     task_id    = str(uuid.uuid4())[:8]
     _analyze_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
-    threading.Thread(target=_run_analyze_task, args=(task_id,max_stocks,top_n), daemon=True).start()
+    threading.Thread(target=_run_analyze_task,
+                     args=(task_id, max_stocks, top_n, model_ver), daemon=True).start()
     return jsonify({"task_id": task_id})
 
 @app.route("/api/analyze/progress/<task_id>")
