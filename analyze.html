@@ -131,6 +131,15 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   </div>
 </div>
 
+<!-- 每日自動分析結果區 -->
+<div style="background:var(--s1);border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:16px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+  <div>
+    <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
+    <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 14:35 自動執行，結果直接顯示在此</div>
+  </div>
+  <button class="run-btn" style="padding:8px 18px;font-size:.82rem;" onclick="loadLatestResult()">📂 載入最新結果</button>
+</div>
+
 <!-- 進度條 -->
 <div class="progress-wrap" id="progressWrap">
   <div class="prog-hd">
@@ -172,6 +181,25 @@ const API = (window.location.hostname==='localhost'||window.location.hostname===
   ? 'http://localhost:5000' : '';
 
 let pollTimer = null;
+
+async function loadLatestResult() {
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('results').style.display    = 'none';
+  setProgress(50, '載入最新分析結果...');
+  document.getElementById('progressWrap').style.display = 'block';
+  try {
+    const r    = await fetch(`${API}/api/analyze/latest`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    document.getElementById('progressWrap').style.display = 'none';
+    // 補上 model_ver 讓 renderResults 正確顯示
+    data.model_ver = data.model_ver || 'v2';
+    renderResults(data);
+  } catch(e) {
+    document.getElementById('progressWrap').style.display = 'none';
+    showError(e.message);
+  }
+}
 
 async function startAnalysis() {
   const maxStocks = parseInt(document.getElementById('maxStocks').value)||80;

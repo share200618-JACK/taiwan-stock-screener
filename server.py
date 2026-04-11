@@ -2450,7 +2450,7 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
                     r = _analyze_one_v2(s["code"], s["name"], market_closes, history_months)
                 else:
                     r = _analyze_one(s["code"], s["name"])
-                if r and r["confidence"]>15:
+                if r and r["confidence"] > 5:   # 放寬門檻，讓更多股票進入排序
                     r["vol"]=s["vol"]; r["chg_pct"]=s["pct"]
                     results.append(r)
             except Exception as e:
@@ -2482,7 +2482,7 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
     vols   = [r["vol"]   for r in records]
 
     def feat(recs, mkt_closes):
-        if len(recs) < 40: return None
+        if len(recs) < 30: return None
         cl = [r["close"] for r in recs]
         hi = [r["high"]  for r in recs]
         lo = [r["low"]   for r in recs]
@@ -2569,13 +2569,13 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
         label = 1 if (closes[i+15]-closes[i])/closes[i]*100 >= 3.0 else 0
         X.append(f); y.append(label)
 
-    if len(X)<50 or sum(y)<8 or sum(1-v for v in y)<8: return None
+    if len(X)<25 or sum(y)<4 or sum(1-v for v in y)<4: return None
 
     # 時間序列 5 折交叉驗證
     n=len(X); fold=n//5; accs=[]; precs=[]
     for k in range(5):
         vs=k*fold; ve=min((k+1)*fold,n)
-        if vs<30: continue
+        if vs<15: continue
         rf=_RF(n=30,md=6,ms=4,nf=8)
         rf.fit(X[:vs],y[:vs])
         probs=rf.predict_proba(X[vs:ve])
@@ -2639,6 +2639,32 @@ def analyze_progress(task_id):
     prog = _analyze_tasks.get(task_id)
     if not prog: return jsonify({"error":"找不到任務"}), 404
     return jsonify(prog)
+
+@app.route("/api/analyze/latest")
+def get_latest_analysis():
+    """讀取 auto_analysis.py 存的最新分析結果"""
+    result_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_result.json")
+    try:
+        if not os.path.exists(result_file):
+            return jsonify({"error": "尚無分析結果，請先執行 auto_analysis.py"}), 404
+        with open(result_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/analyze/run", methods=["POST"])
+def trigger_auto_analysis():
+    """手動觸發 auto_analysis.py（背景執行）"""
+    import subprocess
+    def run_bg():
+        try:
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_analysis.py")
+            subprocess.run(["python3", script], timeout=1200)
+        except Exception as e:
+            print(f"[auto_analysis] 執行失敗: {e}")
+    threading.Thread(target=run_bg, daemon=True).start()
+    return jsonify({"ok": True, "msg": "已啟動 v2.0 分析，約 10~15 分鐘完成，請稍後重新整理"})
 
 @app.route("/analyze")
 def analyze_page():
