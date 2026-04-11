@@ -41,6 +41,15 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .note{font-size:.74rem;color:var(--dim);margin-top:10px;line-height:1.7;}
 .note strong{color:var(--txt);}
 
+/* 模式切換 tab */
+.mode-tab{padding:8px 18px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.85rem;font-weight:500;cursor:pointer;transition:all .18s;}
+.mode-tab:hover{border-color:var(--pur);color:var(--pur);}
+.mode-tab.active{background:rgba(168,85,247,.12);border-color:var(--pur);color:var(--pur);font-weight:700;}
+
+/* 快速選股按鈕 */
+.quick-btn{padding:5px 12px;border-radius:6px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-family:'Noto Sans TC',sans-serif;font-size:.76rem;cursor:pointer;transition:all .15s;}
+.quick-btn:hover{border-color:var(--gold);color:var(--gold);}
+
 /* 進度 */
 .progress-wrap{background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:20px;margin-bottom:18px;display:none;}
 .prog-hd{display:flex;align-items:center;gap:10px;margin-bottom:14px;}
@@ -104,30 +113,72 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   <a class="back-btn" href="/">← 回到選股</a>
 </header>
 
-<!-- 設定區 -->
+<!-- 設定區：模式切換 -->
 <div class="settings">
-  <div class="settings-row">
-    <div class="fg">
-      <label class="fl">掃描股票數量</label>
-      <input class="fi" type="number" id="maxStocks" value="80" min="20" max="200" step="10">
-    </div>
-    <div class="fg">
-      <label class="fl">顯示推薦數</label>
-      <input class="fi" type="number" id="topN" value="10" min="5" max="20">
-    </div>
-    <div class="fg">
-      <label class="fl">模型版本</label>
-      <select class="fi" id="modelVer" style="width:130px;">
-        <option value="v2">v2.0 強化版 ⭐</option>
-        <option value="v1">v1.0 基礎版</option>
-      </select>
-    </div>
-    <button class="run-btn" id="runBtn" onclick="startAnalysis()">🤖 開始 AI 分析</button>
+
+  <!-- 模式切換 tab -->
+  <div style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid var(--bd);padding-bottom:14px;">
+    <button class="mode-tab active" id="tabMarket" onclick="switchTab('market')">🌏 全市場掃描</button>
+    <button class="mode-tab" id="tabCustom" onclick="switchTab('custom')">🔍 自訂個股分析</button>
   </div>
-  <div class="note">
-    <strong>v2.0 強化版：</strong>28 個特徵｜2 年訓練資料｜大盤相對強弱｜量價型態｜時間序列驗證｜預期準確率 62~68%<br>
-    <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
-    ⏱ 掃描 80 支約需 <strong>8~15 分鐘</strong>，請耐心等待
+
+  <!-- 全市場模式 -->
+  <div id="panelMarket">
+    <div class="settings-row">
+      <div class="fg">
+        <label class="fl">掃描股票數量</label>
+        <input class="fi" type="number" id="maxStocks" value="80" min="20" max="200" step="10">
+      </div>
+      <div class="fg">
+        <label class="fl">顯示推薦數</label>
+        <input class="fi" type="number" id="topN" value="10" min="5" max="20">
+      </div>
+      <div class="fg">
+        <label class="fl">模型版本</label>
+        <select class="fi" id="modelVer" style="width:130px;">
+          <option value="v2">v2.0 強化版 ⭐</option>
+          <option value="v1">v1.0 基礎版</option>
+        </select>
+      </div>
+      <button class="run-btn" id="runBtn" onclick="startAnalysis()">🤖 開始 AI 分析</button>
+    </div>
+    <div class="note">
+      <strong>v2.0 強化版：</strong>28 個特徵｜2 年訓練資料｜大盤相對強弱｜量價型態｜時間序列驗證｜預期準確率 62~68%<br>
+      <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
+      ⏱ 掃描 80 支約需 <strong>8~15 分鐘</strong>，請耐心等待
+    </div>
+  </div>
+
+  <!-- 自訂個股模式 -->
+  <div id="panelCustom" style="display:none;">
+    <div class="fg" style="margin-bottom:12px;">
+      <label class="fl">輸入股票代號（可多個，用逗號分隔）</label>
+      <input class="fi" type="text" id="customCodes"
+        placeholder="例：2330, 2454, 2317, 0050"
+        style="width:100%;max-width:500px;font-family:'JetBrains Mono',monospace;">
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+      <div class="fg" style="margin-bottom:0;">
+        <label class="fl">模型版本</label>
+        <select class="fi" id="modelVerCustom" style="width:130px;">
+          <option value="v2">v2.0 強化版 ⭐</option>
+          <option value="v1">v1.0 基礎版</option>
+        </select>
+      </div>
+      <button class="run-btn" id="runBtnCustom" onclick="startCustomAnalysis()" style="margin-top:18px;">🔍 分析選定個股</button>
+    </div>
+    <!-- 快速選股按鈕 -->
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+      <span style="font-size:.72rem;color:var(--dim);align-self:center;">快速填入：</span>
+      <button class="quick-btn" onclick="fillCodes('2330,2454,2317,2382,2308')">電子五哥</button>
+      <button class="quick-btn" onclick="fillCodes('0050,0056,00878,00919,00929')">熱門ETF</button>
+      <button class="quick-btn" onclick="fillCodes('2330,2412,2881,2882,1301')">權值股</button>
+      <button class="quick-btn" onclick="fillCodes('')">清除</button>
+    </div>
+    <div class="note">
+      輸入你想分析的股票代號，系統會對每支進行 v2.0 隨機森林分析<br>
+      ⏱ 每支約需 <strong>1~2 分鐘</strong>，5 支約 5~10 分鐘
+    </div>
   </div>
 </div>
 
@@ -182,6 +233,49 @@ const API = (window.location.hostname==='localhost'||window.location.hostname===
 
 let pollTimer = null;
 
+// ── 模式切換 ──────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('tabMarket').classList.toggle('active', tab==='market');
+  document.getElementById('tabCustom').classList.toggle('active', tab==='custom');
+  document.getElementById('panelMarket').style.display = tab==='market' ? '' : 'none';
+  document.getElementById('panelCustom').style.display = tab==='custom' ? '' : 'none';
+}
+
+function fillCodes(codes) {
+  document.getElementById('customCodes').value = codes;
+}
+
+// ── 自訂個股分析 ──────────────────────────────────
+async function startCustomAnalysis() {
+  const codesRaw = document.getElementById('customCodes').value;
+  const codes = codesRaw.split(/[,，\s]+/).map(c=>c.trim()).filter(c=>c);
+  const modelVer = document.getElementById('modelVerCustom').value;
+
+  if (!codes.length) { alert('請輸入至少一個股票代號！'); return; }
+  if (codes.length > 10) { alert('最多一次分析 10 支！'); return; }
+
+  const btn = document.getElementById('runBtnCustom');
+  btn.disabled = true; btn.textContent = '⏳ 分析中...';
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('emptyState').style.display   = 'none';
+  document.getElementById('results').style.display      = 'none';
+  setProgress(0, `分析 ${codes.join(', ')} ...`);
+
+  try {
+    const r = await fetch(`${API}/api/analyze/custom`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({codes, model_ver: modelVer}),
+    });
+    const {task_id, error} = await r.json();
+    if (error) throw new Error(error);
+    pollProgress(task_id, ()=>{ btn.disabled=false; btn.textContent='🔍 分析選定個股'; });
+  } catch(e) {
+    showError(e.message);
+    btn.disabled=false; btn.textContent='🔍 分析選定個股';
+  }
+}
+
 async function loadLatestResult() {
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('results').style.display    = 'none';
@@ -227,7 +321,7 @@ async function startAnalysis() {
   }
 }
 
-function pollProgress(taskId) {
+function pollProgress(taskId, onDone) {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
@@ -237,19 +331,19 @@ function pollProgress(taskId) {
       if (prog.error) {
         clearInterval(pollTimer);
         showError(prog.error);
-        resetBtn();
+        if(onDone) onDone(); else resetBtn();
         return;
       }
       if (prog.done && prog.result) {
         clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
         renderResults(prog.result);
-        resetBtn();
+        if(onDone) onDone(); else resetBtn();
       }
     } catch(e) {
       clearInterval(pollTimer);
       showError(e.message);
-      resetBtn();
+      if(onDone) onDone(); else resetBtn();
     }
   }, 2000);
 }
@@ -303,6 +397,20 @@ function renderResults(data) {
 
     const probColor = prob >= 50 ? 'var(--red)' : 'var(--grn)';
     const confColor = conf >= 50 ? 'var(--pur)' : 'var(--dim)';
+
+    // 資料不足的錯誤狀態
+    if (s.error) {
+      return `<div class="card neutral">
+        <div class="card-rank">#${i+1}</div>
+        <div class="card-code">${s.code}</div>
+        <div class="card-name">${s.name||s.code}</div>
+        <div style="font-size:.78rem;color:var(--red);margin:8px 0;">⚠️ ${s.error}</div>
+        <div class="card-footer">
+          <div class="card-price">${s.price||'—'} 元</div>
+          <span class="card-chg ${(s.chg_pct||0)>=0?'up':'dn'}">${(s.chg_pct||0)>=0?'+':''}${s.chg_pct||0}%</span>
+        </div>
+      </div>`;
+    }
 
     // v2.0 額外資訊
     const v2extras = ver==='v2' ? `
