@@ -20,6 +20,7 @@ import threading
 import random
 import os
 import json
+from collections import defaultdict
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
