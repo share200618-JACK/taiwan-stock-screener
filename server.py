@@ -2179,6 +2179,323 @@ def manual_run_predict():
     threading.Thread(target=run_daily_predictions, daemon=True).start()
     return jsonify({"ok": True, "msg": "已啟動預測，請稍後刷新頁面"})
 
+# ══════════════════════════════════════════════════════
+# AI 自動分析（隨機森林）- 網頁版
+# ══════════════════════════════════════════════════════
+
+_analyze_tasks = {}   # task_id -> {pct, msg, done, result, error}
+
+def _sma(arr, n):
+    if not arr: return 0.0
+    sl = arr[-n:] if len(arr) >= n else arr
+    return sum(sl) / len(sl)
+
+def _ema(arr, n):
+    if not arr: return 0.0
+    e = arr[0]; k = 2/(n+1)
+    for v in arr[1:]: e = v*k + e*(1-k)
+    return e
+
+def _calc_rf_features(records):
+    if len(records) < 40: return None
+    closes = [r["close"] for r in records]
+    highs  = [r["high"]  for r in records]
+    lows   = [r["low"]   for r in records]
+    opens  = [r["open"]  for r in records]
+    vols   = [r["vol"]   for r in records]
+    i = len(records)-1; c = closes[i]
+
+    ma5  = _sma(closes,5);  ma10 = _sma(closes,10)
+    ma20 = _sma(closes,20); ma60 = _sma(closes,60) if len(closes)>=60 else _sma(closes,len(closes))
+    ma120= _sma(closes,120) if len(closes)>=120 else _sma(closes,len(closes))
+
+    n9 = min(9, len(closes))
+    rh = max(highs[-n9:]); rl = min(lows[-n9:])
+    rsv= 0 if rh==rl else (c-rl)/(rh-rl)*100
+    k,d=50.0,50.0
+    for _ in range(5): k=k*2/3+rsv*1/3; d=d*2/3+k*1/3
+
+    chgs = [closes[j+1]-closes[j] for j in range(len(closes)-1)]
+    r14  = chgs[-14:] if len(chgs)>=14 else chgs
+    g14  = sum(x for x in r14 if x>0)/max(len(r14),1)
+    l14  = sum(-x for x in r14 if x<0)/max(len(r14),1)
+    rsi  = 100-100/(1+g14/l14) if l14>0 else 100
+
+    ema12=_ema(closes[-26:],12); ema26=_ema(closes[-26:],26)
+    macd = (ema12-ema26)/c*100 if c>0 else 0
+
+    ma20v= _sma(closes[-20:],20)
+    std20= (sum((x-ma20v)**2 for x in closes[-20:])/20)**0.5
+    boll = (c-(ma20v-2*std20))/(4*std20+0.001)
+
+    avg5v = _sma(vols[:-1],5)  if len(vols)>5  else vols[-1]
+    avg20v= _sma(vols[:-1],20) if len(vols)>20 else vols[-1]
+    vr5   = vols[-1]/avg5v  if avg5v>0  else 1
+    vr20  = vols[-1]/avg20v if avg20v>0 else 1
+
+    ret3  = (c/closes[-4]-1)*100  if len(closes)>=4  else 0
+    ret5  = (c/closes[-6]-1)*100  if len(closes)>=6  else 0
+    ret10 = (c/closes[-11]-1)*100 if len(closes)>=11 else 0
+    ret20 = (c/closes[-21]-1)*100 if len(closes)>=21 else 0
+
+    trs = [max(highs[j]-lows[j],abs(highs[j]-closes[j-1]),abs(lows[j]-closes[j-1]))
+           for j in range(max(1,i-13),i+1)]
+    atr = (sum(trs)/len(trs) if trs else 0)/c*100 if c>0 else 0
+
+    red_k = sum(1 for j in range(max(0,i-4),i+1) if closes[j]>=opens[j])/5
+    consec= 0
+    for j in range(i,max(-1,i-10),-1):
+        if j==0: break
+        if closes[j]>closes[j-1]: consec+=1
+        else: break
+
+    hi60 = max(highs[-60:]) if len(highs)>=60 else max(highs)
+    lo60 = min(lows[-60:])  if len(lows)>=60  else min(lows)
+    ppos = (c-lo60)/(hi60-lo60+0.001)
+
+    return [
+        (c-ma5)/ma5*100   if ma5>0  else 0,
+        (c-ma20)/ma20*100 if ma20>0 else 0,
+        (c-ma60)/ma60*100 if ma60>0 else 0,
+        (c-ma120)/ma120*100 if ma120>0 else 0,
+        (ma5-ma20)/ma20*100 if ma20>0 else 0,
+        (ma20-ma60)/ma60*100 if ma60>0 else 0,
+        k, d, rsi, macd, boll,
+        vr5, vr20,
+        ret3, ret5, ret10, ret20, atr,
+        red_k, consec, ppos,
+        k-d, rsi-50,
+    ]
+
+def _build_rf_train(records, pred_days=15, rise_thr=3.0):
+    X, y = [], []
+    closes = [r["close"] for r in records]
+    for i in range(40, len(records)-pred_days):
+        f = _calc_rf_features(records[:i+1])
+        if f is None: continue
+        label = 1 if (closes[i+pred_days]-closes[i])/closes[i]*100 >= rise_thr else 0
+        X.append(f); y.append(label)
+    return X, y
+
+class _DT:
+    def __init__(self, max_depth=7, min_s=4, n_feat=None):
+        self.max_depth=max_depth; self.min_s=min_s; self.n_feat=n_feat; self.tree=None
+    def _gini(self, y):
+        n=len(y)
+        if n==0: return 0
+        cnt=defaultdict(int)
+        for l in y: cnt[l]+=1
+        return 1-sum((v/n)**2 for v in cnt.values())
+    def _split(self, X, y):
+        best=-1; bf=bt=None; n=len(y); gp=self._gini(y)
+        feats=list(range(len(X[0])))
+        if self.n_feat and self.n_feat<len(feats): feats=random.sample(feats,self.n_feat)
+        for f in feats:
+            vals=sorted(set(x[f] for x in X))
+            if len(vals)<=1: continue
+            step=max(1,len(vals)//8)
+            for vi in range(0,len(vals)-1,step):
+                thr=(vals[vi]+vals[vi+1])/2
+                ly=[y[j] for j in range(n) if X[j][f]<=thr]
+                ry=[y[j] for j in range(n) if X[j][f]>thr]
+                if not ly or not ry: continue
+                g=gp-(len(ly)/n*self._gini(ly)+len(ry)/n*self._gini(ry))
+                if g>best: best=g; bf=f; bt=thr
+        return bf,bt
+    def _build(self,X,y,d):
+        cnt=defaultdict(int)
+        for l in y: cnt[l]+=1
+        maj=max(cnt,key=cnt.get); prob=cnt.get(1,0)/len(y)
+        if d>=self.max_depth or len(y)<=self.min_s or len(cnt)==1:
+            return {"leaf":True,"prob":prob}
+        f,t=self._split(X,y)
+        if f is None: return {"leaf":True,"prob":prob}
+        li=[i for i in range(len(y)) if X[i][f]<=t]
+        ri=[i for i in range(len(y)) if X[i][f]>t]
+        return {"leaf":False,"f":f,"t":t,
+                "l":self._build([X[i] for i in li],[y[i] for i in li],d+1),
+                "r":self._build([X[i] for i in ri],[y[i] for i in ri],d+1)}
+    def fit(self,X,y): self.tree=self._build(X,y,0)
+    def _pred(self,x,n):
+        if n["leaf"]: return n["prob"]
+        return self._pred(x,n["l"] if x[n["f"]]<=n["t"] else n["r"])
+    def predict_proba(self,X): return [self._pred(x,self.tree) for x in X]
+
+class _RF:
+    def __init__(self,n=50,md=7,ms=4,nf=10):
+        self.n=n; self.md=md; self.ms=ms; self.nf=nf; self.trees=[]
+    def fit(self,X,y):
+        self.trees=[]
+        sz=len(X)
+        np_=sum(y); nn_=sz-np_
+        wp=sz/(2*np_) if np_>0 else 1; wn=sz/(2*nn_) if nn_>0 else 1
+        ws=[wp if yi==1 else wn for yi in y]
+        tw=sum(ws); cp=[]
+        acc=0
+        for w in ws: acc+=w/tw; cp.append(acc)
+        for _ in range(self.n):
+            idx=[]
+            for _ in range(sz):
+                r=random.random()
+                for j,c in enumerate(cp):
+                    if r<=c: idx.append(j); break
+                else: idx.append(sz-1)
+            t=_DT(self.md,self.ms,self.nf)
+            t.fit([X[i] for i in idx],[y[i] for i in idx])
+            self.trees.append(t)
+    def predict_proba(self,X):
+        ap=[t.predict_proba(X) for t in self.trees]
+        return [sum(ap[t][i] for t in range(len(self.trees)))/len(self.trees) for i in range(len(X))]
+
+def _analyze_one(code, name):
+    """對單支股票跑隨機森林，回傳結果"""
+    records = fetch_all_history(code,
+        (datetime.today()-timedelta(days=730)).strftime("%Y-%m-%d"),
+        datetime.today().strftime("%Y-%m-%d"))
+    if len(records) < 80: return None
+
+    X, y = _build_rf_train(records, 15, 3.0)
+    if len(X)<50 or sum(y)<8 or sum(1-v for v in y)<8: return None
+
+    n=len(X); fold=n//5; accs=[]
+    for k in range(5):
+        vs=k*fold; ve=min((k+1)*fold,n)
+        if vs<30: continue
+        rf=_RF(n=30,md=6,nf=8)
+        rf.fit(X[:vs],y[:vs])
+        probs=rf.predict_proba(X[vs:ve])
+        preds=[1 if p>=0.5 else 0 for p in probs]
+        acc=sum(preds[i]==y[vs+i] for i in range(len(preds)))/max(len(preds),1)
+        accs.append(acc)
+
+    accuracy = sum(accs)/len(accs) if accs else 0.5
+
+    rf_final=_RF(n=50,md=7,nf=10)
+    rf_final.fit(X,y)
+    cf=_calc_rf_features(records)
+    if cf is None: return None
+
+    rise_prob = rf_final.predict_proba([cf])[0]
+    confidence= accuracy*abs(rise_prob-0.5)*2
+
+    closes=[r["close"] for r in records]
+    return {
+        "code":        code,
+        "name":        name,
+        "rise_prob":   round(rise_prob*100,1),
+        "accuracy":    round(accuracy*100,1),
+        "confidence":  round(confidence*100,1),
+        "price":       records[-1]["close"],
+        "chg_pct":     round((records[-1]["close"]/records[-2]["close"]-1)*100,2)
+                       if len(records)>=2 else 0,
+        "data_count":  len(records),
+    }
+
+def _run_analyze_task(task_id, max_stocks, top_n):
+    try:
+        prog = _analyze_tasks[task_id]
+        def cb(msg, pct):
+            prog["msg"]=msg; prog["pct"]=round(pct,1)
+            print(f"  [AI分析 {pct:.0f}%] {msg}")
+
+        cb("從 TWSE 取得股票清單...", 2)
+        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        resp = SESSION.get(url, timeout=15); resp.raise_for_status()
+        rows = resp.json()
+        stocks = []
+        for r in rows:
+            code=r.get("Code",""); price=safe_float(r.get("ClosingPrice"))
+            vol=round(safe_float(r.get("TradeVolume"))/1000)
+            chg=safe_float(r.get("Change")); prev=price-chg
+            pct_=round(chg/prev*100,2) if prev>0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price<10 or price>1000 or vol<300: continue
+            if abs(pct_)>9.5: continue
+            stocks.append({"code":code,"name":r.get("Name",""),"price":price,"pct":pct_,"vol":vol})
+
+        if len(stocks)>max_stocks:
+            random.shuffle(stocks); stocks=stocks[:max_stocks]
+
+        cb(f"開始分析 {len(stocks)} 支股票...", 5)
+        results=[]
+        total=len(stocks)
+        for idx, s in enumerate(stocks):
+            pct_done = 5 + idx/total*88
+            cb(f"分析中 {s['code']} {s['name']} ({idx+1}/{total})", pct_done)
+            try:
+                r=_analyze_one(s["code"],s["name"])
+                if r and r["confidence"]>15:
+                    r["vol"]=s["vol"]; r["pct"]=s["pct"]
+                    results.append(r)
+            except Exception as e:
+                print(f"  [{s['code']}] 錯誤: {e}")
+
+        cb("排序結果...", 95)
+        results.sort(key=lambda x: x["rise_prob"]*0.6+x["confidence"]*0.4, reverse=True)
+        top=results[:top_n]
+
+        prog.update({"pct":100,"msg":"完成！","done":True,"error":None,
+                     "result":{"stocks":top,"total_analyzed":len(results),
+                               "total_scanned":len(stocks)}})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        _analyze_tasks[task_id].update({"done":True,"error":str(e)})
+
+@app.route("/api/analyze/start", methods=["POST"])
+def start_analyze():
+    import uuid
+    body       = request.get_json() or {}
+    max_stocks = int(body.get("max_stocks", 80))
+    top_n      = int(body.get("top_n", 10))
+    task_id    = str(uuid.uuid4())[:8]
+    _analyze_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
+    threading.Thread(target=_run_analyze_task, args=(task_id,max_stocks,top_n), daemon=True).start()
+    return jsonify({"task_id": task_id})
+
+@app.route("/api/analyze/progress/<task_id>")
+def analyze_progress(task_id):
+    prog = _analyze_tasks.get(task_id)
+    if not prog: return jsonify({"error":"找不到任務"}), 404
+    return jsonify(prog)
+
+@app.route("/analyze")
+def analyze_page():
+    return send_from_directory(".", "analyze.html")
+
+@app.route("/portfolio")
+def portfolio_page():
+    return send_from_directory(".", "portfolio.html")
+
+@app.route("/api/prices")
+def get_prices():
+    """取得指定股票的即時報價"""
+    codes_str = request.args.get("codes","")
+    codes = [c.strip() for c in codes_str.split(",") if c.strip()]
+    if not codes:
+        return jsonify({"error":"請提供股票代號"}), 400
+    try:
+        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        resp = SESSION.get(url, timeout=15); resp.raise_for_status()
+        rows = resp.json()
+        prices = {}
+        for r in rows:
+            code  = r.get("Code","")
+            if code not in codes: continue
+            price = safe_float(r.get("ClosingPrice"))
+            chg   = safe_float(r.get("Change"))
+            if price <= 0: continue
+            prev  = price - chg
+            pct   = round(chg/prev*100, 2) if prev > 0 else 0
+            prices[code] = {
+                "price":  price,
+                "change": chg,
+                "chgPct": pct,
+                "name":   r.get("Name",""),
+            }
+        return jsonify({"prices": prices, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     print("="*50)
     print("  台股選股 + 回測 + 持股預測系統")
