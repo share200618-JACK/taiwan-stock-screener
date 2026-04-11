@@ -2348,7 +2348,7 @@ class _RF:
 
 def _analyze_one(code, name):
     """對單支股票跑隨機森林，回傳結果"""
-    records = fetch_all_history(code,
+    records = fetch_history_range(code,
         (datetime.today()-timedelta(days=730)).strftime("%Y-%m-%d"),
         datetime.today().strftime("%Y-%m-%d"))
     if len(records) < 80: return None
@@ -2469,11 +2469,11 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         _analyze_tasks[task_id].update({"done":True,"error":str(e)})
 
 def _analyze_one_v2(code, name, market_closes, history_months=24):
-    """v2.0 強化版：28個特徵 + 大盤相對強弱 + 時間序列驗證"""
-    records = fetch_all_history(code,
-        (datetime.today()-timedelta(days=history_months*31)).strftime("%Y-%m-%d"),
-        datetime.today().strftime("%Y-%m-%d"))
-    if len(records) < 80: return None
+    """v2.0 強化版：28個特徵 + 大盤相對強弱 + 時間序列驗證 + FinMind籌碼"""
+    start_dt = (datetime.today()-timedelta(days=history_months*31)).strftime("%Y-%m-%d")
+    end_dt   = datetime.today().strftime("%Y-%m-%d")
+    records  = fetch_history_range(code, start_dt, end_dt)
+    if len(records) < 60: return None
 
     closes = [r["close"] for r in records]
     highs  = [r["high"]  for r in records]
@@ -2481,7 +2481,24 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
     opens  = [r["open"]  for r in records]
     vols   = [r["vol"]   for r in records]
 
-    def feat(recs, mkt_closes):
+    # ── 抓 FinMind 籌碼資料（有 Token 才用）────────
+    inst_map = {}
+    try:
+        token = _get_finmind_token()
+        if token:
+            inst_map = fetch_institutional_finmind(code, start_dt, end_dt)
+    except: pass
+
+    # 把籌碼資料對應到每一天
+    record_dates = [r["date"] for r in records]
+    foreign_nets = []
+    trust_nets   = []
+    for d in record_dates:
+        inst = inst_map.get(d, {})
+        foreign_nets.append(inst.get("foreign_net", 0))
+        trust_nets.append(inst.get("trust_net", 0))
+
+    def feat(recs, mkt_closes, idx_offset=0):
         if len(recs) < 30: return None
         cl = [r["close"] for r in recs]
         hi = [r["high"]  for r in recs]
@@ -2546,6 +2563,14 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
             mret10=(mkt_closes[-1]/mkt_closes[-11]-1)*100 if mkt_closes[-11]>0 else 0
             rel=ret10-mret10
 
+        # FinMind 籌碼特徵（近5日外資/投信淨買超，標準化）
+        actual_idx = idx_offset + i
+        avg_vol = _sma(vo, 20) or 1
+        f_net5 = sum(foreign_nets[max(0,actual_idx-4):actual_idx+1]) / avg_vol / 5 \
+                 if foreign_nets and actual_idx < len(foreign_nets) else 0
+        t_net5 = sum(trust_nets[max(0,actual_idx-4):actual_idx+1]) / avg_vol / 5 \
+                 if trust_nets and actual_idx < len(trust_nets) else 0
+
         return [
             (c-ma5)/ma5*100   if ma5>0  else 0,
             (c-ma20)/ma20*100 if ma20>0 else 0,
@@ -2559,12 +2584,13 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
             ret3, ret5, ret10, ret20, atr,
             red_k, consec, ppos,
             k-d, rsi-50, rel,
+            f_net5, t_net5,          # FinMind 籌碼（共 25 個特徵）
         ]
 
     # 建立訓練資料
     X, y = [], []
     for i in range(40, len(records)-15):
-        f = feat(records[:i+1], market_closes)
+        f = feat(records[:i+1], market_closes, idx_offset=i)
         if f is None: continue
         label = 1 if (closes[i+15]-closes[i])/closes[i]*100 >= 3.0 else 0
         X.append(f); y.append(label)
@@ -2593,7 +2619,7 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
 
     rf_final=_RF(n=50,md=7,ms=4,nf=10)
     rf_final.fit(X,y)
-    cf=feat(records, market_closes)
+    cf=feat(records, market_closes, idx_offset=len(records)-1)
     if cf is None: return None
 
     rise_prob=rf_final.predict_proba([cf])[0]

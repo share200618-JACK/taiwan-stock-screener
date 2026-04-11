@@ -115,6 +115,27 @@ header{padding:22px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:28px;
   如需隨時隨地的手機通知，建議搭配「我的持股」頁面的自動更新功能。
 </div>
 
+<!-- FinMind Token 設定 -->
+<div class="section">
+  <div class="sec-title">
+    <div class="dot" style="background:var(--blu)"></div>
+    FinMind API Token（選填）
+    <span id="fmBadge" class="status-badge off" style="margin-left:auto;">● 未設定</span>
+  </div>
+  <div class="fg">
+    <label class="fl">Token</label>
+    <input class="fi" type="password" id="fmToken" placeholder="填入後 AI 分析可使用外資投信籌碼資料，準確率更高">
+    <div class="hint">
+      免費申請：<a href="https://finmindtrade.com" target="_blank" style="color:var(--blu)">finmindtrade.com</a> 註冊後取得｜
+      有 Token 可使用籌碼資料讓 AI 分析準確率提升到 <strong style="color:var(--txt)">65~72%</strong>
+    </div>
+  </div>
+  <div class="btn-row">
+    <button class="btn btn-gold" onclick="saveFinmindToken()">💾 儲存 Token</button>
+    <button class="btn btn-outline" onclick="testFinmindToken()" style="font-size:.82rem;">🔍 測試連線</button>
+  </div>
+</div>
+
 <!-- 警報開關 -->
 <div class="section">
   <div class="sec-title">
@@ -249,6 +270,41 @@ function init(){
   renderWatchList();
   renderHistory();
   if(config.enabled) startScan();
+  loadFinmindToken();
+}
+
+async function loadFinmindToken(){
+  try{
+    const r=await fetch(`${API}/api/settings/finmind_token`);
+    const d=await r.json();
+    if(d.token){ document.getElementById('fmToken').value='••••••••';
+      document.getElementById('fmBadge').className='status-badge on';
+      document.getElementById('fmBadge').textContent='● 已設定'; }
+  }catch(e){}
+}
+
+async function saveFinmindToken(){
+  const token=document.getElementById('fmToken').value.trim();
+  if(!token||token==='••••••••'){ showToast('請輸入 Token','err'); return; }
+  try{
+    const r=await fetch(`${API}/api/settings/finmind_token`,{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token})
+    });
+    const d=await r.json();
+    if(d.ok){ document.getElementById('fmBadge').className='status-badge on';
+      document.getElementById('fmBadge').textContent='● 已設定';
+      showToast('✅ FinMind Token 已儲存，AI 分析將使用籌碼資料','ok'); }
+    else showToast('❌ Token 無效：'+d.msg,'err');
+  }catch(e){ showToast('連線失敗','err'); }
+}
+
+async function testFinmindToken(){
+  try{
+    const r=await fetch(`${API}/api/settings/finmind_token`);
+    const d=await r.json();
+    showToast(d.token?'✅ Token 有效，籌碼資料可用':'⚠️ 尚未設定 Token', d.token?'ok':'err');
+  }catch(e){ showToast('連線失敗','err'); }
 }
 
 // ── 開關 ───────────────────────────────────────
