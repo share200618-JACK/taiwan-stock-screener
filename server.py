@@ -37,6 +37,48 @@ SESSION = requests.Session()
 SESSION.verify = False
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
+# ── 股票市場別對照表（快取）─────────────────────────
+# 記錄每支股票是上市(twse)還是上櫃(otc)，避免重複判斷
+_market_map = {}   # code -> "twse" | "otc"
+_market_map_loaded = False
+
+def _load_market_map():
+    """啟動時預載入上市+上櫃股票清單，建立市場別對照表"""
+    global _market_map, _market_map_loaded
+    if _market_map_loaded:
+        return
+    try:
+        # 上市
+        r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+                        timeout=15)
+        for row in r.json():
+            code = row.get("Code","")
+            if code: _market_map[code] = "twse"
+        print(f"  [市場表] 上市 {sum(1 for v in _market_map.values() if v=='twse')} 支")
+    except Exception as e:
+        print(f"  [市場表] 上市載入失敗: {e}")
+    try:
+        # 上櫃
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes",
+                         timeout=15)
+        for row in r2.json():
+            code = str(row.get("SecuritiesCompanyCode","") or row.get("code","")).strip()
+            if code: _market_map[code] = "otc"
+        print(f"  [市場表] 上櫃 {sum(1 for v in _market_map.values() if v=='otc')} 支")
+    except Exception as e:
+        print(f"  [市場表] 上櫃載入失敗: {e}")
+    _market_map_loaded = True
+    print(f"  [市場表] 共 {len(_market_map)} 支股票建立完成")
+
+def get_market(code):
+    """取得股票的市場別：'twse'（上市）或 'otc'（上櫃），未知回傳 None"""
+    if not _market_map_loaded:
+        _load_market_map()
+    return _market_map.get(str(code))
+
+# 背景預載市場表
+threading.Thread(target=_load_market_map, daemon=True).start()
+
 # ── 靜態頁面 ─────────────────────────────────────
 @app.route("/")
 def index():
@@ -97,15 +139,167 @@ def calc_rsi_series(closes, period=14):
             rsi_series[i] = round(100 - 100 / (1 + rs), 1)
     return rsi_series
 
+
+# ── 歷史資料快取（同一天同一支股票只抓一次）──────
+_history_cache = {}
+
 def fetch_history_range(code, start_date, end_date):
-    """抓指定期間的歷史資料（自動判斷上市/上櫃）"""
-    records = []
+    """抓指定期間的歷史資料（根據市場別直接查詢，含快取）"""
+    import time as _time
+
+    cache_key = f"{code}_{start_date[:7]}_{end_date[:7]}"
+    if cache_key in _history_cache:
+        return _history_cache[cache_key]
+
     start_dt    = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt      = datetime.strptime(end_date,   "%Y-%m-%d")
     fetch_start = start_dt - timedelta(days=90)
     cur = datetime(fetch_start.year, fetch_start.month, 1)
 
-    # 先嘗試上市（TWSE）
+    # 查市場別（防呆：若查不到就兩個都試）
+    market = get_market(code)
+    use_twse = market != "otc"   # 預設先試上市
+    use_otc  = market != "twse"  # 若確定是上市就不試上櫃
+
+    # ── 上市（TWSE）─────────────────────────────────
+    twse_records = []
+    if use_twse:
+        tmp_cur = cur
+        while tmp_cur <= end_dt:
+            ym = f"{tmp_cur.year}{tmp_cur.month:02d}01"
+            try:
+                url  = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+                        f"?response=json&date={ym}&stockNo={code}")
+                r    = SESSION.get(url, timeout=10)
+                data = r.json()
+                if data.get("stat") == "OK" and data.get("data"):
+                    for row in data["data"]:
+                        parts = row[0].split("/")
+                        if len(parts) != 3: continue
+                        try:
+                            dt = datetime(int(parts[0])+1911, int(parts[1]), int(parts[2]))
+                        except: continue
+                        c = safe_float(row[6])
+                        if c > 0:
+                            twse_records.append({
+                                "date":   dt.strftime("%Y-%m-%d"),
+                                "open":   safe_float(row[3]),
+                                "high":   safe_float(row[4]),
+                                "low":    safe_float(row[5]),
+                                "close":  c,
+                                "vol":    round(safe_float(row[1]) / 1000),
+                                "change": safe_float(row[7]),
+                            })
+            except: pass
+            tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
+            _time.sleep(0.2)
+
+    if twse_records:
+        twse_records.sort(key=lambda x: x["date"])
+        _market_map[code] = "twse"  # 確認是上市，更新市場別
+        _history_cache[cache_key] = twse_records
+        return twse_records
+
+    # ── 上櫃（OTC / TPEX）───────────────────────────
+    otc_records = []
+    if use_otc:
+        tmp_cur = cur
+        while tmp_cur <= end_dt:
+            roc_year = tmp_cur.year - 1911
+            ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
+            fetched  = False
+
+            # 方法一：TPEX 舊版 API（最穩定）
+            try:
+                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                r    = SESSION.get(url, timeout=12)
+                data = r.json()
+                rows = data.get("aaData", [])
+                if rows:
+                    for row in rows:
+                        try:
+                            date_parts = str(row[0]).strip().split("/")
+                            if len(date_parts) != 3: continue
+                            dt = datetime(int(date_parts[0])+1911,
+                                          int(date_parts[1]), int(date_parts[2]))
+                            c = safe_float(str(row[6]).replace(",",""))
+                            if c > 0:
+                                otc_records.append({
+                                    "date":   dt.strftime("%Y-%m-%d"),
+                                    "open":   safe_float(str(row[3]).replace(",","")),
+                                    "high":   safe_float(str(row[4]).replace(",","")),
+                                    "low":    safe_float(str(row[5]).replace(",","")),
+                                    "close":  c,
+                                    "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
+                                    "change": safe_float(str(row[7]).replace(",","")),
+                                })
+                            fetched = True
+                        except: continue
+            except Exception as e:
+                print(f"  [OTC方法1] {code} {ym_otc}: {e}")
+
+            # 方法二：備用 API
+            if not fetched:
+                try:
+                    _time.sleep(1)
+                    url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+                            f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
+                    r2   = SESSION.get(url2, timeout=12)
+                    rows2 = r2.json()
+                    if isinstance(rows2, list):
+                        for row in rows2:
+                            try:
+                                d_str = row.get("Date","") or row.get("date","")
+                                c2    = safe_float(row.get("Close","") or row.get("close",""))
+                                if not d_str or c2 <= 0: continue
+                                if "/" in d_str:
+                                    pts = d_str.split("/")
+                                    dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
+                                else:
+                                    dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
+                                otc_records.append({
+                                    "date":   dt.strftime("%Y-%m-%d"),
+                                    "open":   safe_float(row.get("Open","") or row.get("open","")),
+                                    "high":   safe_float(row.get("High","") or row.get("high","")),
+                                    "low":    safe_float(row.get("Low","")  or row.get("low","")),
+                                    "close":  c2,
+                                    "vol":    round(safe_float(row.get("TradingShares","") or
+                                                   row.get("volume","")) / 1000),
+                                    "change": safe_float(row.get("Change","") or row.get("change","")),
+                                })
+                            except: continue
+                except Exception as e:
+                    print(f"  [OTC方法2] {code} {ym_otc}: {e}")
+
+            tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
+            _time.sleep(0.5)
+
+    if otc_records:
+        _market_map[code] = "otc"  # 確認是上櫃
+
+    otc_records.sort(key=lambda x: x["date"])
+    seen  = set()
+    dedup = []
+    for r in otc_records:
+        if r["date"] not in seen:
+            seen.add(r["date"])
+            dedup.append(r)
+    _history_cache[cache_key] = dedup
+    return dedup
+    """抓指定期間的歷史資料（自動判斷上市/上櫃，含快取）"""
+    import time as _time
+
+    cache_key = f"{code}_{start_date[:7]}_{end_date[:7]}"
+    if cache_key in _history_cache:
+        return _history_cache[cache_key]
+
+    start_dt    = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt      = datetime.strptime(end_date,   "%Y-%m-%d")
+    fetch_start = start_dt - timedelta(days=90)
+    cur = datetime(fetch_start.year, fetch_start.month, 1)
+
+    # ── 先嘗試上市（TWSE）─────────────────────────
     twse_records = []
     tmp_cur = cur
     while tmp_cur <= end_dt:
@@ -113,7 +307,7 @@ def fetch_history_range(code, start_date, end_date):
         try:
             url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
                    f"?response=json&date={ym}&stockNo={code}")
-            r = SESSION.get(url, timeout=10)
+            r    = SESSION.get(url, timeout=10)
             data = r.json()
             if data.get("stat") == "OK" and data.get("data"):
                 for row in data["data"]:
@@ -135,96 +329,170 @@ def fetch_history_range(code, start_date, end_date):
                         })
         except: pass
         tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
+        _time.sleep(0.2)  # 避免 TWSE 限速
 
     if twse_records:
         twse_records.sort(key=lambda x: x["date"])
+        _history_cache[cache_key] = twse_records
         return twse_records
 
-    # 上市沒資料 → 嘗試上櫃（OTC / TPEX）
+    # ── 上市沒資料 → 嘗試上櫃（OTC）─────────────
     otc_records = []
     tmp_cur = cur
     while tmp_cur <= end_dt:
-        # 民國年格式
         roc_year = tmp_cur.year - 1911
         ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
+        fetched  = False
+
+        # 方法一：TPEX 舊版 API
         try:
             url = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
                    f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-            r = SESSION.get(url, timeout=10)
+            r    = SESSION.get(url, timeout=12)
             data = r.json()
             rows = data.get("aaData", [])
-            for row in rows:
-                try:
-                    # OTC 欄位：[0]=日期, [1]=成交量, [3]=開盤, [4]=最高, [5]=最低, [6]=收盤, [7]=漲跌
-                    date_parts = str(row[0]).split("/")
-                    if len(date_parts) == 3:
+            if rows:
+                for row in rows:
+                    try:
+                        date_parts = str(row[0]).strip().split("/")
+                        if len(date_parts) != 3: continue
                         dt = datetime(int(date_parts[0])+1911,
                                       int(date_parts[1]), int(date_parts[2]))
-                    else:
-                        continue
-                    c = safe_float(str(row[6]).replace(",",""))
-                    if c > 0:
-                        otc_records.append({
-                            "date":   dt.strftime("%Y-%m-%d"),
-                            "open":   safe_float(str(row[3]).replace(",","")),
-                            "high":   safe_float(str(row[4]).replace(",","")),
-                            "low":    safe_float(str(row[5]).replace(",","")),
-                            "close":  c,
-                            "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
-                            "change": safe_float(str(row[7]).replace(",","")),
-                        })
-                except: continue
+                        c = safe_float(str(row[6]).replace(",",""))
+                        if c > 0:
+                            otc_records.append({
+                                "date":   dt.strftime("%Y-%m-%d"),
+                                "open":   safe_float(str(row[3]).replace(",","")),
+                                "high":   safe_float(str(row[4]).replace(",","")),
+                                "low":    safe_float(str(row[5]).replace(",","")),
+                                "close":  c,
+                                "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
+                                "change": safe_float(str(row[7]).replace(",","")),
+                            })
+                        fetched = True
+                    except: continue
         except Exception as e:
-            print(f"  [OTC歷史] {code} {ym_otc} 失敗: {e}")
+            print(f"  [OTC方法1] {code} {ym_otc}: {e}")
+
+        # 方法二：若方法一失敗，用 TPEX OpenAPI 備用
+        if not fetched:
+            try:
+                _time.sleep(1)  # 限速保護
+                url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+                        f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
+                r2   = SESSION.get(url2, timeout=12)
+                rows2 = r2.json()
+                if isinstance(rows2, list):
+                    for row in rows2:
+                        try:
+                            d_str = row.get("Date","") or row.get("date","")
+                            c2    = safe_float(row.get("Close","") or row.get("close",""))
+                            if not d_str or c2 <= 0: continue
+                            # 日期可能是民國或西元
+                            if "/" in d_str:
+                                pts = d_str.split("/")
+                                dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
+                            else:
+                                dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
+                            otc_records.append({
+                                "date":   dt.strftime("%Y-%m-%d"),
+                                "open":   safe_float(row.get("Open","") or row.get("open","")),
+                                "high":   safe_float(row.get("High","") or row.get("high","")),
+                                "low":    safe_float(row.get("Low","")  or row.get("low","")),
+                                "close":  c2,
+                                "vol":    round(safe_float(row.get("TradingShares","") or
+                                               row.get("volume","")) / 1000),
+                                "change": safe_float(row.get("Change","") or row.get("change","")),
+                            })
+                        except: continue
+            except Exception as e:
+                print(f"  [OTC方法2] {code} {ym_otc}: {e}")
+
         tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
+        _time.sleep(0.5)  # OTC 限速保護
 
     otc_records.sort(key=lambda x: x["date"])
-    return otc_records
+    # 去除重複日期
+    seen = set()
+    dedup = []
+    for r in otc_records:
+        if r["date"] not in seen:
+            seen.add(r["date"])
+            dedup.append(r)
+    _history_cache[cache_key] = dedup
+    return dedup
 
 def fetch_history_recent(code):
-    """抓最近兩個月（給選股用）- 自動判斷上市/上櫃"""
-    records = []
-    today = datetime.today()
-    # 先嘗試上市（TWSE）
-    for delta in [1, 0]:
-        d  = today - timedelta(days=delta * 32)
-        ym = f"{d.year}{d.month:02d}01"
-        try:
-            url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-                   f"?response=json&date={ym}&stockNo={code}")
-            r    = SESSION.get(url, timeout=8)
-            data = r.json()
-            if data.get("stat") != "OK" or not data.get("data"): continue
-            for row in data["data"]:
-                c = safe_float(row[6])
-                h = safe_float(row[4])
-                l = safe_float(row[5])
-                v = round(safe_float(row[1]) / 1000)
-                if c > 0:
-                    records.append({"close":c,"high":h,"low":l,"vol":v})
-        except Exception as e:
-            print(f"  [歷史] {code} {ym} 失敗: {e}")
-    # 如果上市沒有資料，嘗試上櫃（OTC）
-    if not records:
+    """抓最近兩個月（給選股用）- 根據市場別直接查詢，含快取"""
+    import time as _time
+
+    cache_key = f"recent_{code}_{datetime.today().strftime('%Y%m%d')}"
+    if cache_key in _history_cache:
+        return _history_cache[cache_key]
+
+    market   = get_market(code)
+    records  = []
+    today    = datetime.today()
+    use_twse = market != "otc"
+    use_otc  = market != "twse"
+
+    # ── 上市（TWSE）─────────────────────────────────
+    if use_twse:
         for delta in [1, 0]:
             d  = today - timedelta(days=delta * 32)
-            ym_otc = f"{d.year-1911}/{d.month:02d}"  # 民國年格式
+            ym = f"{d.year}{d.month:02d}01"
             try:
-                url = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                       f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                url  = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+                        f"?response=json&date={ym}&stockNo={code}")
                 r    = SESSION.get(url, timeout=8)
+                data = r.json()
+                if data.get("stat") != "OK" or not data.get("data"): continue
+                for row in data["data"]:
+                    c = safe_float(row[6])
+                    if c > 0:
+                        records.append({
+                            "close": c,
+                            "high":  safe_float(row[4]),
+                            "low":   safe_float(row[5]),
+                            "vol":   round(safe_float(row[1]) / 1000),
+                        })
+            except: pass
+            _time.sleep(0.1)
+
+    if records:
+        _market_map[code] = "twse"
+        _history_cache[cache_key] = records
+        return records
+
+    # ── 上櫃（OTC）──────────────────────────────────
+    if use_otc:
+        for delta in [1, 0]:
+            d      = today - timedelta(days=delta * 32)
+            roc_y  = d.year - 1911
+            ym_otc = f"{roc_y}/{d.month:02d}"
+            try:
+                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                r    = SESSION.get(url, timeout=10)
                 data = r.json()
                 rows = data.get("aaData", [])
                 for row in rows:
                     try:
                         c = safe_float(str(row[6]).replace(",",""))
-                        h = safe_float(str(row[4]).replace(",",""))
-                        l = safe_float(str(row[5]).replace(",",""))
-                        v = round(safe_float(str(row[1]).replace(",","")) / 1000)
                         if c > 0:
-                            records.append({"close":c,"high":h,"low":l,"vol":v})
+                            records.append({
+                                "close": c,
+                                "high":  safe_float(str(row[4]).replace(",","")),
+                                "low":   safe_float(str(row[5]).replace(",","")),
+                                "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
+                            })
                     except: continue
             except: pass
+            _time.sleep(0.5)
+
+    if records:
+        _market_map[code] = "otc"
+    _history_cache[cache_key] = records
     return records
 
 # ══════════════════════════════════════════════════════
