@@ -464,6 +464,40 @@ function renderResults(data) {
           ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
         </div>
       </div>
+
+      ${/* 預估漲跌幅 */ (s.target_up||s.target_dn) ? `
+      <div style="margin-top:10px;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:8px;border:1px solid rgba(255,255,255,.07);">
+        <div style="font-size:.7rem;color:var(--dim);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;">📊 預估目標（約15個交易日）</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+          ${s.target_up ? `<div style="background:rgba(255,77,94,.08);border-radius:6px;padding:6px 8px;text-align:center;">
+            <div style="font-size:.68rem;color:var(--dim);">樂觀目標</div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--red);font-family:monospace;">${s.target_up} 元</div>
+            <div style="font-size:.7rem;color:var(--red);">+${s.avg_up_pct}%</div>
+          </div>` : ''}
+          ${s.target_dn ? `<div style="background:rgba(39,217,129,.08);border-radius:6px;padding:6px 8px;text-align:center;">
+            <div style="font-size:.68rem;color:var(--dim);">悲觀目標</div>
+            <div style="font-size:.92rem;font-weight:700;color:var(--grn);font-family:monospace;">${s.target_dn} 元</div>
+            <div style="font-size:.7rem;color:var(--grn);">${s.avg_down_pct}%</div>
+          </div>` : ''}
+        </div>
+        ${s.est_return !== undefined ? `<div style="font-size:.72rem;color:var(--dim);margin-top:5px;text-align:center;">
+          歷史相似情境平均報酬：<span style="color:${s.est_return>=0?'var(--red)':'var(--grn)'};">${s.est_return>=0?'+':''}${s.est_return}%</span>
+        </div>` : ''}
+      </div>` : ''}
+
+      ${/* 看漲/看跌原因 */ ((s.reasons_bull&&s.reasons_bull.length)||(s.reasons_bear&&s.reasons_bear.length)) ? `
+      <div style="margin-top:8px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:8px;border:1px solid rgba(255,255,255,.06);">
+        <div style="font-size:.7rem;color:var(--dim);margin-bottom:6px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;">🔍 分析依據</div>
+        ${s.reasons_bull&&s.reasons_bull.length ? s.reasons_bull.map(r=>
+          `<div style="font-size:.74rem;color:var(--red);margin-bottom:3px;display:flex;gap:5px;align-items:flex-start;">
+            <span style="flex-shrink:0;">▲</span><span>${r}</span>
+          </div>`).join('') : ''}
+        ${s.reasons_bear&&s.reasons_bear.length ? s.reasons_bear.map(r=>
+          `<div style="font-size:.74rem;color:var(--grn);margin-bottom:3px;display:flex;gap:5px;align-items:flex-start;">
+            <span style="flex-shrink:0;">▼</span><span>${r}</span>
+          </div>`).join('') : ''}
+      </div>` : ''}
+
     </div>`;
   }).join('');
 }

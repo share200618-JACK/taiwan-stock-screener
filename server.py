@@ -285,140 +285,43 @@ def fetch_history_range(code, start_date, end_date):
         if r["date"] not in seen:
             seen.add(r["date"])
             dedup.append(r)
-    _history_cache[cache_key] = dedup
-    return dedup
-    """抓指定期間的歷史資料（自動判斷上市/上櫃，含快取）"""
-    import time as _time
 
-    cache_key = f"{code}_{start_date[:7]}_{end_date[:7]}"
-    if cache_key in _history_cache:
-        return _history_cache[cache_key]
-
-    start_dt    = datetime.strptime(start_date, "%Y-%m-%d")
-    end_dt      = datetime.strptime(end_date,   "%Y-%m-%d")
-    fetch_start = start_dt - timedelta(days=90)
-    cur = datetime(fetch_start.year, fetch_start.month, 1)
-
-    # ── 先嘗試上市（TWSE）─────────────────────────
-    twse_records = []
-    tmp_cur = cur
-    while tmp_cur <= end_dt:
-        ym = f"{tmp_cur.year}{tmp_cur.month:02d}01"
+    # ── 若上市上櫃都抓不到 → 嘗試用 FinMind ──────
+    if not dedup:
         try:
-            url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-                   f"?response=json&date={ym}&stockNo={code}")
-            r    = SESSION.get(url, timeout=10)
-            data = r.json()
-            if data.get("stat") == "OK" and data.get("data"):
-                for row in data["data"]:
-                    parts = row[0].split("/")
-                    if len(parts) != 3: continue
-                    try:
-                        dt = datetime(int(parts[0])+1911, int(parts[1]), int(parts[2]))
-                    except: continue
-                    c = safe_float(row[6])
-                    if c > 0:
-                        twse_records.append({
-                            "date":   dt.strftime("%Y-%m-%d"),
-                            "open":   safe_float(row[3]),
-                            "high":   safe_float(row[4]),
-                            "low":    safe_float(row[5]),
-                            "close":  c,
-                            "vol":    round(safe_float(row[1]) / 1000),
-                            "change": safe_float(row[7]),
-                        })
-        except: pass
-        tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
-        _time.sleep(0.2)  # 避免 TWSE 限速
-
-    if twse_records:
-        twse_records.sort(key=lambda x: x["date"])
-        _history_cache[cache_key] = twse_records
-        return twse_records
-
-    # ── 上市沒資料 → 嘗試上櫃（OTC）─────────────
-    otc_records = []
-    tmp_cur = cur
-    while tmp_cur <= end_dt:
-        roc_year = tmp_cur.year - 1911
-        ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
-        fetched  = False
-
-        # 方法一：TPEX 舊版 API
-        try:
-            url = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                   f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-            r    = SESSION.get(url, timeout=12)
-            data = r.json()
-            rows = data.get("aaData", [])
-            if rows:
-                for row in rows:
-                    try:
-                        date_parts = str(row[0]).strip().split("/")
-                        if len(date_parts) != 3: continue
-                        dt = datetime(int(date_parts[0])+1911,
-                                      int(date_parts[1]), int(date_parts[2]))
-                        c = safe_float(str(row[6]).replace(",",""))
+            token = _get_finmind_token()
+            if token:
+                print(f"  [歷史] {code} OTC也失敗，嘗試 FinMind...")
+                params = {
+                    "dataset":    "TaiwanStockPrice",
+                    "data_id":    code,
+                    "start_date": (datetime.strptime(start_date, "%Y-%m-%d")
+                                   - timedelta(days=90)).strftime("%Y-%m-%d"),
+                    "end_date":   end_date,
+                }
+                r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                                params=params,
+                                headers={"Authorization": f"Bearer {token}"},
+                                timeout=15)
+                data = r.json()
+                if data.get("status") == 200:
+                    for row in data.get("data", []):
+                        c = safe_float(row.get("close", 0))
                         if c > 0:
-                            otc_records.append({
-                                "date":   dt.strftime("%Y-%m-%d"),
-                                "open":   safe_float(str(row[3]).replace(",","")),
-                                "high":   safe_float(str(row[4]).replace(",","")),
-                                "low":    safe_float(str(row[5]).replace(",","")),
+                            dedup.append({
+                                "date":   row.get("date","")[:10],
+                                "open":   safe_float(row.get("open",  0)),
+                                "high":   safe_float(row.get("max",   0)),
+                                "low":    safe_float(row.get("min",   0)),
                                 "close":  c,
-                                "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
-                                "change": safe_float(str(row[7]).replace(",","")),
+                                "vol":    round(safe_float(row.get("Trading_Volume", 0)) / 1000),
+                                "change": safe_float(row.get("spread", 0)),
                             })
-                        fetched = True
-                    except: continue
+                    dedup.sort(key=lambda x: x["date"])
+                    print(f"  [FinMind] {code}: {len(dedup)} 筆")
         except Exception as e:
-            print(f"  [OTC方法1] {code} {ym_otc}: {e}")
+            print(f"  [FinMind備用] {code}: {e}")
 
-        # 方法二：若方法一失敗，用 TPEX OpenAPI 備用
-        if not fetched:
-            try:
-                _time.sleep(1)  # 限速保護
-                url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
-                        f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
-                r2   = SESSION.get(url2, timeout=12)
-                rows2 = r2.json()
-                if isinstance(rows2, list):
-                    for row in rows2:
-                        try:
-                            d_str = row.get("Date","") or row.get("date","")
-                            c2    = safe_float(row.get("Close","") or row.get("close",""))
-                            if not d_str or c2 <= 0: continue
-                            # 日期可能是民國或西元
-                            if "/" in d_str:
-                                pts = d_str.split("/")
-                                dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
-                            else:
-                                dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
-                            otc_records.append({
-                                "date":   dt.strftime("%Y-%m-%d"),
-                                "open":   safe_float(row.get("Open","") or row.get("open","")),
-                                "high":   safe_float(row.get("High","") or row.get("high","")),
-                                "low":    safe_float(row.get("Low","")  or row.get("low","")),
-                                "close":  c2,
-                                "vol":    round(safe_float(row.get("TradingShares","") or
-                                               row.get("volume","")) / 1000),
-                                "change": safe_float(row.get("Change","") or row.get("change","")),
-                            })
-                        except: continue
-            except Exception as e:
-                print(f"  [OTC方法2] {code} {ym_otc}: {e}")
-
-        tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
-        _time.sleep(0.5)  # OTC 限速保護
-
-    otc_records.sort(key=lambda x: x["date"])
-    # 去除重複日期
-    seen = set()
-    dedup = []
-    for r in otc_records:
-        if r["date"] not in seen:
-            seen.add(r["date"])
-            dedup.append(r)
     _history_cache[cache_key] = dedup
     return dedup
 
@@ -3101,29 +3004,116 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
     cf=feat(records, market_closes, idx_offset=len(records)-1)
     if cf is None: return None
 
-    rise_prob=rf_final.predict_proba([cf])[0]
-    confidence=accuracy*abs(rise_prob-0.5)*2
+    rise_prob  = rf_final.predict_proba([cf])[0]
+    confidence = accuracy*abs(rise_prob-0.5)*2
 
-    # 計算大盤相對強弱（供前端顯示）
+    # 計算大盤相對強弱
     rel_strength = 0.0
     if market_closes and len(market_closes)>=11 and len(closes)>=11:
         mret10=(market_closes[-1]/market_closes[-11]-1)*100 if market_closes[-11]>0 else 0
         sret10=(closes[-1]/closes[-11]-1)*100 if closes[-11]>0 else 0
         rel_strength = round(sret10 - mret10, 2)
 
+    # ── 看漲/看跌原因分析 ──────────────────────────
+    cur_price = records[-1]["close"]
+    reasons_bull = []
+    reasons_bear = []
+
+    # 1. 均線多空
+    def _sma_last(arr, n):
+        sl = arr[-n:] if len(arr)>=n else arr
+        return sum(sl)/len(sl) if sl else 0
+
+    ma5  = _sma_last(closes, 5)
+    ma20 = _sma_last(closes, 20)
+    ma60 = _sma_last(closes, 60)
+    ma120= _sma_last(closes, 120)
+
+    if cur_price > ma5  > ma20: reasons_bull.append("股價站上5日及20日均線（短線多頭排列）")
+    elif cur_price < ma5 < ma20: reasons_bear.append("股價跌破5日及20日均線（短線空頭排列）")
+    if ma20 > ma60:  reasons_bull.append("月線在季線之上（中期多頭）")
+    elif ma20 < ma60: reasons_bear.append("月線跌破季線（中期空頭）")
+    if cur_price > ma120: reasons_bull.append("股價站上年線（長線支撐強）")
+    elif cur_price < ma120*0.95: reasons_bear.append("股價遠低於年線（長線偏弱）")
+
+    # 2. KD
+    if cf and len(cf) >= 8:
+        k_val = cf[6]; d_val = cf[7]
+        if k_val > d_val and k_val < 80: reasons_bull.append(f"KD 多頭（K={k_val:.0f} > D={d_val:.0f}）")
+        elif k_val < d_val and k_val > 20: reasons_bear.append(f"KD 空頭（K={k_val:.0f} < D={d_val:.0f}）")
+        if k_val < 20: reasons_bull.append(f"KD 超賣區（K={k_val:.0f}），反彈機率高")
+        if k_val > 80: reasons_bear.append(f"KD 超買區（K={k_val:.0f}），回檔風險")
+
+    # 3. RSI
+    if cf and len(cf) >= 9:
+        rsi_val = cf[8]
+        if 40 < rsi_val < 70: reasons_bull.append(f"RSI={rsi_val:.0f}，動能健康區間")
+        elif rsi_val < 30: reasons_bull.append(f"RSI={rsi_val:.0f} 超賣，可能反彈")
+        elif rsi_val > 75: reasons_bear.append(f"RSI={rsi_val:.0f} 超買，注意拉回")
+
+    # 4. 量能
+    if cf and len(cf) >= 13:
+        vol_ratio5  = cf[11]
+        vol_ratio20 = cf[12]
+        if vol_ratio5 >= 2.0: reasons_bull.append(f"今日爆量（今量為5日均量 {vol_ratio5:.1f} 倍），主力積極")
+        elif vol_ratio5 >= 1.5: reasons_bull.append(f"量能放大（{vol_ratio5:.1f} 倍5日均量）")
+        if vol_ratio20 < 0.5: reasons_bear.append("成交量萎縮（不足20日均量一半），人氣不足")
+
+    # 5. 大盤相對強弱
+    if rel_strength >= 3:   reasons_bull.append(f"近10日超越大盤 +{rel_strength}%（強勢股）")
+    elif rel_strength <= -3: reasons_bear.append(f"近10日落後大盤 {rel_strength}%（弱勢股）")
+
+    # 6. 近期漲跌
+    if cf and len(cf) >= 17:
+        ret5  = cf[14]
+        ret20 = cf[16]
+        if ret5 > 5:   reasons_bull.append(f"近5日漲幅 +{ret5:.1f}%，短線動能強")
+        elif ret5 < -5: reasons_bear.append(f"近5日跌幅 {ret5:.1f}%，短線偏弱")
+        if ret20 > 10:  reasons_bull.append(f"近20日漲幅 +{ret20:.1f}%，中期趨勢向上")
+        elif ret20 < -10: reasons_bear.append(f"近20日跌幅 {ret20:.1f}%，中期趨勢向下")
+
+    # ── 預估漲跌幅（用歷史相似情境的平均報酬）──────
+    # 找出訓練資料中上漲機率 >= rise_prob 的樣本，計算其後15日平均報酬
+    similar_returns = []
+    for i in range(len(X)):
+        p = rf_final.predict_proba([X[i]])[0]
+        if abs(p - rise_prob) <= 0.05:  # 相近機率的歷史樣本
+            if i + 15 < len(closes):
+                ret = (closes[i+15] - closes[i]) / closes[i] * 100
+                similar_returns.append(ret)
+
+    if similar_returns:
+        avg_ret    = sum(similar_returns) / len(similar_returns)
+        pos_rets   = [r for r in similar_returns if r > 0]
+        neg_rets   = [r for r in similar_returns if r < 0]
+        avg_up     = sum(pos_rets)/len(pos_rets)   if pos_rets else 0
+        avg_down   = sum(neg_rets)/len(neg_rets)   if neg_rets else 0
+        target_up  = round(cur_price * (1 + avg_up/100),   2) if avg_up   else 0
+        target_dn  = round(cur_price * (1 + avg_down/100), 2) if avg_down else 0
+        est_return = round(avg_ret, 1)
+    else:
+        avg_up=avg_down=target_up=target_dn=est_return=0
+
     return {
         "code":          code,
         "name":          name,
-        "rise_prob":     round(rise_prob*100,1),
-        "accuracy":      round(accuracy*100,1),
-        "precision":     round(precision*100,1),
+        "rise_prob":     round(rise_prob*100, 1),
+        "accuracy":      round(accuracy*100,  1),
+        "precision":     round(precision*100, 1),
         "confidence":    round(confidence*100,1),
-        "price":         records[-1]["close"],
-        "chg_pct":       round((records[-1]["close"]/records[-2]["close"]-1)*100,2)
-                         if len(records)>=2 else 0,
+        "price":         cur_price,
+        "chg_pct":       round((closes[-1]/closes[-2]-1)*100,2) if len(closes)>=2 else 0,
         "data_years":    round(len(records)/250,1),
         "rel_strength":  rel_strength,
         "model_ver":     "v2",
+        # 新增：原因 + 預估
+        "reasons_bull":  reasons_bull[:4],   # 最多顯示4條
+        "reasons_bear":  reasons_bear[:4],
+        "est_return":    est_return,          # 預估平均報酬%
+        "target_up":     target_up,           # 樂觀目標價
+        "target_dn":     target_dn,           # 悲觀目標價
+        "avg_up_pct":    round(avg_up,   1),
+        "avg_down_pct":  round(avg_down, 1),
     }
 
 @app.route("/api/analyze/start", methods=["POST"])
