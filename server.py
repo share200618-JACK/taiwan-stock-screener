@@ -2519,7 +2519,8 @@ def manual_run_predict():
 # AI 自動分析（隨機森林）- 網頁版
 # ══════════════════════════════════════════════════════
 
-_analyze_tasks = {}   # task_id -> {pct, msg, done, result, error}
+_analyze_tasks = {}        # task_id -> {pct, msg, done, result, error}
+_latest_analysis_result = {}   # 記憶體快取，避免 Render 重啟後 JSON 消失
 
 def _sma(arr, n):
     if not arr: return 0.0
@@ -2842,10 +2843,24 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         results.sort(key=lambda x: x["rise_prob"]*0.6+x["confidence"]*0.4, reverse=True)
         top=results[:top_n]
 
+        # 組合結果
+        analysis_out = {
+            "stocks":         top,
+            "total_analyzed": len(results),
+            "total_scanned":  len(stocks),
+            "model_ver":      model_ver,
+            "time":           datetime.now().strftime("%Y/%m/%d %H:%M"),
+            "avg_accuracy":   round(sum(r.get("accuracy",0) for r in results)/max(len(results),1),1),
+            "bullish":        sum(1 for r in results if r.get("rise_prob",0)>=50),
+            "bearish":        sum(1 for r in results if r.get("rise_prob",0)<50),
+            "predict_days":   15,
+        }
         prog.update({"pct":100,"msg":"完成！","done":True,"error":None,
-                     "result":{"stocks":top,"total_analyzed":len(results),
-                               "total_scanned":len(stocks),
-                               "model_ver": model_ver}})
+                     "result": analysis_out})
+        # 同時存進記憶體快取（避免 Render 重啟後遺失）
+        global _latest_analysis_result
+        _latest_analysis_result = analysis_out
+        print(f"  ✅ 分析結果已快取（{len(top)} 支推薦）")
     except Exception as e:
         import traceback; traceback.print_exc()
         _analyze_tasks[task_id].update({"done":True,"error":str(e)})
@@ -3137,25 +3152,27 @@ def analyze_progress(task_id):
 
 @app.route("/api/analyze/latest")
 def get_latest_analysis():
-    """讀取 auto_analysis.py 存的最新分析結果"""
+    """讀取記憶體中的最新分析結果（或備用 JSON 檔）"""
+    # 優先讀記憶體快取
+    if _latest_analysis_result:
+        return jsonify(_latest_analysis_result)
+    # 備用：嘗試讀本地 JSON 檔（本機開發用）
     result_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_result.json")
     try:
-        if not os.path.exists(result_file):
-            return jsonify({"error": "尚無分析結果，請先執行 auto_analysis.py"}), 404
-        with open(result_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return jsonify(data)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        if os.path.exists(result_file):
+            with open(result_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return jsonify(data)
+    except Exception:
+        pass
+    return jsonify({"error": "尚無分析結果，請先執行 auto_analysis.py"}), 404
 
 @app.route("/api/analyze/run", methods=["POST"])
 def trigger_auto_analysis():
-    """手動觸發 auto_analysis.py（背景執行）"""
-    import subprocess
+    """手動觸發分析（背景執行，結果存記憶體）"""
     def run_bg():
         try:
-            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_analysis.py")
-            subprocess.run(["python3", script], timeout=1200)
+            _run_auto_analysis()
         except Exception as e:
             print(f"[auto_analysis] 執行失敗: {e}")
     threading.Thread(target=run_bg, daemon=True).start()
@@ -3318,6 +3335,67 @@ def get_prices():
         return jsonify({"error": str(e)}), 500
 
 # ── Keep-Alive（防止 Render 免費版休眠）────────────
+# ══════════════════════════════════════════════════════
+# 每日自動分析（排程 + _run_auto_analysis）
+# ══════════════════════════════════════════════════════
+
+def _run_auto_analysis(max_stocks=80, top_n=10, model_ver='v2'):
+    """
+    在記憶體中執行全市場 AI 分析，結果存到 _latest_analysis_result。
+    由每日排程（14:35）或手動 POST /api/analyze/run 觸發。
+    """
+    global _latest_analysis_result
+    import uuid
+    task_id = "auto_" + str(uuid.uuid4())[:6]
+    _analyze_tasks[task_id] = {"pct": 0, "msg": "自動分析啟動...", "done": False,
+                                "result": None, "error": None}
+    print(f"\n[自動分析] 開始 task_id={task_id}  {datetime.now().strftime('%Y/%m/%d %H:%M')}")
+    try:
+        _run_analyze_task(task_id, max_stocks, top_n, model_ver)
+        result = _analyze_tasks[task_id].get("result")
+        if result:
+            _latest_analysis_result = result
+            print(f"[自動分析] ✅ 完成，{len(result.get('stocks', []))} 支推薦存入記憶體")
+        else:
+            err = _analyze_tasks[task_id].get("error", "未知錯誤")
+            print(f"[自動分析] ❌ 失敗: {err}")
+    except Exception as e:
+        print(f"[自動分析] ❌ 例外: {e}")
+    finally:
+        # 清理任務記憶體（保留最近 5 個）
+        keys = list(_analyze_tasks.keys())
+        for k in keys[:-5]:
+            _analyze_tasks.pop(k, None)
+
+
+def _start_daily_schedule():
+    """
+    每天 14:35 台灣時間（UTC+8）自動執行分析。
+    在 Render 上 UTC 時間 = 台灣時間 - 8，所以 14:35 CST = 06:35 UTC。
+    """
+    import time as _time
+    def _scheduler():
+        print("[排程] 每日自動分析排程已啟動（台灣時間 14:35）")
+        while True:
+            try:
+                now = datetime.utcnow()
+                # 台灣時間 = UTC + 8
+                tw_hour = (now.hour + 8) % 24
+                tw_min  = now.minute
+                # 每天 14:35 ~ 14:36 執行一次
+                if tw_hour == 14 and tw_min == 35:
+                    print(f"[排程] ⏰ 觸發每日分析 {datetime.now().strftime('%Y/%m/%d %H:%M')}")
+                    _run_auto_analysis(max_stocks=80, top_n=10, model_ver='v2')
+                    _time.sleep(90)  # 避免同一分鐘重複觸發
+                else:
+                    _time.sleep(30)  # 每 30 秒檢查一次
+            except Exception as e:
+                print(f"[排程] 錯誤: {e}")
+                _time.sleep(60)
+    t = threading.Thread(target=_scheduler, daemon=True)
+    t.start()
+
+
 import os as _os
 
 def _start_keep_alive():
@@ -3345,6 +3423,7 @@ if __name__ == "__main__":
     print("雲端部署：pip install gunicorn\n")
     app.run(host="0.0.0.0", port=5000, debug=False)
 else:
-    # Gunicorn 啟動時也執行 keep-alive
+    # Gunicorn 啟動時執行 keep-alive + 每日排程
     _start_keep_alive()
+    _start_daily_schedule()
 
