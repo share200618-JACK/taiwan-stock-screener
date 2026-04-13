@@ -92,6 +92,10 @@ def backtest_page():
 def alert_page():
     return send_from_directory(".", "alert.html")
 
+@app.route("/predict")
+def predict_page():
+    return send_from_directory(".", "predict.html")
+
 @app.route("/api/health")
 def health():
     return jsonify({"ok": True, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})

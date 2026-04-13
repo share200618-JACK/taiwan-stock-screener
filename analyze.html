@@ -183,12 +183,19 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 </div>
 
 <!-- 每日自動分析結果區 -->
-<div style="background:var(--s1);border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:16px 18px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-  <div>
-    <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
-    <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 14:35 自動執行，結果直接顯示在此</div>
+<div style="background:var(--s1);border:1px solid rgba(168,85,247,.3);border-radius:12px;padding:16px 18px;margin-bottom:18px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+    <div>
+      <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
+      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 14:35 自動執行，結果直接顯示在此</div>
+    </div>
+    <button class="run-btn" style="padding:8px 18px;font-size:.82rem;" onclick="loadLatestResult()">📂 載入最新結果</button>
   </div>
-  <button class="run-btn" style="padding:8px 18px;font-size:.82rem;" onclick="loadLatestResult()">📂 載入最新結果</button>
+  <!-- 狀態列：頁面載入後自動檢查 -->
+  <div id="autoResultStatus" style="margin-top:10px;font-size:.76rem;color:var(--dim);display:none;">
+    <span id="autoStatusIcon">⏳</span>
+    <span id="autoStatusText">檢查中...</span>
+  </div>
 </div>
 
 <!-- 進度條 -->
@@ -276,6 +283,34 @@ async function startCustomAnalysis() {
   }
 }
 
+async function checkAutoResultStatus() {
+  // 頁面載入時悄悄檢查是否有快取的分析結果
+  const statusEl = document.getElementById('autoResultStatus');
+  const iconEl   = document.getElementById('autoStatusIcon');
+  const textEl   = document.getElementById('autoStatusText');
+  if (!statusEl) return;
+  statusEl.style.display = 'block';
+  try {
+    const r    = await fetch(`${API}/api/analyze/latest`);
+    const data = await r.json();
+    if (data.error) {
+      iconEl.textContent = '⚠️';
+      textEl.textContent = '尚無分析結果，請點「開始 AI 分析」或等待 14:35 自動執行';
+      textEl.style.color = 'var(--gold)';
+    } else {
+      const stk = (data.stocks||[]).length;
+      const t   = data.time || '';
+      iconEl.textContent = '✅';
+      textEl.innerHTML   = `上次分析：<strong style="color:var(--grn)">${t}</strong> &nbsp;｜&nbsp; 推薦 <strong style="color:var(--gold)">${stk}</strong> 支 &nbsp;｜&nbsp; <a href="#" onclick="loadLatestResult();return false;" style="color:var(--pur)">立即載入 →</a>`;
+      textEl.style.color = 'var(--dim)';
+    }
+  } catch(e) {
+    iconEl.textContent = '🔴';
+    textEl.textContent = '無法連線到伺服器';
+    textEl.style.color = 'var(--red)';
+  }
+}
+
 async function loadLatestResult() {
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('results').style.display    = 'none';
@@ -286,7 +321,6 @@ async function loadLatestResult() {
     const data = await r.json();
     if (data.error) throw new Error(data.error);
     document.getElementById('progressWrap').style.display = 'none';
-    // 補上 model_ver 讓 renderResults 正確顯示
     data.model_ver = data.model_ver || 'v2';
     renderResults(data);
   } catch(e) {
@@ -294,6 +328,11 @@ async function loadLatestResult() {
     showError(e.message);
   }
 }
+
+// 頁面載入後自動檢查狀態
+window.addEventListener('DOMContentLoaded', () => {
+  checkAutoResultStatus();
+});
 
 async function startAnalysis() {
   const maxStocks = parseInt(document.getElementById('maxStocks').value)||80;

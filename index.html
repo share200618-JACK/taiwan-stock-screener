@@ -779,7 +779,7 @@ renderCList();
 function goBacktest(){
   if(!conds.length){alert("請先設定篩選條件再前往回測！");return;}
   localStorage.setItem("bt_conditions",JSON.stringify(conds));
-  window.location.href="backtest.html";
+  window.location.href="/backtest";
 }
 </script>
 </body>
