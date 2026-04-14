@@ -74,7 +74,16 @@ def get_market(code):
     """取得股票的市場別：'twse'（上市）或 'otc'（上櫃），未知回傳 None"""
     if not _market_map_loaded:
         _load_market_map()
-    return _market_map.get(str(code))
+    result = _market_map.get(str(code))
+    # 若市場表為空（載入失敗），根據股票代號長度猜測
+    if result is None:
+        code_str = str(code)
+        if len(code_str) == 4 and code_str.isdigit():
+            # 5 開頭通常是上櫃，6 開頭通常是上市，其他不確定
+            first = code_str[0]
+            if first in ("5", "6") and int(code_str) >= 5000:
+                return "otc"
+    return result
 
 # 背景預載市場表
 threading.Thread(target=_load_market_map, daemon=True).start()
@@ -1033,9 +1042,11 @@ def backtest():
 
     print(f"\n[單股回測] {code} {start_date}~{end_date} "
           f"大盤過濾:{use_market_filter} ATR停損:{use_atr_stop} 分批:{partial_exit_pct}%")
+    market = get_market(code)
     records = fetch_history_range(code, start_date, end_date)
     if not records:
-        return jsonify({"error":f"查無 {code} 的歷史資料"}), 404
+        mkt_hint = "（上櫃，嘗試 TPEX）" if market == "otc" else "（上市，嘗試 TWSE）" if market == "twse" else "（市場別未知，兩邊都試過）"
+        return jsonify({"error": f"查無 {code} 的歷史資料 {mkt_hint}，請確認代號正確或稍後再試"}), 404
 
     trades, daily_equity = run_single_backtest(
         records, conditions, start_date, end_date,
