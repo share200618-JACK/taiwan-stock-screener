@@ -3403,20 +3403,23 @@ def _start_daily_schedule():
 import os as _os
 
 def _start_keep_alive():
-    """每 10 分鐘 ping 自己，防止 Render 免費版休眠"""
+    """每 4 分鐘 ping 自己，防止 Render 免費版休眠（搭配 UptimeRobot 5 分鐘外部 ping）"""
     render_url = _os.environ.get("RENDER_EXTERNAL_URL", "")
     if not render_url:
-        return  # 本機不需要
+        print("[Keep-Alive] 本機環境，略過")
+        return
     def _ping():
+        time.sleep(30)  # 啟動後等 30 秒再開始 ping
         while True:
             try:
-                time.sleep(600)  # 10 分鐘
-                SESSION.get(f"{render_url}/api/health", timeout=10)
-                print(f"[Keep-Alive] Ping {render_url}")
-            except: pass
+                r = SESSION.get(f"{render_url}/api/health", timeout=10)
+                print(f"[Keep-Alive] ✅ Ping OK ({r.status_code})  {datetime.now().strftime('%H:%M:%S')}")
+            except Exception as e:
+                print(f"[Keep-Alive] ⚠️ Ping 失敗: {e}")
+            time.sleep(240)  # 4 分鐘
     t = threading.Thread(target=_ping, daemon=True)
     t.start()
-    print(f"[Keep-Alive] 已啟動，每 10 分鐘 ping {render_url}")
+    print(f"[Keep-Alive] 已啟動，每 4 分鐘 ping → {render_url}")
 
 if __name__ == "__main__":
     print("="*50)
