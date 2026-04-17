@@ -1410,6 +1410,105 @@ def fetch_per_finmind(code, start_date):
         }
     return result
 
+def fetch_monthly_revenue_finmind(code, start_date):
+    """
+    FinMind 月營收（抓飆股的關鍵基本面指標）
+    dataset: TaiwanStockMonthRevenue
+    欄位: date, stock_id, revenue, revenue_month, revenue_year
+    回傳: sorted list of {date, revenue, yoy_pct, mom_pct, accumulated_yoy}
+          依日期升冪排序，已計算年增率、月增率
+    """
+    rows = fetch_finmind("TaiwanStockMonthRevenue", code, start_date)
+    if not rows:
+        return []
+
+    # 建立 (year, month) -> revenue map（單月營收）
+    rev_map = {}
+    for row in rows:
+        try:
+            y = int(row.get("revenue_year", 0))
+            m = int(row.get("revenue_month", 0))
+            r = int(row.get("revenue", 0))
+            if y > 0 and m > 0 and r > 0:
+                rev_map[(y, m)] = {"revenue": r, "date": row.get("date","")[:10]}
+        except: continue
+
+    # 依時間排序並計算 YoY、MoM
+    result = []
+    for (y, m) in sorted(rev_map.keys()):
+        cur   = rev_map[(y, m)]
+        rev   = cur["revenue"]
+        # 去年同月
+        prev_y = rev_map.get((y-1, m))
+        yoy = ((rev - prev_y["revenue"]) / prev_y["revenue"] * 100) if prev_y and prev_y["revenue"] > 0 else 0
+        # 上個月
+        pm_y, pm_m = (y, m-1) if m > 1 else (y-1, 12)
+        prev_m = rev_map.get((pm_y, pm_m))
+        mom = ((rev - prev_m["revenue"]) / prev_m["revenue"] * 100) if prev_m and prev_m["revenue"] > 0 else 0
+
+        result.append({
+            "date":    cur["date"],
+            "year":    y, "month": m,
+            "revenue": rev,
+            "yoy_pct": round(yoy, 2),   # 年增率 %
+            "mom_pct": round(mom, 2),   # 月增率 %
+        })
+    return result
+
+def get_revenue_features(rev_list, ref_date):
+    """
+    取得指定日期當下可用的最新月營收特徵。
+    台灣上市櫃公司每月 10 日前公布上月營收。
+    為避免未來資料洩漏（look-ahead bias），只使用 ref_date 當月或之前的資料。
+
+    回傳 4 個特徵：
+      - latest_yoy:    最新月營收年增率 %（3167 在飆漲前 yoy 持續破 100%）
+      - latest_mom:    最新月營收月增率 %
+      - avg_yoy_3m:    近 3 個月平均年增率（看是否持續高成長）
+      - yoy_trend:     近 3 個月年增率是「持續加速」= +1、持平 = 0、減速 = -1
+    """
+    if not rev_list or not ref_date:
+        return {"latest_yoy": 0, "latest_mom": 0, "avg_yoy_3m": 0, "yoy_trend": 0}
+    try:
+        ref_dt = datetime.strptime(ref_date[:10], "%Y-%m-%d")
+    except:
+        return {"latest_yoy": 0, "latest_mom": 0, "avg_yoy_3m": 0, "yoy_trend": 0}
+
+    # 只取 ref_date 之前至少一個月公布的資料（避免未來資料）
+    # 假設公告日為資料月份的次月 10 日
+    usable = []
+    for r in rev_list:
+        # r 的資料月份
+        pub_dt = datetime(r["year"], r["month"], 15) + timedelta(days=30)  # 預估公告日
+        if pub_dt <= ref_dt:
+            usable.append(r)
+
+    if not usable:
+        return {"latest_yoy": 0, "latest_mom": 0, "avg_yoy_3m": 0, "yoy_trend": 0}
+
+    # 最近 3 個月
+    last3 = usable[-3:]
+    latest = usable[-1]
+    avg_yoy_3m = sum(x["yoy_pct"] for x in last3) / len(last3)
+
+    # 趨勢：比較最後 3 個月的 YoY 斜率
+    if len(last3) >= 3:
+        if last3[-1]["yoy_pct"] > last3[-2]["yoy_pct"] > last3[-3]["yoy_pct"]:
+            trend = 1     # 持續加速
+        elif last3[-1]["yoy_pct"] < last3[-2]["yoy_pct"] < last3[-3]["yoy_pct"]:
+            trend = -1    # 持續減速
+        else:
+            trend = 0
+    else:
+        trend = 0
+
+    return {
+        "latest_yoy":  round(latest["yoy_pct"], 2),
+        "latest_mom":  round(latest["mom_pct"], 2),
+        "avg_yoy_3m":  round(avg_yoy_3m, 2),
+        "yoy_trend":   trend,
+    }
+
 # 分析師評等特徵名稱對應
 ANALYST_LABELS = {-2:"強烈賣出", -1:"賣出", 0:"中立", 1:"買入", 2:"強烈買入"}
 
@@ -2895,10 +2994,12 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
 
     # ── 抓 FinMind 籌碼資料（有 Token 才用）────────
     inst_map = {}
+    revenue_list = []
     try:
         token = _get_finmind_token()
         if token:
-            inst_map = fetch_institutional_finmind(code, start_dt, end_dt)
+            inst_map     = fetch_institutional_finmind(code, start_dt, end_dt)
+            revenue_list = fetch_monthly_revenue_finmind(code, start_dt)
     except: pass
 
     # 把籌碼資料對應到每一天
@@ -2969,19 +3070,58 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
         lo60=min(lo[-60:])  if len(lo)>=60  else min(lo)
         ppos=(c-lo60)/(hi60-lo60+0.001)
 
+        # ★ 突破前高特徵（飆股起漲點訊號）
+        # breakout_60: 今天是否站上 60 日新高（飆股典型起點）
+        # hi120:       是否站上 120 日新高（更強的多頭訊號）
+        # dist_from_high: 距離 60 日高點的百分比（0=剛創新高，負數=已回檔）
+        hi120 = max(hi[-120:]) if len(hi)>=120 else max(hi)
+        hi60_prev = max(hi[-61:-1]) if len(hi)>=61 else hi60  # 昨天之前的60日高
+        breakout_60  = 1 if c > hi60_prev else 0
+        breakout_120 = 1 if c > hi120 * 0.995 else 0  # 接近120日高
+        dist_from_high = (c - hi60) / hi60 * 100 if hi60 > 0 else 0
+
+        # 爆量突破：突破同時伴隨 2 倍量（3167 2月初的典型特徵）
+        vol_breakout = 1 if (breakout_60 == 1 and vo[-1] > _sma(vo[:-1], 20) * 2) else 0
+
         # 大盤相對強弱
         rel=0.0
         if mkt_closes and len(mkt_closes)>=11:
             mret10=(mkt_closes[-1]/mkt_closes[-11]-1)*100 if mkt_closes[-11]>0 else 0
             rel=ret10-mret10
 
-        # FinMind 籌碼特徵（近5日外資/投信淨買超，標準化）
+        # FinMind 籌碼特徵
         actual_idx = idx_offset + i
         avg_vol = _sma(vo, 20) or 1
+
+        # 近 5 日平均買超（標準化）
         f_net5 = sum(foreign_nets[max(0,actual_idx-4):actual_idx+1]) / avg_vol / 5 \
                  if foreign_nets and actual_idx < len(foreign_nets) else 0
         t_net5 = sum(trust_nets[max(0,actual_idx-4):actual_idx+1]) / avg_vol / 5 \
                  if trust_nets and actual_idx < len(trust_nets) else 0
+
+        # ★ 法人連續買超強度（飆股關鍵：法人連續吃貨）
+        # 近 20 日累計買超（標準化）
+        f_net20 = sum(foreign_nets[max(0,actual_idx-19):actual_idx+1]) / avg_vol / 20 \
+                  if foreign_nets and actual_idx < len(foreign_nets) else 0
+        t_net20 = sum(trust_nets[max(0,actual_idx-19):actual_idx+1]) / avg_vol / 20 \
+                  if trust_nets and actual_idx < len(trust_nets) else 0
+
+        # 近 10 日法人連續買超「天數比例」（多少天是淨買超）
+        f_buy_days = 0
+        t_buy_days = 0
+        if foreign_nets and actual_idx >= 9:
+            for j in range(max(0, actual_idx-9), actual_idx+1):
+                if j < len(foreign_nets) and foreign_nets[j] > 0: f_buy_days += 1
+                if j < len(trust_nets)   and trust_nets[j]   > 0: t_buy_days += 1
+        f_buy_ratio = f_buy_days / 10.0   # 0~1：外資近10日有幾天買超
+        t_buy_ratio = t_buy_days / 10.0   # 0~1：投信近10日有幾天買超
+
+        # 法人加權得分：外資+投信同步買超時訊號最強
+        inst_score = f_net20 + t_net20 * 1.5   # 投信權重較高（投信較少作假）
+
+        # ★ 基本面特徵：月營收年增率（抓飆股關鍵）
+        ref_date = recs[i]["date"]
+        rev_feat = get_revenue_features(revenue_list, ref_date)
 
         return [
             (c-ma5)/ma5*100   if ma5>0  else 0,
@@ -2996,7 +3136,21 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
             ret3, ret5, ret10, ret20, atr,
             red_k, consec, ppos,
             k-d, rsi-50, rel,
-            f_net5, t_net5,          # FinMind 籌碼（共 25 個特徵）
+            f_net5, t_net5,          # FinMind 籌碼：近 5 日
+            # ★ 法人連續買超（共 5 個）—— 飆股關鍵
+            f_net20, t_net20,        # 近 20 日平均買超
+            f_buy_ratio, t_buy_ratio,# 近 10 日連續買超天數比例
+            inst_score,              # 法人綜合分數
+            # ★ 基本面：月營收 YoY、MoM、3 個月平均 YoY、YoY 趨勢
+            rev_feat["latest_yoy"],
+            rev_feat["latest_mom"],
+            rev_feat["avg_yoy_3m"],
+            rev_feat["yoy_trend"],
+            # ★ 突破前高：60日/120日新高、距高點%、爆量突破（共 38 個特徵）
+            breakout_60,
+            breakout_120,
+            dist_from_high,
+            vol_breakout,
         ]
 
     # 建立訓練資料
@@ -3101,6 +3255,55 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
         elif ret5 < -5: reasons_bear.append(f"近5日跌幅 {ret5:.1f}%，短線偏弱")
         if ret20 > 10:  reasons_bull.append(f"近20日漲幅 +{ret20:.1f}%，中期趨勢向上")
         elif ret20 < -10: reasons_bear.append(f"近20日跌幅 {ret20:.1f}%，中期趨勢向下")
+
+    # ★ 7. 法人連續買超（飆股關鍵訊號）
+    if cf and len(cf) >= 29:
+        f_net20_v    = cf[25]  # 外資近20日
+        t_net20_v    = cf[26]  # 投信近20日
+        f_buy_ratio_v= cf[27]  # 外資連續買超比例
+        t_buy_ratio_v= cf[28]  # 投信連續買超比例
+
+        # 外資 + 投信同步連續買超（最強訊號）
+        if f_buy_ratio_v >= 0.7 and t_buy_ratio_v >= 0.7:
+            reasons_bull.append(f"💎 外資+投信連續買超（外資{int(f_buy_ratio_v*10)}/10日、投信{int(t_buy_ratio_v*10)}/10日）")
+        elif t_buy_ratio_v >= 0.7:
+            reasons_bull.append(f"投信連續買超 {int(t_buy_ratio_v*10)}/10 日（投信認養訊號）")
+        elif f_buy_ratio_v >= 0.7:
+            reasons_bull.append(f"外資連續買超 {int(f_buy_ratio_v*10)}/10 日")
+        elif f_buy_ratio_v <= 0.2 and t_buy_ratio_v <= 0.2:
+            reasons_bear.append("法人連續賣超（籌碼鬆動）")
+
+    # ★ 8. 基本面（月營收 YoY）—— 飆股關鍵指標
+    if revenue_list:
+        rev_feat = get_revenue_features(revenue_list, records[-1]["date"])
+        latest_yoy = rev_feat["latest_yoy"]
+        avg_yoy_3m = rev_feat["avg_yoy_3m"]
+        trend      = rev_feat["yoy_trend"]
+        if latest_yoy >= 50:
+            reasons_bull.append(f"🔥 月營收年增 +{latest_yoy:.0f}%（飆股基本面訊號）")
+        elif latest_yoy >= 20:
+            reasons_bull.append(f"月營收年增 +{latest_yoy:.0f}%（成長動能強）")
+        elif latest_yoy <= -20:
+            reasons_bear.append(f"月營收年減 {latest_yoy:.0f}%（基本面轉弱）")
+        if avg_yoy_3m >= 30 and trend == 1:
+            reasons_bull.append(f"近3月營收 YoY 持續加速（均 +{avg_yoy_3m:.0f}%），趨勢向上")
+        elif trend == -1 and avg_yoy_3m < 0:
+            reasons_bear.append(f"近3月營收 YoY 持續減速，基本面惡化")
+
+    # ★ 9. 突破前高訊號 —— 飆股起漲點
+    if cf and len(cf) >= 38:
+        brk60     = cf[34]   # breakout_60
+        brk120    = cf[35]   # breakout_120
+        dist_high = cf[36]   # dist_from_high
+        vol_brk   = cf[37]   # vol_breakout
+        if vol_brk == 1:
+            reasons_bull.append("🚀 爆量突破 60 日新高（典型飆股起漲訊號）")
+        elif brk120 == 1:
+            reasons_bull.append("站上 120 日新高（長線多頭確認）")
+        elif brk60 == 1:
+            reasons_bull.append("突破 60 日新高（中線動能轉強）")
+        elif dist_high < -15:
+            reasons_bear.append(f"距 60 日高點已回檔 {abs(dist_high):.0f}%（動能趨弱）")
 
     # ── 預估漲跌幅（用歷史相似情境的平均報酬）──────
     # 找出訓練資料中上漲機率 >= rise_prob 的樣本，計算其後15日平均報酬
