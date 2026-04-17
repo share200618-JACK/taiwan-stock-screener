@@ -24,6 +24,108 @@ from collections import defaultdict
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# ══════════════════════════════════════════════════════
+# Supabase 永久儲存（分析結果不怕 Render 重啟消失）
+# ══════════════════════════════════════════════════════
+# 設定方式：Render Dashboard → Environment → 新增以下兩個變數：
+#   SUPABASE_URL  = https://xxx.supabase.co
+#   SUPABASE_KEY  = 你的 anon public key
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+def _sb_headers():
+    return {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type":  "application/json",
+        "Prefer":        "return=representation",
+    }
+
+def supabase_save_analysis(data):
+    """把每日分析結果存到 Supabase analysis_results 資料表"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("[Supabase] 未設定，跳過儲存")
+        return False
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        payload = {
+            "date":         datetime.now().strftime("%Y-%m-%d"),
+            "time":         data.get("time", ""),
+            "model_ver":    data.get("model_ver", "v2"),
+            "total_scanned":data.get("total_scanned", 0),
+            "total_analyzed":data.get("total_analyzed", 0),
+            "avg_accuracy": data.get("avg_accuracy", 0),
+            "bullish":      data.get("bullish", 0),
+            "bearish":      data.get("bearish", 0),
+            "stocks":       json.dumps(data.get("stocks", []), ensure_ascii=False),
+        }
+        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
+        if r.status_code in (200, 201):
+            print(f"[Supabase] ✅ 分析結果已儲存（{len(data.get('stocks',[]))} 支推薦）")
+            return True
+        else:
+            print(f"[Supabase] ❌ 儲存失敗 {r.status_code}: {r.text[:200]}")
+            return False
+    except Exception as e:
+        print(f"[Supabase] ❌ 儲存例外: {e}")
+        return False
+
+def supabase_load_latest(date=None):
+    """
+    從 Supabase 讀取最新一筆分析結果。
+    date: 指定日期（格式 YYYY-MM-DD），None = 最新一筆
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        params = {
+            "order": "created_at.desc",
+            "limit": "1",
+        }
+        if date:
+            params["date"] = f"eq.{date}"
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            rows = r.json()
+            if rows:
+                row = rows[0]
+                # 把 stocks JSON 字串解回 list
+                if isinstance(row.get("stocks"), str):
+                    row["stocks"] = json.loads(row["stocks"])
+                print(f"[Supabase] ✅ 讀取成功：{row.get('date')} {row.get('time')}")
+                return row
+        print(f"[Supabase] 讀取失敗 {r.status_code}")
+        return None
+    except Exception as e:
+        print(f"[Supabase] 讀取例外: {e}")
+        return None
+
+def supabase_load_history(limit=30):
+    """讀取最近 N 筆分析紀錄（用於顯示歷史頁面）"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        params = {
+            "select": "date,time,model_ver,total_scanned,total_analyzed,avg_accuracy,bullish,bearish,stocks",
+            "order":  "created_at.desc",
+            "limit":  str(limit),
+        }
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            rows = r.json()
+            for row in rows:
+                if isinstance(row.get("stocks"), str):
+                    row["stocks"] = json.loads(row["stocks"])
+            return rows
+        return []
+    except Exception as e:
+        print(f"[Supabase] 歷史讀取失敗: {e}")
+        return []
+
+
 app = Flask(__name__, static_folder=".", static_url_path="")
 
 @app.after_request
@@ -3216,6 +3318,11 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         global _latest_analysis_result
         _latest_analysis_result = analysis_out
         print(f"  ✅ 分析結果已快取（{len(top)} 支推薦）")
+        # ★ 永久儲存到 Supabase（重啟後也能讀回）
+        threading.Thread(
+            target=supabase_save_analysis,
+            args=(analysis_out,), daemon=True
+        ).start()
     except Exception as e:
         import traceback; traceback.print_exc()
         _analyze_tasks[task_id].update({"done":True,"error":str(e)})
@@ -3695,20 +3802,67 @@ def sector_rotation_api():
 
 @app.route("/api/analyze/latest")
 def get_latest_analysis():
-    """讀取記憶體中的最新分析結果（或備用 JSON 檔）"""
-    # 優先讀記憶體快取
+    """
+    讀取最新分析結果，優先順序：
+    1. 記憶體快取（最快）
+    2. Supabase 資料庫（重啟後仍有資料）
+    3. 本地 JSON 備用（本機開發）
+    """
+    # 1. 記憶體快取
+    global _latest_analysis_result
     if _latest_analysis_result:
-        return jsonify(_latest_analysis_result)
-    # 備用：嘗試讀本地 JSON 檔（本機開發用）
+        return jsonify({**_latest_analysis_result, "source": "memory"})
+
+    # 2. Supabase 資料庫
+    sb_data = supabase_load_latest()
+    if sb_data:
+        _latest_analysis_result = sb_data  # 同時回補記憶體
+        return jsonify({**sb_data, "source": "database"})
+
+    # 3. 本地 JSON（本機開發備用）
     result_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_result.json")
     try:
         if os.path.exists(result_file):
             with open(result_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            return jsonify(data)
+            return jsonify({**data, "source": "file"})
     except Exception:
         pass
-    return jsonify({"error": "尚無分析結果，請先執行 auto_analysis.py"}), 404
+
+    return jsonify({"error": "尚無分析結果，請點「開始 AI 分析」或等待 20:00 自動執行"}), 404
+
+@app.route("/api/analyze/history")
+def get_analysis_history():
+    """讀取最近 30 天的分析紀錄"""
+    history = supabase_load_history(limit=30)
+    if not history:
+        return jsonify({"error": "尚無歷史紀錄，或 Supabase 未設定"}), 404
+    # 每筆只回傳摘要（不含完整 stocks 詳細資料，節省流量）
+    summary = []
+    for row in history:
+        stocks = row.get("stocks", [])
+        summary.append({
+            "date":           row.get("date",""),
+            "time":           row.get("time",""),
+            "model_ver":      row.get("model_ver",""),
+            "total_scanned":  row.get("total_scanned",0),
+            "total_analyzed": row.get("total_analyzed",0),
+            "avg_accuracy":   row.get("avg_accuracy",0),
+            "bullish":        row.get("bullish",0),
+            "bearish":        row.get("bearish",0),
+            "top3":           [{"code":s.get("code"),"name":s.get("name"),
+                                "rise_prob":s.get("rise_prob")} for s in stocks[:3]],
+            "stock_count":    len(stocks),
+        })
+    return jsonify({"history": summary, "count": len(summary)})
+
+@app.route("/api/analyze/history/<date>")
+def get_analysis_by_date(date):
+    """讀取指定日期的完整分析結果（格式：YYYY-MM-DD）"""
+    row = supabase_load_latest(date=date)
+    if not row:
+        return jsonify({"error": f"找不到 {date} 的分析紀錄"}), 404
+    return jsonify(row)
 
 @app.route("/api/analyze/run", methods=["POST"])
 def trigger_auto_analysis():
