@@ -1509,6 +1509,234 @@ def get_revenue_features(rev_list, ref_date):
         "yoy_trend":   trend,
     }
 
+def fetch_financial_finmind(code, start_date):
+    """
+    FinMind 綜合損益表（季報）—— 抓 EPS 與獲利品質
+    dataset: TaiwanStockFinancialStatements
+    欄位: date, stock_id, type(EPS/GrossProfit/OperatingIncome/...), value, origin_name
+
+    FinMind 的財報是「每季一筆」，我們提取：
+      - EPS（每股盈餘）
+      - GrossProfit（毛利）→ 可推算毛利率
+      - OperatingIncome（營業利益）
+      - Revenue（營收，但用月營收更準）
+      - IncomeAfterTax（稅後淨利）
+
+    回傳: sorted list of {date, eps, gross_profit, operating_income, ...}
+    """
+    rows = fetch_finmind("TaiwanStockFinancialStatements", code, start_date)
+    if not rows:
+        return []
+
+    # 依日期分組
+    quarters = {}
+    for row in rows:
+        date = row.get("date","")[:10]
+        typ  = row.get("type","")
+        try:
+            val = float(row.get("value", 0) or 0)
+        except:
+            val = 0
+        if date not in quarters:
+            quarters[date] = {"date": date}
+        # 映射重要欄位
+        if   typ == "EPS":              quarters[date]["eps"] = val
+        elif typ == "GrossProfit":      quarters[date]["gross_profit"] = val
+        elif typ == "OperatingIncome":  quarters[date]["operating_income"] = val
+        elif typ == "IncomeAfterTax":   quarters[date]["net_income"] = val
+        elif typ == "Revenue":          quarters[date]["revenue"] = val
+
+    result = sorted(quarters.values(), key=lambda x: x["date"])
+    # 計算 EPS 的年增率（與去年同季比較）
+    for i, q in enumerate(result):
+        q["eps_yoy"] = 0
+        q["gross_margin"] = 0
+        # 毛利率 = 毛利 / 營收
+        rev = q.get("revenue", 0)
+        gp  = q.get("gross_profit", 0)
+        if rev > 0:
+            q["gross_margin"] = round(gp / rev * 100, 2)
+        # EPS 年增率：找 4 季前（約 1 年前）的 EPS
+        cur_eps = q.get("eps", 0)
+        if i >= 4:
+            prev_eps = result[i-4].get("eps", 0)
+            if prev_eps != 0:
+                q["eps_yoy"] = round((cur_eps - prev_eps) / abs(prev_eps) * 100, 2)
+    return result
+
+def get_financial_features(fin_list, ref_date):
+    """
+    取得指定日期當下可用的最新財報特徵（避免未來資料洩漏）。
+    台灣規定：季報要在季末後 45 天內公布（Q1→5/15、Q2→8/14、Q3→11/14、Q4→3/31）
+
+    回傳 4 個特徵：
+      - latest_eps:         最新一季 EPS
+      - eps_yoy:            最新一季 EPS 年增率（與去年同季比）
+      - gross_margin:       毛利率 %
+      - gross_margin_trend: 毛利率趨勢（+1 上升、0 持平、-1 下降）
+    """
+    default = {"latest_eps": 0, "eps_yoy": 0,
+               "gross_margin": 0, "gross_margin_trend": 0}
+    if not fin_list or not ref_date:
+        return default
+
+    try:
+        ref_dt = datetime.strptime(ref_date[:10], "%Y-%m-%d")
+    except:
+        return default
+
+    # 只用 ref_date 之前 60 天（保守估計公告延遲）公布的季報
+    usable = []
+    for q in fin_list:
+        try:
+            q_dt = datetime.strptime(q["date"][:10], "%Y-%m-%d")
+            pub_dt = q_dt + timedelta(days=60)  # 公告延遲 60 天
+            if pub_dt <= ref_dt:
+                usable.append(q)
+        except: continue
+
+    if not usable:
+        return default
+
+    latest = usable[-1]
+    # 毛利率趨勢（近 3 季）
+    trend = 0
+    if len(usable) >= 3:
+        last3 = usable[-3:]
+        gm_vals = [q.get("gross_margin", 0) for q in last3]
+        if gm_vals[-1] > gm_vals[-2] > gm_vals[-3]:   trend = 1
+        elif gm_vals[-1] < gm_vals[-2] < gm_vals[-3]: trend = -1
+
+    return {
+        "latest_eps":         round(latest.get("eps", 0), 2),
+        "eps_yoy":            round(latest.get("eps_yoy", 0), 2),
+        "gross_margin":       round(latest.get("gross_margin", 0), 2),
+        "gross_margin_trend": trend,
+    }
+
+# ══════════════════════════════════════════════════════
+# 產業輪動系統
+# ══════════════════════════════════════════════════════
+
+# 全域快取
+_sector_map    = {}      # code -> industry_category
+_sector_cache  = {}      # industry_category -> 近期漲幅統計
+_sector_loaded_date = "" # 最後載入日期
+
+# 台股主要類股名稱（用於顯示）
+SECTOR_DISPLAY = {
+    "半導體業": "半導體",   "電腦及週邊設備業": "電腦週邊",
+    "電子零組件業": "電子零件", "光電業": "光電",
+    "其他電子業": "其他電子", "通信網路業": "通信網路",
+    "電機機械": "電機機械",  "化學工業": "化學",
+    "鋼鐵工業": "鋼鐵",     "航運業": "航運",
+    "金融保險業": "金融",    "建材營造業": "建材營造",
+    "生技醫療業": "生技醫療", "食品工業": "食品",
+    "紡織纖維": "紡織",      "汽車工業": "汽車",
+}
+
+def _load_sector_map():
+    """從 FinMind TaiwanStockInfo 建立股票代號 → 產業別對照表"""
+    global _sector_map, _sector_loaded_date
+    today = datetime.today().strftime("%Y-%m-%d")
+    if _sector_loaded_date == today and _sector_map:
+        return
+    try:
+        params = {"dataset": "TaiwanStockInfo"}
+        token  = _get_finmind_token()
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        r = SESSION.get(FINMIND_URL, params=params, headers=headers, timeout=15)
+        data = r.json()
+        if data.get("status") == 200:
+            for row in data.get("data", []):
+                code = str(row.get("stock_id","")).strip()
+                cat  = row.get("industry_category","").strip()
+                if code and cat:
+                    _sector_map[code] = cat
+            _sector_loaded_date = today
+            print(f"[產業表] 載入 {len(_sector_map)} 支股票的產業別")
+    except Exception as e:
+        print(f"[產業表] 載入失敗: {e}")
+
+def get_sector(code):
+    """取得股票的產業別"""
+    if not _sector_map:
+        _load_sector_map()
+    return _sector_map.get(str(code), "其他")
+
+def compute_sector_rotation(all_stocks_data):
+    """
+    計算各類股近期輪動強弱。
+    all_stocks_data: [{code, chg_pct, price, ...}, ...]（來自 TWSE 當日資料）
+
+    回傳: {
+      industry_category: {
+        "avg_chg":    float,  # 類股平均漲跌幅
+        "up_ratio":   float,  # 上漲股比例
+        "rank":       int,    # 強弱排名（1=最強）
+        "stock_count":int,
+      }
+    }
+    """
+    if not _sector_map:
+        _load_sector_map()
+
+    # 依產業分組計算漲跌
+    sector_changes = {}
+    for s in all_stocks_data:
+        code    = str(s.get("code",""))
+        chg_pct = float(s.get("chg_pct", s.get("pct", 0)))
+        sector  = _sector_map.get(code, "其他")
+        if sector not in sector_changes:
+            sector_changes[sector] = []
+        sector_changes[sector].append(chg_pct)
+
+    result = {}
+    for sector, changes in sector_changes.items():
+        if len(changes) < 3:  # 不足 3 支不計算
+            continue
+        avg_chg  = round(sum(changes) / len(changes), 2)
+        up_count = sum(1 for c in changes if c > 0)
+        result[sector] = {
+            "avg_chg":     avg_chg,
+            "up_ratio":    round(up_count / len(changes), 2),
+            "stock_count": len(changes),
+        }
+
+    # 依平均漲幅排名（用 avg_chg + up_ratio 加權）
+    sorted_sectors = sorted(
+        result.items(),
+        key=lambda x: x[1]["avg_chg"] * 0.6 + x[1]["up_ratio"] * 5 * 0.4,
+        reverse=True
+    )
+    for rank, (sector, data) in enumerate(sorted_sectors, 1):
+        result[sector]["rank"] = rank
+        result[sector]["is_hot"] = rank <= 5  # 前 5 名算「熱門類股」
+
+    return result
+
+def get_sector_feature(code, sector_rotation):
+    """
+    取得個股所屬類股的輪動特徵。
+    回傳 3 個特徵：
+      - sector_rank_pct:  類股排名百分位（0=最強 1=最弱）
+      - sector_avg_chg:   類股平均漲跌幅
+      - sector_up_ratio:  類股上漲股比例
+    """
+    sector  = _sector_map.get(str(code), "")
+    data    = sector_rotation.get(sector, {})
+    n       = len(sector_rotation)
+    rank    = data.get("rank", n // 2)
+    rank_pct= (rank - 1) / max(n - 1, 1)  # 0=最強, 1=最弱
+    return {
+        "sector_name":      sector,
+        "sector_rank_pct":  round(1 - rank_pct, 3),  # 反轉：1=最強, 0=最弱
+        "sector_avg_chg":   data.get("avg_chg", 0),
+        "sector_up_ratio":  data.get("up_ratio", 0.5),
+        "sector_is_hot":    1 if data.get("is_hot", False) else 0,
+    }
+
+
 # 分析師評等特徵名稱對應
 ANALYST_LABELS = {-2:"強烈賣出", -1:"賣出", 0:"中立", 1:"買入", 2:"強烈買入"}
 
@@ -2936,6 +3164,18 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             except Exception as e:
                 print(f"  大盤抓取失敗: {e}")
 
+        # ── 產業輪動計算（分析前先算好，不用每支股票重算）──
+        sector_rotation = {}
+        if is_v2:
+            cb("計算產業輪動強弱...", 4.5)
+            try:
+                _load_sector_map()
+                sector_rotation = compute_sector_rotation(stocks)
+                hot_sectors = [s for s, d in sector_rotation.items() if d.get("is_hot")]
+                print(f"  熱門類股：{', '.join(hot_sectors[:5])}")
+            except Exception as e:
+                print(f"  產業輪動計算失敗: {e}")
+
         cb(f"開始{'v2.0 強化' if is_v2 else 'v1.0 基礎'}分析 {len(stocks)} 支股票...", 5)
         results=[]
         total=len(stocks)
@@ -2944,7 +3184,8 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             cb(f"{'[v2]' if is_v2 else '[v1]'} {s['code']} {s['name']} ({idx+1}/{total})", pct_done)
             try:
                 if is_v2:
-                    r = _analyze_one_v2(s["code"], s["name"], market_closes, history_months)
+                    r = _analyze_one_v2(s["code"], s["name"], market_closes, history_months,
+                                        sector_rotation=sector_rotation)
                 else:
                     r = _analyze_one(s["code"], s["name"])
                 if r and r["confidence"] > 5:   # 放寬門檻，讓更多股票進入排序
@@ -2979,8 +3220,8 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         import traceback; traceback.print_exc()
         _analyze_tasks[task_id].update({"done":True,"error":str(e)})
 
-def _analyze_one_v2(code, name, market_closes, history_months=24):
-    """v2.0 強化版：28個特徵 + 大盤相對強弱 + 時間序列驗證 + FinMind籌碼"""
+def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotation=None):
+    """v2.0 強化版：42個特徵 + 產業輪動 + 大盤相對強弱 + FinMind籌碼 + 基本面"""
     start_dt = (datetime.today()-timedelta(days=history_months*31)).strftime("%Y-%m-%d")
     end_dt   = datetime.today().strftime("%Y-%m-%d")
     records  = fetch_history_range(code, start_dt, end_dt)
@@ -2995,11 +3236,13 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
     # ── 抓 FinMind 籌碼資料（有 Token 才用）────────
     inst_map = {}
     revenue_list = []
+    financial_list = []
     try:
         token = _get_finmind_token()
         if token:
-            inst_map     = fetch_institutional_finmind(code, start_dt, end_dt)
-            revenue_list = fetch_monthly_revenue_finmind(code, start_dt)
+            inst_map       = fetch_institutional_finmind(code, start_dt, end_dt)
+            revenue_list   = fetch_monthly_revenue_finmind(code, start_dt)
+            financial_list = fetch_financial_finmind(code, start_dt)
     except: pass
 
     # 把籌碼資料對應到每一天
@@ -3122,6 +3365,10 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
         # ★ 基本面特徵：月營收年增率（抓飆股關鍵）
         ref_date = recs[i]["date"]
         rev_feat = get_revenue_features(revenue_list, ref_date)
+        # ★ 財報特徵：EPS、毛利率
+        fin_feat = get_financial_features(financial_list, ref_date)
+        # ★ 產業輪動特徵
+        sec_feat = get_sector_feature(code, sector_rotation or {})
 
         return [
             (c-ma5)/ma5*100   if ma5>0  else 0,
@@ -3146,11 +3393,20 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
             rev_feat["latest_mom"],
             rev_feat["avg_yoy_3m"],
             rev_feat["yoy_trend"],
-            # ★ 突破前高：60日/120日新高、距高點%、爆量突破（共 38 個特徵）
+            # ★ 財報：EPS、EPS年增率、毛利率、毛利率趨勢
+            fin_feat["latest_eps"],
+            fin_feat["eps_yoy"],
+            fin_feat["gross_margin"],
+            fin_feat["gross_margin_trend"],
+            # ★ 突破前高：60日/120日新高、距高點%、爆量突破
             breakout_60,
             breakout_120,
             dist_from_high,
             vol_breakout,
+            # ★ 產業輪動：類股強弱排名、平均漲幅、上漲股比例（共 45 個特徵）
+            sec_feat["sector_rank_pct"],
+            sec_feat["sector_avg_chg"],
+            sec_feat["sector_up_ratio"],
         ]
 
     # 建立訓練資料
@@ -3290,12 +3546,34 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
         elif trend == -1 and avg_yoy_3m < 0:
             reasons_bear.append(f"近3月營收 YoY 持續減速，基本面惡化")
 
+    # ★ 8b. 財報（EPS、毛利率）—— 獲利品質
+    if financial_list:
+        fin_feat = get_financial_features(financial_list, records[-1]["date"])
+        eps        = fin_feat["latest_eps"]
+        eps_yoy    = fin_feat["eps_yoy"]
+        gm         = fin_feat["gross_margin"]
+        gm_trend   = fin_feat["gross_margin_trend"]
+
+        if eps_yoy >= 100:
+            reasons_bull.append(f"💰 EPS 年增 +{eps_yoy:.0f}%（獲利爆發）")
+        elif eps_yoy >= 30:
+            reasons_bull.append(f"EPS 年增 +{eps_yoy:.0f}%（獲利成長強）")
+        elif eps_yoy <= -30 and eps < 0:
+            reasons_bear.append(f"EPS 年減 {eps_yoy:.0f}% 且本季轉虧（{eps}元）")
+        elif eps_yoy <= -30:
+            reasons_bear.append(f"EPS 年減 {eps_yoy:.0f}%（獲利衰退）")
+
+        if gm >= 40 and gm_trend == 1:
+            reasons_bull.append(f"毛利率 {gm:.0f}% 且持續提升（競爭優勢強）")
+        elif gm_trend == -1 and gm < 20:
+            reasons_bear.append(f"毛利率 {gm:.0f}% 且持續下滑（競爭力減弱）")
+
     # ★ 9. 突破前高訊號 —— 飆股起漲點
-    if cf and len(cf) >= 38:
-        brk60     = cf[34]   # breakout_60
-        brk120    = cf[35]   # breakout_120
-        dist_high = cf[36]   # dist_from_high
-        vol_brk   = cf[37]   # vol_breakout
+    if cf and len(cf) >= 43:
+        brk60     = cf[39]   # breakout_60
+        brk120    = cf[40]   # breakout_120
+        dist_high = cf[41]   # dist_from_high
+        vol_brk   = cf[42]   # vol_breakout
         if vol_brk == 1:
             reasons_bull.append("🚀 爆量突破 60 日新高（典型飆股起漲訊號）")
         elif brk120 == 1:
@@ -3304,6 +3582,17 @@ def _analyze_one_v2(code, name, market_closes, history_months=24):
             reasons_bull.append("突破 60 日新高（中線動能轉強）")
         elif dist_high < -15:
             reasons_bear.append(f"距 60 日高點已回檔 {abs(dist_high):.0f}%（動能趨弱）")
+
+    # ★ 10. 產業輪動
+    sec_feat_now = get_sector_feature(code, sector_rotation or {})
+    sector_name  = sec_feat_now["sector_name"]
+    rank_pct     = sec_feat_now["sector_rank_pct"]
+    avg_chg      = sec_feat_now["sector_avg_chg"]
+    is_hot       = sec_feat_now["sector_is_hot"]
+    if is_hot and avg_chg > 0:
+        reasons_bull.append(f"🏆 所屬類股「{sector_name}」為當日強勢產業（平均漲 +{avg_chg:.1f}%）")
+    elif rank_pct < 0.2 and avg_chg < -0.5:
+        reasons_bear.append(f"所屬類股「{sector_name}」當日偏弱（平均漲跌 {avg_chg:.1f}%）")
 
     # ── 預估漲跌幅（用歷史相似情境的平均報酬）──────
     # 找出訓練資料中上漲機率 >= rise_prob 的樣本，計算其後15日平均報酬
@@ -3367,6 +3656,42 @@ def analyze_progress(task_id):
     prog = _analyze_tasks.get(task_id)
     if not prog: return jsonify({"error":"找不到任務"}), 404
     return jsonify(prog)
+
+@app.route("/api/sector/rotation")
+def sector_rotation_api():
+    """取得當日產業輪動熱度排行"""
+    try:
+        # 用 TWSE 當日資料計算
+        resp = SESSION.get(
+            "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+            timeout=15)
+        resp.raise_for_status()
+        stocks_today = []
+        for r in resp.json():
+            code  = r.get("Code","")
+            price = safe_float(r.get("ClosingPrice"))
+            chg   = safe_float(r.get("Change"))
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            prev  = price - chg
+            pct   = round(chg/prev*100,2) if prev>0 else 0
+            stocks_today.append({"code": code, "chg_pct": pct})
+
+        _load_sector_map()
+        rotation = compute_sector_rotation(stocks_today)
+
+        # 整理成排行榜格式
+        ranking = sorted(
+            [{"sector": s, **d} for s, d in rotation.items()],
+            key=lambda x: x["avg_chg"] * 0.6 + x["up_ratio"] * 5 * 0.4,
+            reverse=True
+        )
+        return jsonify({
+            "ranking": ranking[:20],
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "total_sectors": len(rotation),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/analyze/latest")
 def get_latest_analysis():
