@@ -187,15 +187,28 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
     <div>
       <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
-      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 20:00 自動執行，結果直接顯示在此</div>
+      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 20:00 自動執行・結果永久儲存不消失</div>
     </div>
-    <button class="run-btn" style="padding:8px 18px;font-size:.82rem;" onclick="loadLatestResult()">📂 載入最新結果</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="run-btn" style="padding:8px 18px;font-size:.82rem;background:linear-gradient(135deg,#6b21a8,#a855f7);" onclick="loadLatestResult()">📂 最新結果</button>
+      <button class="run-btn" style="padding:8px 18px;font-size:.82rem;background:linear-gradient(135deg,#1e3a5f,#3d8bff);" onclick="loadHistory()">📜 歷史紀錄</button>
+    </div>
   </div>
-  <!-- 狀態列：頁面載入後自動檢查 -->
+  <!-- 狀態列 -->
   <div id="autoResultStatus" style="margin-top:10px;font-size:.76rem;color:var(--dim);display:none;">
     <span id="autoStatusIcon">⏳</span>
     <span id="autoStatusText">檢查中...</span>
   </div>
+</div>
+
+<!-- 歷史紀錄面板 -->
+<div id="historyPanel" style="display:none;background:var(--s1);border:1px solid var(--bd);border-radius:12px;padding:16px 18px;margin-bottom:18px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <div style="font-size:.88rem;font-weight:700;color:var(--blu);">📜 歷史分析紀錄</div>
+    <button onclick="document.getElementById('historyPanel').style.display='none'"
+            style="background:none;border:none;color:var(--dim);cursor:pointer;font-size:1.1rem;">✕</button>
+  </div>
+  <div id="historyList" style="font-size:.78rem;"></div>
 </div>
 
 <!-- 進度條 -->
@@ -308,6 +321,71 @@ async function checkAutoResultStatus() {
     iconEl.textContent = '🔴';
     textEl.textContent = '無法連線到伺服器';
     textEl.style.color = 'var(--red)';
+  }
+}
+
+async function loadHistory() {
+  const panel = document.getElementById('historyPanel');
+  const list  = document.getElementById('historyList');
+  panel.style.display = 'block';
+  list.innerHTML = '<div style="color:var(--dim);padding:12px 0;">⏳ 載入中...</div>';
+
+  try {
+    const r    = await fetch(`${API}/api/analyze/history`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+
+    if (!data.history || data.history.length === 0) {
+      list.innerHTML = '<div style="color:var(--dim);">尚無歷史紀錄</div>';
+      return;
+    }
+
+    list.innerHTML = data.history.map(row => {
+      const top3 = (row.top3||[]).map(s =>
+        `<span style="background:rgba(168,85,247,.15);border-radius:5px;padding:2px 7px;margin-right:4px;color:var(--pur);">${s.code} ${s.name} <span style="color:var(--gold)">${s.rise_prob}%</span></span>`
+      ).join('');
+      const bullPct = row.total_analyzed > 0
+        ? Math.round(row.bullish / row.total_analyzed * 100) : 0;
+      return `
+        <div style="border:1px solid var(--bd);border-radius:9px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;"
+             onmouseover="this.style.borderColor='var(--pur)'" onmouseout="this.style.borderColor='var(--bd)'"
+             onclick="loadDateResult('${row.date}')">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+            <div style="font-weight:700;color:var(--txt);">📅 ${row.date}
+              <span style="font-size:.72rem;color:var(--dim);margin-left:6px;">${row.time}</span>
+            </div>
+            <div style="font-size:.72rem;color:var(--dim);">
+              掃描 ${row.total_scanned} 支・分析 ${row.total_analyzed} 支・
+              <span style="color:${bullPct>=50?'var(--grn)':'var(--red)'}">看漲 ${bullPct}%</span>
+            </div>
+          </div>
+          <div style="margin-bottom:5px;">${top3 || '<span style="color:var(--dim)">無推薦</span>'}</div>
+          <div style="font-size:.71rem;color:var(--dim);">
+            平均準確率 ${row.avg_accuracy}%・模型 ${row.model_ver}
+            <span style="color:var(--blu);margin-left:8px;">點擊查看完整結果 →</span>
+          </div>
+        </div>`;
+    }).join('');
+  } catch(e) {
+    list.innerHTML = `<div style="color:var(--red);">❌ ${e.message}</div>`;
+  }
+}
+
+async function loadDateResult(date) {
+  document.getElementById('historyPanel').style.display = 'none';
+  document.getElementById('emptyState').style.display = 'none';
+  setProgress(50, `載入 ${date} 的分析結果...`);
+  document.getElementById('progressWrap').style.display = 'block';
+  try {
+    const r    = await fetch(`${API}/api/analyze/history/${date}`);
+    const data = await r.json();
+    if (data.error) throw new Error(data.error);
+    document.getElementById('progressWrap').style.display = 'none';
+    data.model_ver = data.model_ver || 'v2';
+    renderResults(data);
+  } catch(e) {
+    document.getElementById('progressWrap').style.display = 'none';
+    showError(e.message);
   }
 }
 
