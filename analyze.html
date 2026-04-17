@@ -187,7 +187,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
     <div>
       <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
-      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 20:00 自動執行・結果永久儲存不消失</div>
+      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 22:00 自動執行・全上市櫃掃描・結果永久儲存不消失</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="run-btn" style="padding:8px 18px;font-size:.82rem;background:linear-gradient(135deg,#6b21a8,#a855f7);" onclick="loadLatestResult()">📂 最新結果</button>
@@ -308,7 +308,7 @@ async function checkAutoResultStatus() {
     const data = await r.json();
     if (data.error) {
       iconEl.textContent = '⚠️';
-      textEl.textContent = '尚無分析結果，請點「開始 AI 分析」或等待 20:00 自動執行';
+      textEl.textContent = '尚無分析結果，請點「開始 AI 分析」或等待 22:00 自動執行';
       textEl.style.color = 'var(--gold)';
     } else {
       const stk = (data.stocks||[]).length;

@@ -3829,7 +3829,7 @@ def get_latest_analysis():
     except Exception:
         pass
 
-    return jsonify({"error": "尚無分析結果，請點「開始 AI 分析」或等待 20:00 自動執行"}), 404
+    return jsonify({"error": "尚無分析結果，請點「開始 AI 分析」或等待 22:00 自動執行"}), 404
 
 @app.route("/api/analyze/history")
 def get_analysis_history():
@@ -4036,10 +4036,10 @@ def get_prices():
 # 每日自動分析（排程 + _run_auto_analysis）
 # ══════════════════════════════════════════════════════
 
-def _run_auto_analysis(max_stocks=80, top_n=10, model_ver='v2'):
+def _run_auto_analysis(max_stocks=0, top_n=10, model_ver='v2'):  # 0=全部上市櫃
     """
     在記憶體中執行全市場 AI 分析，結果存到 _latest_analysis_result。
-    由每日排程（20:00）或手動 POST /api/analyze/run 觸發。
+    由每日排程（22:00）或手動 POST /api/analyze/run 觸發。
     """
     global _latest_analysis_result
     import uuid
@@ -4067,22 +4067,22 @@ def _run_auto_analysis(max_stocks=80, top_n=10, model_ver='v2'):
 
 def _start_daily_schedule():
     """
-    每天 20:00 台灣時間（UTC+8）自動執行分析。
-    在 Render 上 UTC 時間 = 台灣時間 - 8，所以 20:00 CST = 12:00 UTC。
+    每天 22:00 台灣時間（UTC+8）自動執行分析。
+    在 Render 上 UTC 時間 = 台灣時間 - 8，所以 22:00 CST = 14:00 UTC。
     """
     import time as _time
     def _scheduler():
-        print("[排程] 每日自動分析排程已啟動（台灣時間 20:00）")
+        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00）")
         while True:
             try:
                 now = datetime.utcnow()
                 # 台灣時間 = UTC + 8
                 tw_hour = (now.hour + 8) % 24
                 tw_min  = now.minute
-                # 每天 20:00 ~ 20:01 執行一次
-                if tw_hour == 20 and tw_min == 0:
+                # 每天 22:00 ~ 22:01 執行一次
+                if tw_hour == 22 and tw_min == 0:
                     print(f"[排程] ⏰ 觸發每日分析 {datetime.now().strftime('%Y/%m/%d %H:%M')}")
-                    _run_auto_analysis(max_stocks=80, top_n=10, model_ver='v2')
+                    _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')  # 全部掃描，推薦 20 支
                     _time.sleep(90)  # 避免同一分鐘重複觸發
                 else:
                     _time.sleep(30)  # 每 30 秒檢查一次
