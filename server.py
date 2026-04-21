@@ -3172,6 +3172,193 @@ def _analyze_one(code, name):
         "data_count":  len(records),
     }
 
+def _screen_value_growth(stocks, top_n, task_id):
+    """
+    低基期價值成長股篩選器（v3.0 護城河模式）
+    條件：
+      1. 月營收年增率 >= 10%（成長中）
+      2. 外資/投信近期淨買超（法人看好）
+      3. 股價在 120 日低點附近（低基期，相對低點）
+      4. EPS > 0（賺錢的公司）
+      5. 毛利率 > 20%（有護城河，不是純低毛利代工）
+      6. 股價未超漲（距 60 日高點 < 20%，還沒被炒高）
+    """
+    prog = _analyze_tasks.get(task_id, {})
+    def cb(msg, pct):
+        if prog: prog["msg"] = msg; prog["pct"] = round(pct, 1)
+        print(f"  [價值選股 {pct:.0f}%] {msg}")
+
+    cb("載入產業別對照表...", 2)
+    _load_sector_map()
+
+    start_dt = (datetime.today() - timedelta(days=26*31)).strftime("%Y-%m-%d")
+    end_dt   = datetime.today().strftime("%Y-%m-%d")
+    token    = _get_finmind_token()
+
+    results  = []
+    total    = len(stocks)
+
+    for idx, s in enumerate(stocks):
+        code = s["code"]
+        name = s["name"]
+        pct_done = 5 + idx / total * 88
+        cb(f"[價值] {code} {name} ({idx+1}/{total})", pct_done)
+
+        try:
+            # 抓歷史股價
+            records = fetch_history_range(code, start_dt, end_dt)
+            if len(records) < 60:
+                continue
+
+            closes = [r["close"] for r in records]
+            highs  = [r["high"]  for r in records]
+            lows   = [r["low"]   for r in records]
+            vols   = [r["vol"]   for r in records]
+            cur    = closes[-1]
+
+            # ── 技術面：低基期判斷 ──────────────────
+            hi120 = max(highs[-120:]) if len(highs) >= 120 else max(highs)
+            lo120 = min(lows[-120:])  if len(lows)  >= 120 else min(lows)
+            hi60  = max(highs[-60:])  if len(highs) >= 60  else max(highs)
+            lo60  = min(lows[-60:])   if len(lows)  >= 60  else min(lows)
+
+            # 股價位置（在 120 日區間的百分位）
+            price_pos_120 = (cur - lo120) / (hi120 - lo120 + 0.001)
+            # 距 60 日高點距離（負值=在高點以下）
+            dist_from_hi60 = (cur - hi60) / hi60 * 100
+
+            # 條件：股價在 120 日區間的下半段（低基期）
+            if price_pos_120 > 0.45:
+                continue
+            # 條件：距 60 日高點不超過 25%（不是已大幅回落的死股）
+            if dist_from_hi60 < -25:
+                continue
+
+            # ── 均線多頭排列（起漲條件）─────────────
+            def sma_last(arr, n):
+                sl = arr[-n:] if len(arr) >= n else arr
+                return sum(sl) / len(sl)
+
+            ma20  = sma_last(closes, 20)
+            ma60  = sma_last(closes, 60)
+            ma120 = sma_last(closes, 120)
+
+            # MA20 要在 MA60 附近（整理中，未噴出）
+            ma20_vs_ma60 = (ma20 - ma60) / ma60 * 100
+            if ma20_vs_ma60 > 15:   # 已漲太多
+                continue
+            if ma20_vs_ma60 < -10:  # 已跌太深
+                continue
+
+            # ── 基本面：FinMind 月營收 + 財報 ────────
+            rev_yoy     = 0
+            eps         = 0
+            gross_margin= 0
+            eps_yoy     = 0
+
+            if token:
+                rev_list = fetch_monthly_revenue_finmind(code, start_dt)
+                if rev_list:
+                    rf = get_revenue_features(rev_list, end_dt)
+                    rev_yoy = rf["latest_yoy"]
+                    # 月營收年增率需 >= 10%
+                    if rev_yoy < 10:
+                        continue
+                else:
+                    continue  # 沒有營收資料，跳過
+
+                fin_list = fetch_financial_finmind(code, start_dt)
+                if fin_list:
+                    ff = get_financial_features(fin_list, end_dt)
+                    eps          = ff["latest_eps"]
+                    gross_margin = ff["gross_margin"]
+                    eps_yoy      = ff["eps_yoy"]
+                    # EPS 需 > 0（賺錢）
+                    if eps <= 0:
+                        continue
+                    # 毛利率需 > 20%（有護城河）
+                    if gross_margin < 20:
+                        continue
+            else:
+                # 沒有 token：只做技術面篩選
+                pass
+
+            # ── 籌碼面：法人近期買超 ──────────────
+            foreign_buy = 0
+            trust_buy   = 0
+            inst_days   = 0
+
+            if token:
+                inst_map = fetch_institutional_finmind(code, start_dt, end_dt)
+                if inst_map:
+                    sorted_dates = sorted(inst_map.keys())[-20:]
+                    for d in sorted_dates:
+                        foreign_buy += inst_map[d].get("foreign_net", 0)
+                        trust_buy   += inst_map[d].get("trust_net", 0)
+                    # 法人近 20 日需為淨買超
+                    inst_days = sum(1 for d in sorted_dates
+                                    if inst_map[d].get("foreign_net",0) > 0
+                                    or inst_map[d].get("trust_net",0) > 0)
+                    if foreign_buy + trust_buy < 0:
+                        continue
+
+            # ── 量能確認（有人在默默吃貨）──────────
+            avg20v = sma_last(vols[:-1], 20) if len(vols) > 20 else vols[-1]
+            vol_ratio = vols[-1] / avg20v if avg20v > 0 else 1
+
+            # ── 計算綜合評分 ──────────────────────
+            score = 0
+            # 基本面分（滿分 50）
+            score += min(rev_yoy / 2, 20)          # 月營收 YoY，最高 20 分
+            score += min(eps_yoy / 5, 10)           # EPS YoY，最高 10 分
+            score += min((gross_margin - 20) / 2, 10)  # 毛利率超過 20% 的部分
+            score += min(eps * 2, 10)               # EPS 絕對值
+
+            # 籌碼分（滿分 30）
+            score += min(inst_days * 1.5, 15)       # 法人買超天數
+            score += min((foreign_buy + trust_buy) / 1000, 15)  # 累計買超張數
+
+            # 位置分（滿分 20）：越低分越高
+            score += (1 - price_pos_120) * 20       # 越低基期得分越高
+
+            # ── 產業輪動加分 ─────────────────────
+            sector_data = get_sector_feature(code, {})
+            sector_name = sector_data["sector_name"]
+
+            # ── 組合結果 ──────────────────────────
+            results.append({
+                "code":         code,
+                "name":         name,
+                "price":        cur,
+                "chg_pct":      s.get("pct", 0),
+                "score":        round(score, 1),
+                "price_pos":    round(price_pos_120 * 100, 1),  # 在120日區間的%位
+                "dist_hi60":    round(dist_from_hi60, 1),
+                "rev_yoy":      round(rev_yoy, 1),
+                "eps":          round(eps, 2),
+                "eps_yoy":      round(eps_yoy, 1),
+                "gross_margin": round(gross_margin, 1),
+                "foreign_buy":  round(foreign_buy / 1000, 1),   # 換算成千張
+                "trust_buy":    round(trust_buy / 1000, 1),
+                "inst_days":    inst_days,
+                "vol_ratio":    round(vol_ratio, 2),
+                "sector":       sector_name,
+                "ma20_vs_ma60": round(ma20_vs_ma60, 1),
+            })
+
+        except Exception as e:
+            print(f"  [{code}] 篩選錯誤: {e}")
+            continue
+
+    # 依綜合評分排序
+    results.sort(key=lambda x: x["score"], reverse=True)
+    top = results[:top_n]
+
+    cb("完成！", 100)
+    print(f"  ✅ 低基期價值成長股：找到 {len(results)} 支，推薦前 {len(top)} 支")
+    return top
+
+
 def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
     try:
         prog = _analyze_tasks[task_id]
@@ -3180,6 +3367,7 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             print(f"  [AI分析 {pct:.0f}%] {msg}")
 
         is_v2 = (model_ver == 'v2')
+        is_v3 = (model_ver == 'v3')   # v3 = 低基期價值成長股
         history_months = 24 if is_v2 else 8
 
         # ── 取得上市股票（TWSE）────────────────────
@@ -3278,6 +3466,29 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             except Exception as e:
                 print(f"  產業輪動計算失敗: {e}")
 
+        global _latest_analysis_result
+
+        # ── v3.0 低基期價值成長股模式（直接篩選，不用 ML）──
+        if is_v3:
+            cb(f"🔍 低基期價值成長股篩選 {len(stocks)} 支...", 5)
+            top = _screen_value_growth(stocks, top_n, task_id)
+            analysis_out = {
+                "stocks":         top,
+                "total_analyzed": len(top),
+                "total_scanned":  len(stocks),
+                "model_ver":      "v3",
+                "mode":           "value_growth",
+                "time":           datetime.now().strftime("%Y/%m/%d %H:%M"),
+                "avg_accuracy":   0,
+                "bullish":        len(top),
+                "bearish":        0,
+                "predict_days":   0,
+            }
+            prog.update({"pct":100,"msg":"完成！","done":True,"error":None,"result":analysis_out})
+            _latest_analysis_result = analysis_out
+            threading.Thread(target=supabase_save_analysis, args=(analysis_out,), daemon=True).start()
+            return
+
         cb(f"開始{'v2.0 強化' if is_v2 else 'v1.0 基礎'}分析 {len(stocks)} 支股票...", 5)
         results=[]
         total=len(stocks)
@@ -3315,7 +3526,6 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         prog.update({"pct":100,"msg":"完成！","done":True,"error":None,
                      "result": analysis_out})
         # 同時存進記憶體快取（避免 Render 重啟後遺失）
-        global _latest_analysis_result
         _latest_analysis_result = analysis_out
         print(f"  ✅ 分析結果已快取（{len(top)} 支推薦）")
         # ★ 永久儲存到 Supabase（重啟後也能讀回）

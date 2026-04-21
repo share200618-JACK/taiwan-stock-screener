@@ -135,8 +135,9 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       </div>
       <div class="fg">
         <label class="fl">模型版本</label>
-        <select class="fi" id="modelVer" style="width:130px;">
+        <select class="fi" id="modelVer" style="width:160px;" onchange="onModelChange(this)">
           <option value="v2">v2.0 強化版 ⭐</option>
+          <option value="v3">v3.0 護城河選股 🏰</option>
           <option value="v1">v1.0 基礎版</option>
         </select>
       </div>
@@ -145,6 +146,10 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     <div class="note">
       <strong>v2.0 強化版：</strong>45 個特徵｜2 年訓練資料｜<span style="color:var(--red)">🔥 月營收年增率</span>｜<span style="color:var(--gold)">🚀 突破前高偵測</span>｜<span style="color:var(--blu)">💎 法人連續買超</span>｜<span style="color:var(--grn)">💰 EPS 季報年增</span>｜<span style="color:var(--pur)">🏆 產業輪動</span>｜時間序列驗證｜預期準確率 75~80%<br>
       <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
+      <div id="v3note" style="display:none;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px 12px;margin-top:8px;">
+        <strong style="color:var(--gold)">🏰 v3.0 護城河選股：</strong>低基期 + 月營收年增 ≥10% + EPS>0 + 毛利率>20%（護城河）+ 法人淨買超 + 股價在120日低點附近<br>
+        <span style="color:var(--dim);font-size:.72rem;">適合找「還沒被市場發現的成長股」，類似 3167 飆漲前的型態・約 30~60 分鐘</span>
+      </div>
       📊 掃描範圍：<strong>上市 + 上櫃</strong>共約 1700 支｜掃描數量設 <strong>0 = 全部掃描</strong>（約 2~3 小時）｜建議先用 200 支測試（約 15 分鐘）
     </div>
   </div>
@@ -259,6 +264,19 @@ function switchTab(tab) {
   document.getElementById('tabCustom').classList.toggle('active', tab==='custom');
   document.getElementById('panelMarket').style.display = tab==='market' ? '' : 'none';
   document.getElementById('panelCustom').style.display = tab==='custom' ? '' : 'none';
+}
+
+function onModelChange(sel) {
+  // 切換到 v3 時顯示護城河說明
+  const v3note = document.getElementById('v3note');
+  if (v3note) {
+    v3note.style.display = sel.value === 'v3' ? 'block' : 'none';
+  }
+  // v3 建議掃描全部
+  const maxStocks = document.getElementById('maxStocks');
+  if (maxStocks && sel.value === 'v3') {
+    maxStocks.value = 0;
+  }
 }
 
 function fillCodes(codes) {
@@ -484,11 +502,83 @@ function showError(msg) {
 function renderResults(data) {
   const stocks = data.stocks || [];
   const ver    = data.model_ver || 'v1';
+  const isV3   = (ver === 'v3');
   document.getElementById('results').style.display = 'block';
+
+  const verLabel = ver==='v3' ? '🏰 v3.0 護城河選股'
+                : ver==='v2' ? 'v2.0 強化版 ⭐'
+                : 'v1.0 基礎版';
   document.getElementById('resultTitle').textContent =
-    `AI 推薦 ${stocks.length} 支股票（${ver==='v2'?'v2.0 強化版 ⭐':'v1.0 基礎版'}）`;
+    `${isV3 ? '🏰 低基期護城河' : 'AI 推薦'} ${stocks.length} 支股票（${verLabel}）`;
   document.getElementById('resultSub').textContent =
-    `掃描 ${data.total_scanned} 支，${data.total_analyzed} 支通過篩選`;
+    isV3 ? `掃描 ${data.total_scanned} 支・${stocks.length} 支通過護城河篩選・依綜合評分排序`
+         : `掃描 ${data.total_scanned} 支，${data.total_analyzed} 支通過篩選`;
+
+  // v3 護城河模式：專屬卡片
+  if (isV3) {
+    document.getElementById('cardsGrid').innerHTML = stocks.map((s, i) => {
+      const scoreColor = s.score >= 60 ? 'var(--gold)' : s.score >= 40 ? 'var(--grn)' : 'var(--dim)';
+      const chgCls = (s.chg_pct||0) >= 0 ? 'up' : 'dn';
+      const chgTxt = ((s.chg_pct||0) >= 0 ? '+' : '') + (s.chg_pct||0) + '%';
+      const posBar = Math.round(s.price_pos || 0);
+      const posColor = posBar <= 30 ? 'var(--grn)' : posBar <= 45 ? 'var(--gold)' : 'var(--red)';
+      return `<div class="card bull" style="border-color:rgba(251,191,36,.4);">
+        <div class="card-rank">#${i+1}</div>
+        <div class="card-code">${s.code}</div>
+        <div class="card-name">${s.name}</div>
+        <div style="font-size:.78rem;color:${scoreColor};font-weight:700;margin:4px 0;">
+          🏆 綜合評分 ${s.score} 分
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px 0;font-size:.73rem;">
+          <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:6px 8px;">
+            <div style="color:var(--dim);margin-bottom:2px;">月營收年增</div>
+            <div style="color:${s.rev_yoy>=50?'var(--red)':s.rev_yoy>=20?'var(--gold)':'var(--grn)'};font-weight:700;">
+              ${s.rev_yoy > 0 ? '+' : ''}${s.rev_yoy}%
+            </div>
+          </div>
+          <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:6px 8px;">
+            <div style="color:var(--dim);margin-bottom:2px;">毛利率（護城河）</div>
+            <div style="color:${s.gross_margin>=40?'var(--grn)':s.gross_margin>=25?'var(--gold)':'var(--dim)'};font-weight:700;">
+              ${s.gross_margin}%
+            </div>
+          </div>
+          <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:6px 8px;">
+            <div style="color:var(--dim);margin-bottom:2px;">EPS（季）</div>
+            <div style="color:var(--grn);font-weight:700;">
+              ${s.eps} 元 ${s.eps_yoy ? `<span style="font-size:.65rem;">(YoY ${s.eps_yoy>0?'+':''}${s.eps_yoy}%)</span>` : ''}
+            </div>
+          </div>
+          <div style="background:rgba(255,255,255,.04);border-radius:6px;padding:6px 8px;">
+            <div style="color:var(--dim);margin-bottom:2px;">法人近20日</div>
+            <div style="color:${(s.foreign_buy+s.trust_buy)>=0?'var(--red)':'var(--grn)'};font-weight:700;">
+              ${(s.foreign_buy||0)+(s.trust_buy||0)>=0?'↑':'↓'} 買超 ${s.inst_days}/20 日
+            </div>
+          </div>
+        </div>
+
+        <div style="margin:6px 0;font-size:.72rem;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:3px;">
+            <span style="color:var(--dim);">股價位置（越低越好）</span>
+            <span style="color:${posColor};font-weight:700;">${posBar}% 位</span>
+          </div>
+          <div style="background:var(--bd);border-radius:3px;height:5px;">
+            <div style="width:${posBar}%;background:${posColor};border-radius:3px;height:5px;"></div>
+          </div>
+        </div>
+
+        <div style="font-size:.7rem;color:var(--dim);margin-top:5px;">
+          📊 ${s.sector || '—'} ｜ MA20/MA60 偏離 ${s.ma20_vs_ma60>0?'+':''}${s.ma20_vs_ma60}%
+        </div>
+
+        <div class="card-footer" style="margin-top:8px;">
+          <div class="card-price">${s.price} 元</div>
+          <span class="card-chg ${chgCls}">${chgTxt}</span>
+        </div>
+      </div>`;
+    }).join('');
+    return;
+  }
 
   if (!stocks.length) {
     document.getElementById('cardsGrid').innerHTML =
