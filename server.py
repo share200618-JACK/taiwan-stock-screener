@@ -3425,13 +3425,57 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         total_before = len(stocks)
         cb(f"取得 {total_before} 支股票（上市+上櫃）", 3)
 
-        # 如果設定了數量上限且小於實際數量，隨機抽樣
+        # ══════════════════════════════════════════════
+        # 兩階段篩選
+        # 第一階段：用當日技術指標快速過濾（約 1 分鐘）
+        # 第二階段：對候選股做深度 AI 分析
+        # ══════════════════════════════════════════════
+
+        # 計算成交量門檻：全市場前 95 百分位（排除後 5%）
+        all_vols = sorted([s["vol"] for s in stocks])
+        n_stocks = len(all_vols)
+        # 取第 5 百分位數作為下限（排除最低 5% 冷門股）
+        vol_p5_idx = max(0, int(n_stocks * 0.05))
+        vol_p5     = all_vols[vol_p5_idx] if all_vols else 500
+        # 確保門檻至少 500 張（避免市場清淡時門檻過低）
+        vol_min = max(vol_p5, 500)
+        print(f"  成交量第5百分位：{vol_p5} 張，篩選門檻：{vol_min} 張")
+
+        def _stage1_filter(s):
+            """
+            第一階段快速過濾（只用當日資料，不需歷史K線）：
+            1. 成交量 >= 全市場第5百分位（前95%的有效股票）
+            2. 漲跌幅 > -5%（排除崩跌股）
+            3. 股價 >= 15 元（排除雞蛋水餃股）
+            4. 漲幅 < 9.5%（排除已漲停）
+            """
+            if s["vol"] < vol_min:           return False  # 量太小
+            if s.get("pct", 0) < -5:         return False  # 跌太多
+            if s.get("pct", 0) >= 9.5:       return False  # 已漲停，追不上
+            if s.get("price", 0) < 15:       return False  # 價格太低
+            return True
+
+        stocks_stage1 = [s for s in stocks if _stage1_filter(s)]
+        cb(f"第一階段篩選：{total_before} → {len(stocks_stage1)} 支候選股", 3.5)
+        print(f"  第一階段：{total_before} → {len(stocks_stage1)} 支")
+
+        # 若候選股太少，放寬成交量門檻
+        if len(stocks_stage1) < 100:
+            vol_min = max(vol_p5 // 2, 200)
+            stocks_stage1 = [s for s in stocks if s["vol"] >= vol_min
+                             and s.get("pct", 0) > -5
+                             and s.get("price", 0) >= 15]
+            print(f"  放寬後：{len(stocks_stage1)} 支")
+
+        stocks = stocks_stage1
+
+        # 若還有設定 max_stocks 上限（手動觸發時），在候選股中再抽樣
         if max_stocks > 0 and len(stocks) > max_stocks:
             random.shuffle(stocks)
             stocks = stocks[:max_stocks]
-            cb(f"隨機抽樣 {max_stocks} 支進行分析...", 4)
+            cb(f"候選股抽樣 {max_stocks} 支進行深度分析...", 4)
         else:
-            cb(f"全部 {len(stocks)} 支進行分析...", 4)
+            cb(f"候選股 {len(stocks)} 支全部進行深度分析...", 4)
 
         # v2.0：預先抓大盤資料
         market_closes = []
