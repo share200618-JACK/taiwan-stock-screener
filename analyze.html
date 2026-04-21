@@ -458,17 +458,37 @@ async function startAnalysis() {
 
 function pollProgress(taskId, onDone) {
   if (pollTimer) clearInterval(pollTimer);
+  let errorCount = 0;
   pollTimer = setInterval(async () => {
     try {
       const r    = await fetch(`${API}/api/analyze/progress/${taskId}`);
       const prog = await r.json();
-      setProgress(prog.pct, prog.msg);
+
+      // 找不到任務 → 伺服器可能重啟，嘗試載入最新結果
+      if (prog.error && (prog.error.includes('找不到') || r.status === 404)) {
+        clearInterval(pollTimer);
+        document.getElementById('progressWrap').style.display = 'none';
+        if(onDone) onDone(); else resetBtn();
+        // 自動嘗試載入最新結果
+        const latest = await fetch(`${API}/api/analyze/latest`);
+        const latestData = await latest.json();
+        if (!latestData.error) {
+          latestData.model_ver = latestData.model_ver || 'v2';
+          renderResults(latestData);
+          showToast('伺服器重啟，已自動載入最新結果');
+        } else {
+          showError('伺服器重啟導致任務中斷，請重新點「開始 AI 分析」');
+        }
+        return;
+      }
+
       if (prog.error) {
         clearInterval(pollTimer);
         showError(prog.error);
         if(onDone) onDone(); else resetBtn();
         return;
       }
+      setProgress(prog.pct, prog.msg);
       if (prog.done && prog.result) {
         clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
@@ -476,11 +496,23 @@ function pollProgress(taskId, onDone) {
         if(onDone) onDone(); else resetBtn();
       }
     } catch(e) {
-      clearInterval(pollTimer);
-      showError(e.message);
-      if(onDone) onDone(); else resetBtn();
+      errorCount++;
+      if (errorCount >= 3) {
+        clearInterval(pollTimer);
+        document.getElementById('progressWrap').style.display = 'none';
+        if(onDone) onDone(); else resetBtn();
+        showError('連線中斷，請重新整理頁面或點「📂 最新結果」查看');
+      }
     }
   }, 2000);
+}
+
+function showToast(msg) {
+  const t = document.createElement('div');
+  t.textContent = msg;
+  t.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#27d981;color:#000;padding:10px 20px;border-radius:10px;font-size:.82rem;font-weight:700;z-index:999;animation:fadeIn .3s';
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 3000);
 }
 
 function setProgress(pct, msg) {
