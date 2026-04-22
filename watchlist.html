@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>我的追蹤清單</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Noto Sans TC',sans-serif;background:var(--bg);color:var(--txt);min-height:100vh;}
+body::before{content:'';position:fixed;inset:0;background:
+  radial-gradient(ellipse 60% 40% at 15% 0%,rgba(39,217,129,.06) 0%,transparent 60%),
+  radial-gradient(ellipse 45% 55% at 85% 100%,rgba(240,180,41,.05) 0%,transparent 60%);
+  pointer-events:none;z-index:0;}
+.w{max-width:1000px;margin:0 auto;padding:0 20px 48px;position:relative;z-index:1;}
+
+header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;}
+.logo{display:flex;align-items:center;gap:11px;}
+.li{width:36px;height:36px;background:linear-gradient(135deg,var(--grn),#16a34a);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:18px;box-shadow:0 0 18px rgba(39,217,129,.3);}
+.logo h1{font-size:1.2rem;font-weight:700;}
+.logo h1 span{color:var(--grn);}
+.back-btn{padding:7px 16px;border-radius:8px;border:1px solid var(--bd);background:var(--s1);color:var(--dim);font-size:.82rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;text-decoration:none;display:inline-flex;align-items:center;gap:5px;transition:all .15s;}
+.back-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+/* 統計列 */
+.stats-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px;}
+.stat-card{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:12px 16px;flex:1;min-width:100px;text-align:center;}
+.stat-num{font-size:1.4rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.stat-lbl{font-size:.72rem;color:var(--dim);margin-top:2px;}
+
+/* 工具列 */
+.toolbar{display:flex;gap:10px;align-items:center;margin-bottom:16px;flex-wrap:wrap;}
+.search-box{flex:1;min-width:150px;background:var(--s1);border:1px solid var(--bd);border-radius:8px;padding:8px 12px;color:var(--txt);font-size:.84rem;font-family:'Noto Sans TC',sans-serif;outline:none;}
+.search-box:focus{border-color:var(--grn);}
+.sort-btn{padding:7px 14px;border-radius:8px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.78rem;cursor:pointer;transition:all .15s;}
+.sort-btn.active{border-color:var(--grn);color:var(--grn);}
+.clear-btn{padding:7px 14px;border-radius:8px;border:1px solid rgba(255,77,94,.3);background:none;color:var(--red);font-size:.78rem;cursor:pointer;}
+
+/* 股票列表 */
+.stock-list{display:flex;flex-direction:column;gap:8px;}
+.stock-item{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;display:flex;align-items:center;gap:12px;transition:border-color .15s;}
+.stock-item:hover{border-color:rgba(39,217,129,.3);}
+.stock-rank{font-size:.7rem;color:var(--dim);width:24px;text-align:center;flex-shrink:0;}
+.stock-code{font-family:'JetBrains Mono',monospace;font-size:.88rem;font-weight:700;color:var(--gold);width:48px;flex-shrink:0;}
+.stock-info{flex:1;min-width:0;}
+.stock-name{font-size:.88rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.stock-meta{font-size:.72rem;color:var(--dim);margin-top:2px;}
+.stock-price{text-align:right;flex-shrink:0;}
+.cur-price{font-family:'JetBrains Mono',monospace;font-size:.92rem;font-weight:700;}
+.price-chg{font-size:.72rem;margin-top:2px;}
+.price-chg.up{color:var(--red);}
+.price-chg.dn{color:var(--grn);}
+.profit-badge{font-size:.7rem;padding:2px 7px;border-radius:4px;margin-left:6px;font-family:'JetBrains Mono',monospace;}
+.profit-badge.pos{background:rgba(255,77,94,.1);color:var(--red);}
+.profit-badge.neg{background:rgba(39,217,129,.1);color:var(--grn);}
+.stock-actions{display:flex;gap:6px;flex-shrink:0;}
+.act-btn{padding:5px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;border:1px solid var(--bd);background:var(--s2);color:var(--dim);transition:all .15s;white-space:nowrap;}
+.act-btn:hover{color:var(--txt);}
+.del-btn{border-color:rgba(255,77,94,.2);color:var(--red);}
+.del-btn:hover{background:rgba(255,77,94,.1);}
+.note-btn:hover{border-color:var(--gold);color:var(--gold);}
+
+/* 筆記面板 */
+.note-panel{background:var(--s2);border-radius:8px;padding:10px 12px;margin-top:8px;display:none;}
+.note-input{width:100%;background:var(--s3);border:1px solid var(--bd);border-radius:6px;padding:7px 10px;color:var(--txt);font-size:.78rem;resize:vertical;min-height:60px;font-family:'Noto Sans TC',sans-serif;outline:none;}
+.note-input:focus{border-color:var(--gold);}
+.note-footer{display:flex;justify-content:flex-end;gap:6px;margin-top:6px;}
+.save-note-btn{padding:5px 14px;background:linear-gradient(135deg,var(--gold),#d97706);border:none;border-radius:6px;color:#000;font-size:.75rem;font-weight:700;cursor:pointer;}
+
+/* 空狀態 */
+.empty{text-align:center;padding:48px 20px;color:var(--dim);}
+.empty-icon{font-size:2.5rem;margin-bottom:12px;}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--grn);color:#000;padding:10px 20px;border-radius:10px;font-size:.82rem;font-weight:700;z-index:999;opacity:0;transition:opacity .3s;}
+.toast.show{opacity:1;}
+
+/* 排行分析區 */
+.sector-block{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:20px;}
+.sector-title{font-size:.84rem;font-weight:700;color:var(--gold);margin-bottom:10px;}
+.sector-row{display:flex;align-items:center;gap:10px;margin-bottom:6px;font-size:.76rem;}
+.sector-name{width:90px;color:var(--txt);flex-shrink:0;}
+.sector-bar-wrap{flex:1;background:var(--bd);border-radius:3px;height:7px;}
+.sector-bar{background:var(--grn);border-radius:3px;height:7px;transition:width .4s;}
+.sector-cnt{width:40px;text-align:right;color:var(--grn);font-weight:700;}
+</style>
+</head>
+<body>
+<div class="w">
+  <header>
+    <div class="logo">
+      <div class="li">👁️</div>
+      <h1>我的<span>追蹤清單</span></h1>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <a href="/analyze" class="back-btn">🤖 AI分析</a>
+      <a href="/" class="back-btn">← 選股</a>
+    </div>
+  </header>
+
+  <!-- 統計列 -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-num" id="statTotal" style="color:var(--grn)">0</div>
+      <div class="stat-lbl">追蹤中</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="statUp" style="color:var(--red)">0</div>
+      <div class="stat-lbl">今日上漲</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="statDown" style="color:var(--grn)">0</div>
+      <div class="stat-lbl">今日下跌</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="statAvgProfit" style="color:var(--gold)">—</div>
+      <div class="stat-lbl">平均報酬</div>
+    </div>
+  </div>
+
+  <!-- 產業分布 -->
+  <div class="sector-block" id="sectorBlock" style="display:none;">
+    <div class="sector-title">📊 追蹤股票產業分布</div>
+    <div id="sectorList"></div>
+  </div>
+
+  <!-- 工具列 -->
+  <div class="toolbar">
+    <input class="search-box" id="searchBox" placeholder="搜尋代號或名稱..." oninput="renderList()">
+    <button class="sort-btn active" id="sortTime" onclick="setSort('time')">🕐 加入時間</button>
+    <button class="sort-btn" id="sortCode" onclick="setSort('code')"># 代號</button>
+    <button class="sort-btn" id="sortSector" onclick="setSort('sector')">📊 產業</button>
+    <button class="clear-btn" onclick="clearAll()">🗑 清空</button>
+  </div>
+
+  <!-- 清單 -->
+  <div id="stockList" class="stock-list"></div>
+  <div id="emptyState" class="empty" style="display:none;">
+    <div class="empty-icon">👁️</div>
+    <div style="font-size:.9rem;margin-bottom:8px;">追蹤清單是空的</div>
+    <div style="font-size:.78rem;">在 AI 分析結果頁面點「+ 追蹤」按鈕即可加入</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const WATCHLIST_KEY  = 'tw_stock_watchlist';
+const NOTES_KEY      = 'tw_stock_notes';
+const API = (location.hostname === 'localhost' || location.protocol === 'file:')
+            ? 'http://localhost:5000' : '';
+
+let currentSort = 'time';
+let priceCache  = {};  // code -> {price, chgPct}
+
+// ── 資料操作 ──────────────────────────────────────
+function loadList()  { try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY)||'[]'); } catch{ return[]; } }
+function saveList(l) { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(l)); }
+function loadNotes() { try { return JSON.parse(localStorage.getItem(NOTES_KEY)||'{}'); } catch{ return{}; } }
+function saveNote(code, text) {
+  const notes = loadNotes();
+  if (text.trim()) notes[code] = text.trim();
+  else delete notes[code];
+  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+}
+
+function removeStock(code) {
+  if (!confirm(`確定移除 ${code}？`)) return;
+  saveList(loadList().filter(s => s.code !== code));
+  render();
+  showToast(`已移除 ${code}`);
+}
+
+function clearAll() {
+  if (!confirm('確定清空所有追蹤股票？')) return;
+  localStorage.removeItem(WATCHLIST_KEY);
+  render();
+  showToast('已清空追蹤清單');
+}
+
+function setSort(s) {
+  currentSort = s;
+  document.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('sort' + s.charAt(0).toUpperCase() + s.slice(1)).classList.add('active');
+  renderList();
+}
+
+function toggleNote(code) {
+  const panel = document.getElementById('note-' + code);
+  if (!panel) return;
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) {
+    const ta = panel.querySelector('textarea');
+    if (ta) ta.focus();
+  }
+}
+
+// ── 即時股價更新 ──────────────────────────────────
+async function fetchPrices(codes) {
+  if (!codes.length) return;
+  try {
+    const r = await fetch(`${API}/api/prices?codes=${codes.join(',')}`);
+    const d = await r.json();
+    if (d.prices) {
+      Object.assign(priceCache, d.prices);
+      updatePriceDisplay();
+      updateStats();
+    }
+  } catch(e) { console.log('價格更新失敗:', e); }
+}
+
+function updatePriceDisplay() {
+  const list = loadList();
+  list.forEach(s => {
+    const p = priceCache[s.code];
+    if (!p) return;
+    const el = document.getElementById('price-' + s.code);
+    const chgEl = document.getElementById('chg-' + s.code);
+    const profEl = document.getElementById('prof-' + s.code);
+    if (el)    el.textContent = p.price + ' 元';
+    if (chgEl) {
+      const up = p.chgPct >= 0;
+      chgEl.textContent = (up ? '+' : '') + p.chgPct + '%';
+      chgEl.className   = 'price-chg ' + (up ? 'up' : 'dn');
+    }
+    if (profEl && s.addPrice > 0) {
+      const prof = ((p.price - s.addPrice) / s.addPrice * 100).toFixed(1);
+      profEl.textContent = (prof >= 0 ? '+' : '') + prof + '%';
+      profEl.className   = 'profit-badge ' + (prof >= 0 ? 'pos' : 'neg');
+    }
+  });
+}
+
+function updateStats() {
+  const list = loadList();
+  let up = 0, dn = 0, profSum = 0, profCnt = 0;
+  list.forEach(s => {
+    const p = priceCache[s.code];
+    if (p) {
+      if (p.chgPct >= 0) up++; else dn++;
+      if (s.addPrice > 0) {
+        profSum += (p.price - s.addPrice) / s.addPrice * 100;
+        profCnt++;
+      }
+    }
+  });
+  document.getElementById('statTotal').textContent = list.length;
+  document.getElementById('statUp').textContent    = up;
+  document.getElementById('statDown').textContent  = dn;
+  document.getElementById('statAvgProfit').textContent =
+    profCnt > 0 ? (profSum/profCnt).toFixed(1) + '%' : '—';
+}
+
+// ── 產業分布 ──────────────────────────────────────
+function renderSectors(list) {
+  const block = document.getElementById('sectorBlock');
+  const el    = document.getElementById('sectorList');
+  if (!list.length) { block.style.display='none'; return; }
+
+  const cnt = {};
+  list.forEach(s => { const sec = s.sector||'其他'; cnt[sec] = (cnt[sec]||0)+1; });
+  const sorted = Object.entries(cnt).sort((a,b)=>b[1]-a[1]);
+  if (!sorted.length) { block.style.display='none'; return; }
+
+  const max = sorted[0][1];
+  el.innerHTML = sorted.map(([sec, c]) => `
+    <div class="sector-row">
+      <div class="sector-name">${sec}</div>
+      <div class="sector-bar-wrap"><div class="sector-bar" style="width:${c/max*100}%"></div></div>
+      <div class="sector-cnt">${c} 支</div>
+    </div>`).join('');
+  block.style.display = 'block';
+}
+
+// ── 主渲染 ────────────────────────────────────────
+function renderList() {
+  const query = (document.getElementById('searchBox').value || '').toLowerCase();
+  let list    = loadList();
+  const notes = loadNotes();
+
+  // 搜尋過濾
+  if (query) list = list.filter(s =>
+    s.code.toLowerCase().includes(query) ||
+    (s.name||'').toLowerCase().includes(query)
+  );
+
+  // 排序
+  if (currentSort === 'code')   list.sort((a,b) => a.code.localeCompare(b.code));
+  if (currentSort === 'sector') list.sort((a,b) => (a.sector||'').localeCompare(b.sector||''));
+  // 'time' 預設是加入順序（已是最新在前）
+
+  const el = document.getElementById('stockList');
+  const empty = document.getElementById('emptyState');
+
+  if (!list.length) {
+    el.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  el.innerHTML = list.map((s, i) => {
+    const p = priceCache[s.code];
+    const curPrice = p ? p.price : s.addPrice;
+    const chgPct   = p ? p.chgPct : 0;
+    const profit   = s.addPrice > 0 ? ((curPrice - s.addPrice) / s.addPrice * 100).toFixed(1) : null;
+    const note     = notes[s.code] || '';
+
+    return `
+    <div class="stock-item" id="item-${s.code}">
+      <div class="stock-rank">${i+1}</div>
+      <div class="stock-code">${s.code}</div>
+      <div class="stock-info">
+        <div class="stock-name">${s.name||s.code}</div>
+        <div class="stock-meta">
+          ${s.sector ? `<span style="color:var(--pur)">${s.sector}</span> ・ ` : ''}
+          加入 ${s.addTime||'—'}
+          ${note ? ` ・ 📝 ${note.substring(0,20)}${note.length>20?'...':''}` : ''}
+        </div>
+      </div>
+      <div class="stock-price">
+        <div class="cur-price" id="price-${s.code}" style="color:${chgPct>=0?'var(--red)':'var(--grn)'}">${curPrice} 元</div>
+        <div class="price-chg ${chgPct>=0?'up':'dn'}" id="chg-${s.code}">${chgPct>=0?'+':''}${chgPct}%
+          ${profit!==null ? `<span class="profit-badge ${profit>=0?'pos':'neg'}" id="prof-${s.code}">${profit>=0?'+':''}${profit}%</span>` : ''}
+        </div>
+      </div>
+      <div class="stock-actions">
+        <button class="act-btn note-btn" onclick="toggleNote('${s.code}')">📝 筆記</button>
+        <button class="act-btn" onclick="window.location.href='/backtest?code=${s.code}'">📊 回測</button>
+        <button class="act-btn del-btn" onclick="removeStock('${s.code}')">✕</button>
+      </div>
+    </div>
+    <div class="note-panel" id="note-${s.code}" ${note?'style="display:block"':''}>
+      <textarea class="note-input" id="noteInput-${s.code}" placeholder="輸入你的觀察筆記、進場理由、目標價...">${note}</textarea>
+      <div class="note-footer">
+        <button class="save-note-btn" onclick="saveNoteAndClose('${s.code}')">💾 儲存</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function saveNoteAndClose(code) {
+  const ta = document.getElementById('noteInput-' + code);
+  if (!ta) return;
+  saveNote(code, ta.value);
+  document.getElementById('note-' + code).style.display = 'none';
+  renderList();
+  showToast('筆記已儲存');
+}
+
+function render() {
+  const list = loadList();
+  renderSectors(list);
+  renderList();
+  updateStats();
+  // 抓即時股價
+  const codes = list.map(s => s.code);
+  if (codes.length) fetchPrices(codes);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// 初始化
+render();
+// 每 5 分鐘更新一次股價
+setInterval(() => {
+  const codes = loadList().map(s => s.code);
+  if (codes.length) fetchPrices(codes);
+}, 300000);
+</script>
+</body>
+</html>
