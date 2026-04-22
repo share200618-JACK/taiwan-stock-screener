@@ -110,6 +110,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     <div class="li">🤖</div>
     <h1>AI <span>自動選股</span>分析</h1>
   </div>
+  <a href="/watchlist" class="back-btn" style="border-color:rgba(39,217,129,.3);color:var(--grn);">👁️ 追蹤清單</a>
   <a class="back-btn" href="/">← 回到選股</a>
 </header>
 
@@ -147,7 +148,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       <strong>v2.0 強化版：</strong>45 個特徵｜2 年訓練資料｜<span style="color:var(--red)">🔥 月營收年增率</span>｜<span style="color:var(--gold)">🚀 突破前高偵測</span>｜<span style="color:var(--blu)">💎 法人連續買超</span>｜<span style="color:var(--grn)">💰 EPS 季報年增</span>｜<span style="color:var(--pur)">🏆 產業輪動</span>｜時間序列驗證｜預期準確率 75~80%<br>
       <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
       <div id="v3note" style="display:none;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px 12px;margin-top:8px;">
-        <strong style="color:var(--gold)">🏰 v3.0 護城河選股：</strong>低基期 + 月營收年增 ≥10% + EPS>0 + 毛利率>20%（護城河）+ 法人淨買超 + 股價在120日低點附近<br>
+        <strong style="color:var(--gold)">🏰 v3.0 護城河選股：</strong>低基期 + 月營收年增≥10% + EPS改善（允許轉型初期低EPS）+ 毛利率≥15%且趨勢向上 + 法人淨買超 + 類股動能加分<br>
         <span style="color:var(--dim);font-size:.72rem;">適合找「還沒被市場發現的成長股」，類似 3167 飆漲前的型態・約 30~60 分鐘</span>
       </div>
       📊 掃描範圍：<strong>上市 + 上櫃</strong>共約 1700 支｜掃描數量設 <strong>0 = 全部掃描</strong>（約 2~3 小時）｜建議先用 200 支測試（約 15 分鐘）
@@ -258,6 +259,16 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     </div>
     <button class="refresh-btn" onclick="startAnalysis()">🔄 重新分析</button>
   </div>
+
+  <!-- 產業分布統計 -->
+  <div id="sectorSummary" style="display:none;background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:14px;">
+    <div style="font-size:.82rem;font-weight:700;color:var(--gold);margin-bottom:10px;">
+      📊 產業分布（由高至低）
+      <span style="font-size:.7rem;color:var(--dim);font-weight:400;margin-left:6px;">— 最多推薦的類股即為當前最強主題</span>
+    </div>
+    <div id="sectorBars"></div>
+  </div>
+
   <div class="cards" id="cardsGrid"></div>
 
   <div class="disclaimer">
@@ -539,22 +550,25 @@ async function loadHistory() {
       const bullPct = row.total_analyzed > 0
         ? Math.round(row.bullish / row.total_analyzed * 100) : 0;
       return `
-        <div style="border:1px solid var(--bd);border-radius:9px;padding:12px 14px;margin-bottom:8px;cursor:pointer;transition:border-color .15s;"
-             onmouseover="this.style.borderColor='var(--pur)'" onmouseout="this.style.borderColor='var(--bd)'"
-             onclick="loadDateResult('${row.date}')">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
-            <div style="font-weight:700;color:var(--txt);">📅 ${row.date}
-              <span style="font-size:.72rem;color:var(--dim);margin-left:6px;">${row.time}</span>
+        <div style="border:1px solid var(--bd);border-radius:9px;padding:12px 14px;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+            <div style="flex:1;cursor:pointer;" onclick="loadDateResult('${row.date}')">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
+                <div style="font-weight:700;color:var(--txt);">📅 ${row.date}
+                  <span style="font-size:.72rem;color:var(--dim);margin-left:6px;">${row.time}</span>
+                </div>
+                <div style="font-size:.72rem;color:var(--dim);">
+                  掃描 ${row.total_scanned} 支・
+                  <span style="color:${bullPct>=50?'var(--grn)':'var(--red)'}">看漲 ${bullPct}%</span>
+                </div>
+              </div>
+              <div style="margin-bottom:5px;">${top3 || '<span style="color:var(--dim)">無推薦</span>'}</div>
+              <div style="font-size:.71rem;color:var(--blu);">點擊查看完整結果 →</div>
             </div>
-            <div style="font-size:.72rem;color:var(--dim);">
-              掃描 ${row.total_scanned} 支・分析 ${row.total_analyzed} 支・
-              <span style="color:${bullPct>=50?'var(--grn)':'var(--red)'}">看漲 ${bullPct}%</span>
-            </div>
-          </div>
-          <div style="margin-bottom:5px;">${top3 || '<span style="color:var(--dim)">無推薦</span>'}</div>
-          <div style="font-size:.71rem;color:var(--dim);">
-            平均準確率 ${row.avg_accuracy}%・模型 ${row.model_ver}
-            <span style="color:var(--blu);margin-left:8px;">點擊查看完整結果 →</span>
+            <button onclick="deleteHistoryRecord('${row.date}', this)" title="刪除此紀錄"
+              style="background:none;border:1px solid rgba(255,77,94,.25);color:var(--red);
+                     padding:4px 8px;border-radius:6px;font-size:.72rem;cursor:pointer;
+                     flex-shrink:0;margin-top:2px;">🗑</button>
           </div>
         </div>`;
     }).join('');
@@ -706,13 +720,118 @@ function showError(msg) {
   document.getElementById('emptyState').innerHTML=`<div class="empty-icon">⚠️</div><p>${msg}</p>`;
 }
 
+// ══════════════════════════════════════════════════════
+// 追蹤清單（Watch List）— localStorage 儲存
+// ══════════════════════════════════════════════════════
+const WATCHLIST_KEY = 'tw_stock_watchlist';
+
+function loadWatchList() {
+  try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]'); }
+  catch { return []; }
+}
+function saveWatchList(list) {
+  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
+}
+function isWatching(code) {
+  return loadWatchList().some(s => s.code === code);
+}
+function toggleWatch(code, name, price, sector, btn) {
+  let list = loadWatchList();
+  if (isWatching(code)) {
+    list = list.filter(s => s.code !== code);
+    if (btn) { btn.textContent = '+ 追蹤'; btn.style.background = 'rgba(39,217,129,.15)'; btn.style.color = 'var(--grn)'; }
+    showToast(`已移除 ${code} ${name}`);
+  } else {
+    list.unshift({
+      code, name, price,
+      sector:    sector || '—',
+      addTime:   new Date().toLocaleString('zh-TW', {hour12:false}),
+      addPrice:  price,
+    });
+    if (btn) { btn.textContent = '✓ 追蹤中'; btn.style.background = 'rgba(168,85,247,.2)'; btn.style.color = 'var(--pur)'; }
+    showToast(`✅ 已加入追蹤：${code} ${name}`);
+  }
+  saveWatchList(list);
+  // 同步更新所有同代號的按鈕
+  document.querySelectorAll(`[data-watch-code="${code}"]`).forEach(el => {
+    const watching = isWatching(code);
+    el.textContent = watching ? '✓ 追蹤中' : '+ 追蹤';
+    el.style.background = watching ? 'rgba(168,85,247,.2)' : 'rgba(39,217,129,.15)';
+    el.style.color = watching ? 'var(--pur)' : 'var(--grn)';
+  });
+}
+
+// ══════════════════════════════════════════════════════
+// 產業分布統計
+// ══════════════════════════════════════════════════════
+function renderSectorSummary(stocks) {
+  const el = document.getElementById('sectorSummary');
+  const bars = document.getElementById('sectorBars');
+  if (!el || !stocks || !stocks.length) { if(el) el.style.display='none'; return; }
+
+  // 統計各產業出現次數
+  const sectorCount = {};
+  stocks.forEach(s => {
+    const sec = s.sector || s.industry_category || '其他';
+    if (!sec || sec === '—') return;
+    sectorCount[sec] = (sectorCount[sec] || 0) + 1;
+  });
+
+  const sorted = Object.entries(sectorCount).sort((a,b) => b[1]-a[1]);
+  if (!sorted.length) { el.style.display='none'; return; }
+
+  const maxCount = sorted[0][1];
+  const total    = stocks.length;
+
+  bars.innerHTML = sorted.map(([sec, cnt], i) => {
+    const pct   = Math.round(cnt / total * 100);
+    const width = Math.round(cnt / maxCount * 100);
+    const colors = ['var(--red)','var(--gold)','var(--grn)','var(--blu)','var(--pur)'];
+    const color  = colors[i % colors.length];
+    const rank   = i === 0 ? ' 🔥' : i === 1 ? ' ⚡' : '';
+    return `
+      <div style="margin-bottom:7px;">
+        <div style="display:flex;justify-content:space-between;font-size:.75rem;margin-bottom:3px;">
+          <span style="color:var(--txt);">${rank}${sec}</span>
+          <span style="color:${color};font-weight:700;">${cnt} 支 (${pct}%)</span>
+        </div>
+        <div style="background:var(--bd);border-radius:3px;height:6px;">
+          <div style="width:${width}%;background:${color};border-radius:3px;height:6px;transition:width .4s;"></div>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.style.display = 'block';
+}
+
+// ══════════════════════════════════════════════════════
+// 刪除 Supabase 歷史紀錄
+// ══════════════════════════════════════════════════════
+async function deleteHistoryRecord(date, btn) {
+  if (!confirm(`確定刪除 ${date} 的分析紀錄？`)) return;
+  const orig = btn.textContent;
+  btn.textContent = '...'; btn.disabled = true;
+  try {
+    const r = await fetch(`${API}/api/analyze/history/${date}`, { method: 'DELETE' });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    // 移除該卡片
+    btn.closest('div[style*="border"]').remove();
+    showToast(`已刪除 ${date} 的紀錄`);
+  } catch(e) {
+    btn.textContent = orig; btn.disabled = false;
+    showToast(`❌ 刪除失敗：${e.message}`);
+  }
+}
+
 function renderResults(data) {
   const stocks = data.stocks || [];
   const ver    = data.model_ver || 'v1';
   const isV3   = (ver === 'v3');
-  // 儲存最後結果供自動存檔使用
   window._lastCustomResult = data;
   document.getElementById('results').style.display = 'block';
+  // 產業分布統計
+  renderSectorSummary(stocks);
 
   const verLabel = ver==='v3' ? '🏰 v3.0 護城河選股'
                 : ver==='v2' ? 'v2.0 強化版 ⭐'
@@ -735,8 +854,13 @@ function renderResults(data) {
         <div class="card-rank">#${i+1}</div>
         <div class="card-code">${s.code}</div>
         <div class="card-name">${s.name}</div>
-        <div style="font-size:.78rem;color:${scoreColor};font-weight:700;margin:4px 0;">
-          🏆 綜合評分 ${s.score} 分
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:4px 0;">
+          <div style="font-size:.78rem;color:${scoreColor};font-weight:700;">
+            🏆 綜合評分 ${s.score} 分
+          </div>
+          <div style="font-size:.7rem;background:rgba(255,255,255,.07);border-radius:5px;padding:2px 8px;color:var(--gold);">
+            ${s.stock_type || '成長型'}
+          </div>
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px 0;font-size:.73rem;">
@@ -777,12 +901,30 @@ function renderResults(data) {
         </div>
 
         <div style="font-size:.7rem;color:var(--dim);margin-top:5px;">
-          📊 ${s.sector || '—'} ｜ MA20/MA60 偏離 ${s.ma20_vs_ma60>0?'+':''}${s.ma20_vs_ma60}%
+          📊 ${s.sector || '—'}
+          ${s.sec_is_hot ? '<span style="color:var(--red);margin-left:4px;">🔥 熱門類股</span>' : ''}
+          ｜ 類股均漲 <span style="color:${(s.sec_avg_chg||0)>=0?'var(--red)':'var(--grn)'}">${(s.sec_avg_chg||0)>=0?'+':''}${(s.sec_avg_chg||0).toFixed(1)}%</span>
+        </div>
+        <div style="font-size:.7rem;color:var(--dim);margin-top:3px;">
+          MA偏離 ${s.ma20_vs_ma60>0?'+':''}${s.ma20_vs_ma60}% ｜
+          量比 <span style="color:${(s.vol_ratio||1)>=2?'var(--red)':'var(--txt)'}">${(s.vol_ratio||1).toFixed(1)}x</span> ｜
+          毛利率趨勢 ${s.gm_trend>0?'📈 上升':s.gm_trend<0?'📉 下滑':'➡️ 持平'}
         </div>
 
         <div class="card-footer" style="margin-top:8px;">
-          <div class="card-price">${s.price} 元</div>
-          <span class="card-chg ${chgCls}">${chgTxt}</span>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <div class="card-price">${s.price} 元</div>
+            <span class="card-chg ${chgCls}">${chgTxt}</span>
+          </div>
+          <button
+            data-watch-code="${s.code}"
+            onclick="toggleWatch('${s.code}','${s.name}',${s.price},'${s.sector||''}',this)"
+            style="border:1px solid rgba(39,217,129,.3);border-radius:7px;padding:4px 12px;
+                   font-size:.74rem;cursor:pointer;transition:all .15s;
+                   background:${isWatching(s.code)?'rgba(168,85,247,.2)':'rgba(39,217,129,.15)'};
+                   color:${isWatching(s.code)?'var(--pur)':'var(--grn)'};">
+            ${isWatching(s.code) ? '✓ 追蹤中' : '+ 追蹤'}
+          </button>
         </div>
       </div>`;
     }).join('');
@@ -913,6 +1055,23 @@ function renderResults(data) {
             <span style="flex-shrink:0;">▼</span><span>${r}</span>
           </div>`).join('') : ''}
       </div>` : ''}
+
+      <!-- 追蹤按鈕 + 價格 -->
+      <div class="card-footer" style="margin-top:10px;">
+        <div style="display:flex;align-items:center;gap:6px;">
+          <div class="card-price">${s.price||'—'} 元</div>
+          <span class="card-chg ${(s.chg_pct||0)>=0?'up':'dn'}">${(s.chg_pct||0)>=0?'+':''}${s.chg_pct||0}%</span>
+        </div>
+        <button
+          data-watch-code="${s.code}"
+          onclick="toggleWatch('${s.code}','${s.name||s.code}',${s.price||0},'${s.sector||s.industry_category||''}',this)"
+          style="border:1px solid rgba(39,217,129,.3);border-radius:7px;padding:4px 12px;
+                 font-size:.74rem;cursor:pointer;transition:all .15s;
+                 background:${isWatching(s.code)?'rgba(168,85,247,.2)':'rgba(39,217,129,.15)'};
+                 color:${isWatching(s.code)?'var(--pur)':'var(--grn)'};">
+          ${isWatching(s.code) ? '✓ 追蹤中' : '+ 追蹤'}
+        </button>
+      </div>
 
     </div>`;
   }).join('');

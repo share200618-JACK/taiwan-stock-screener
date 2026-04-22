@@ -207,6 +207,10 @@ def alert_page():
 def predict_page():
     return send_from_directory(".", "predict.html")
 
+@app.route("/watchlist")
+def watchlist_page():
+    return send_from_directory(".", "watchlist.html")
+
 @app.route("/api/health")
 def health():
     return jsonify({"ok": True, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
@@ -3273,12 +3277,24 @@ def _screen_value_growth(stocks, top_n, task_id):
                     eps          = ff["latest_eps"]
                     gross_margin = ff["gross_margin"]
                     eps_yoy      = ff["eps_yoy"]
-                    # EPS 需 > 0（賺錢）
-                    if eps <= 0:
-                        continue
-                    # 毛利率需 > 20%（有護城河）
-                    if gross_margin < 20:
-                        continue
+
+                    # ★ 修正 1：允許轉型初期低 EPS（類似一詮起漲前的狀態）
+                    # 條件：EPS > -0.5（不能大幅虧損）且 EPS YoY > 30%（獲利在改善）
+                    # 或 EPS > 1（穩定獲利型）
+                    if eps <= -0.5:
+                        continue  # 嚴重虧損，排除
+                    if eps <= 0 and eps_yoy < 30:
+                        continue  # 虧損且獲利沒有改善跡象，排除
+                    if 0 < eps <= 1 and eps_yoy < 20:
+                        continue  # EPS 低且沒有成長動能，排除
+
+                    # ★ 修正 2：放寬毛利率門檻（電子零件/設備業 15% 屬正常）
+                    # 但要求毛利率趨勢向上（護城河在建立中）
+                    gm_trend = ff["gross_margin_trend"]
+                    if gross_margin < 15:
+                        continue  # 毛利率太低，排除
+                    if gross_margin < 20 and gm_trend < 0:
+                        continue  # 毛利率偏低且還在下滑，排除
             else:
                 # 沒有 token：只做技術面篩選
                 pass
@@ -3302,47 +3318,105 @@ def _screen_value_growth(stocks, top_n, task_id):
                     if foreign_buy + trust_buy < 0:
                         continue
 
-            # ── 量能確認（有人在默默吃貨）──────────
-            avg20v = sma_last(vols[:-1], 20) if len(vols) > 20 else vols[-1]
-            vol_ratio = vols[-1] / avg20v if avg20v > 0 else 1
-
             # ── 計算綜合評分 ──────────────────────
             score = 0
-            # 基本面分（滿分 50）
-            score += min(rev_yoy / 2, 20)          # 月營收 YoY，最高 20 分
-            score += min(eps_yoy / 5, 10)           # EPS YoY，最高 10 分
-            score += min((gross_margin - 20) / 2, 10)  # 毛利率超過 20% 的部分
-            score += min(eps * 2, 10)               # EPS 絕對值
 
-            # 籌碼分（滿分 30）
+            # ── 基本面分（滿分 60）────────────────
+            # 月營收 YoY（最重要，最高 25 分）
+            score += min(rev_yoy / 2, 25)
+
+            # EPS YoY 加速（轉型訊號，最高 15 分）
+            if eps_yoy >= 100:   score += 15   # 獲利爆發
+            elif eps_yoy >= 50:  score += 10   # 獲利大幅成長
+            elif eps_yoy >= 30:  score += 7    # 獲利明顯成長
+            elif eps_yoy >= 0:   score += 3    # 小幅改善
+            else:                score += 0    # 獲利衰退
+
+            # 毛利率品質（最高 10 分）
+            if gross_margin >= 40:   score += 10
+            elif gross_margin >= 30: score += 7
+            elif gross_margin >= 20: score += 5
+            else:                    score += max(0, gross_margin - 15)  # 15~20% 得 0~5 分
+
+            # 毛利率趨勢加分（護城河正在建立）
+            if gm_trend > 0:  score += 5   # 毛利率持續提升
+            elif gm_trend < 0: score -= 3  # 毛利率下滑扣分
+
+            # EPS 轉型加分（一詮型態：EPS 極低但快速成長）
+            if 0 < eps <= 1 and eps_yoy >= 100:
+                score += 10  # ★ 轉型爆發型加分（最像飆股起漲前）
+            elif eps > 5 and eps_yoy >= 20:
+                score += 5   # 成熟獲利型加分
+
+            # ── 籌碼分（滿分 30）─────────────────
             score += min(inst_days * 1.5, 15)       # 法人買超天數
             score += min((foreign_buy + trust_buy) / 1000, 15)  # 累計買超張數
 
-            # 位置分（滿分 20）：越低分越高
+            # ── 位置分（滿分 20）：越低分越高 ─────
             score += (1 - price_pos_120) * 20       # 越低基期得分越高
 
-            # ── 產業輪動加分 ─────────────────────
+            # ── 修正 3：類股動能加分（最高 20 分）──
+            # 所屬產業近期強勢 → 資金已開始輪動進來
             sector_data = get_sector_feature(code, {})
             sector_name = sector_data["sector_name"]
+            sec_rank    = sector_data["sector_rank_pct"]   # 1=最強 0=最弱
+            sec_avg_chg = sector_data["sector_avg_chg"]
+            sec_is_hot  = sector_data["sector_is_hot"]
+
+            if sec_is_hot:
+                score += 20   # 當日熱門類股加 20 分（資金在輪動）
+            elif sec_rank >= 0.7:
+                score += 10   # 類股偏強加 10 分
+            elif sec_rank <= 0.3:
+                score -= 5    # 類股偏弱扣 5 分
+
+            # ── 量能加分（有人在默默吃貨）────────
+            avg20v = sma_last(vols[:-1], 20) if len(vols) > 20 else vols[-1]
+            vol_ratio = vols[-1] / avg20v if avg20v > 0 else 1
+            if vol_ratio >= 3:   score += 8   # 爆量，主力積極
+            elif vol_ratio >= 2: score += 5   # 量明顯放大
+            elif vol_ratio >= 1.5: score += 2 # 量溫和放大
+
+            # ── 轉型股特別加分 ───────────────────
+            # 月營收連續加速（rev_yoy_trend = +1 代表3個月持續加速）
+            if token and rev_list:
+                rf_full = get_revenue_features(rev_list, end_dt)
+                if rf_full["yoy_trend"] == 1 and rev_yoy >= 15:
+                    score += 10  # ★ 營收加速成長，飆股最強特徵
 
             # ── 組合結果 ──────────────────────────
+            # 判斷股票類型（用於前端顯示）
+            stock_type = "穩定獲利型"
+            if 0 < eps <= 1 and eps_yoy >= 100:
+                stock_type = "🔥 轉型爆發型"
+            elif rev_yoy >= 50 and eps_yoy >= 50:
+                stock_type = "⚡ 高速成長型"
+            elif sec_is_hot:
+                stock_type = "🏆 題材輪動型"
+            elif eps > 5:
+                stock_type = "💎 成熟獲利型"
+
             results.append({
                 "code":         code,
                 "name":         name,
                 "price":        cur,
                 "chg_pct":      s.get("pct", 0),
                 "score":        round(score, 1),
-                "price_pos":    round(price_pos_120 * 100, 1),  # 在120日區間的%位
+                "stock_type":   stock_type,
+                "price_pos":    round(price_pos_120 * 100, 1),
                 "dist_hi60":    round(dist_from_hi60, 1),
                 "rev_yoy":      round(rev_yoy, 1),
                 "eps":          round(eps, 2),
                 "eps_yoy":      round(eps_yoy, 1),
                 "gross_margin": round(gross_margin, 1),
-                "foreign_buy":  round(foreign_buy / 1000, 1),   # 換算成千張
+                "gm_trend":     gm_trend,
+                "foreign_buy":  round(foreign_buy / 1000, 1),
                 "trust_buy":    round(trust_buy / 1000, 1),
                 "inst_days":    inst_days,
-                "vol_ratio":    round(vol_ratio, 2),
+                "vol_ratio":    round(vol_ratio, 2) if 'vol_ratio' in dir() else 1.0,
                 "sector":       sector_name,
+                "sec_is_hot":   sec_is_hot,
+                "sec_avg_chg":  round(sec_avg_chg, 2),
                 "ma20_vs_ma60": round(ma20_vs_ma60, 1),
             })
 
@@ -4110,9 +4184,26 @@ def get_analysis_history():
         })
     return jsonify({"history": summary, "count": len(summary)})
 
-@app.route("/api/analyze/history/<date>")
+@app.route("/api/analyze/history/<date>", methods=["GET", "DELETE"])
 def get_analysis_by_date(date):
-    """讀取指定日期的完整分析結果（格式：YYYY-MM-DD）"""
+    """讀取或刪除指定日期的分析結果"""
+    if request.method == "DELETE":
+        # 刪除 Supabase 中該日期的紀錄
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            return jsonify({"error": "未設定 Supabase"}), 400
+        try:
+            url = f"{SUPABASE_URL}/rest/v1/analysis_results"
+            params = {"date": f"eq.{date}"}
+            r = requests.delete(url, params=params, headers=_sb_headers(), timeout=10)
+            if r.status_code in (200, 204):
+                print(f"[Supabase] 已刪除 {date} 的分析紀錄")
+                return jsonify({"ok": True, "deleted": date})
+            else:
+                return jsonify({"error": f"刪除失敗 {r.status_code}"}), 500
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    # GET：讀取指定日期
     row = supabase_load_latest(date=date)
     if not row:
         return jsonify({"error": f"找不到 {date} 的分析紀錄"}), 404
