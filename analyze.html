@@ -180,6 +180,23 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       <button class="quick-btn" onclick="fillCodes('2330,2412,2881,2882,1301')">權值股</button>
       <button class="quick-btn" onclick="fillCodes('')">清除</button>
     </div>
+    <!-- 查詢紀錄按鈕 -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <button onclick="toggleCustomHistory()"
+        style="background:linear-gradient(135deg,#1e3a5f,#3d8bff);border:none;color:#fff;padding:7px 16px;border-radius:8px;font-size:.78rem;cursor:pointer;display:flex;align-items:center;gap:6px;">
+        🕐 查詢紀錄 <span id="customHistoryCount" style="background:rgba(255,255,255,.2);border-radius:10px;padding:1px 7px;font-size:.7rem;"></span>
+      </button>
+      <button onclick="clearAllCustomHistory()"
+        style="background:none;border:1px solid rgba(255,77,94,.3);color:var(--red);padding:5px 12px;border-radius:8px;font-size:.72rem;cursor:pointer;">
+        🗑 清除全部
+      </button>
+    </div>
+
+    <!-- 查詢紀錄面板 -->
+    <div id="customHistoryPanel" style="display:none;background:var(--s2);border:1px solid var(--bd);border-radius:11px;padding:14px;margin-bottom:14px;max-height:320px;overflow-y:auto;">
+      <div id="customHistoryList"></div>
+    </div>
+
     <div class="note">
       輸入你想分析的股票代號，系統會對每支進行 v2.0 隨機森林分析<br>
       ⏱ 每支約需 <strong>1~2 分鐘</strong>，5 支約 5~10 分鐘
@@ -284,6 +301,149 @@ function fillCodes(codes) {
 }
 
 // ── 自訂個股分析 ──────────────────────────────────
+// ══════════════════════════════════════════════════════
+// 自訂個股查詢紀錄（localStorage 本機儲存）
+// ══════════════════════════════════════════════════════
+
+const CUSTOM_HISTORY_KEY = 'tw_stock_custom_history';
+const CUSTOM_HISTORY_MAX = 50;  // 最多保留 50 筆
+
+function loadCustomHistory() {
+  try {
+    return JSON.parse(localStorage.getItem(CUSTOM_HISTORY_KEY) || '[]');
+  } catch { return []; }
+}
+
+function saveCustomHistory(list) {
+  localStorage.setItem(CUSTOM_HISTORY_KEY, JSON.stringify(list));
+  updateCustomHistoryCount();
+}
+
+function updateCustomHistoryCount() {
+  const list = loadCustomHistory();
+  const el   = document.getElementById('customHistoryCount');
+  if (el) el.textContent = list.length > 0 ? list.length : '';
+}
+
+function addCustomHistoryRecord(codes, modelVer, stocks) {
+  const list = loadCustomHistory();
+  const record = {
+    id:       Date.now(),
+    time:     new Date().toLocaleString('zh-TW', {hour12:false}),
+    codes:    codes,
+    modelVer: modelVer,
+    stocks:   stocks.map(s => ({
+      code:      s.code,
+      name:      s.name,
+      price:     s.price,
+      rise_prob: s.rise_prob,
+      confidence:s.confidence,
+      accuracy:  s.accuracy,
+      chg_pct:   s.chg_pct,
+      reasons_bull: s.reasons_bull,
+      reasons_bear: s.reasons_bear,
+    })),
+  };
+  list.unshift(record);  // 最新的放最前面
+  if (list.length > CUSTOM_HISTORY_MAX) list.splice(CUSTOM_HISTORY_MAX);
+  saveCustomHistory(list);
+  renderCustomHistoryPanel();
+}
+
+function deleteCustomHistoryRecord(id) {
+  const list = loadCustomHistory().filter(r => r.id !== id);
+  saveCustomHistory(list);
+  renderCustomHistoryPanel();
+}
+
+function clearAllCustomHistory() {
+  if (!confirm('確定要清除所有查詢紀錄？')) return;
+  localStorage.removeItem(CUSTOM_HISTORY_KEY);
+  updateCustomHistoryCount();
+  renderCustomHistoryPanel();
+}
+
+function toggleCustomHistory() {
+  const panel = document.getElementById('customHistoryPanel');
+  const isOpen = panel.style.display !== 'none';
+  panel.style.display = isOpen ? 'none' : 'block';
+  if (!isOpen) renderCustomHistoryPanel();
+}
+
+function renderCustomHistoryPanel() {
+  const list = loadCustomHistory();
+  const el   = document.getElementById('customHistoryList');
+  if (!el) return;
+
+  if (!list.length) {
+    el.innerHTML = '<div style="color:var(--dim);text-align:center;padding:16px 0;font-size:.8rem;">尚無查詢紀錄</div>';
+    return;
+  }
+
+  el.innerHTML = list.map(rec => {
+    const topStocks = rec.stocks.slice(0, 3).map(s => {
+      const col = s.rise_prob >= 60 ? 'var(--red)' : s.rise_prob >= 50 ? 'var(--gold)' : 'var(--grn)';
+      return `<span style="background:rgba(255,255,255,.06);border-radius:5px;padding:2px 8px;margin-right:4px;font-size:.72rem;">
+        ${s.code} ${s.name} <span style="color:${col};font-weight:700;">${s.rise_prob}%</span>
+      </span>`;
+    }).join('');
+
+    return `<div style="border:1px solid var(--bd);border-radius:9px;padding:11px 13px;margin-bottom:8px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">
+        <div style="flex:1;">
+          <div style="font-size:.76rem;color:var(--dim);margin-bottom:5px;">
+            🕐 ${rec.time} ｜ 模型 ${rec.modelVer}
+          </div>
+          <div style="font-size:.8rem;color:var(--gold);font-weight:700;margin-bottom:6px;">
+            📊 ${rec.codes.join('、')}
+          </div>
+          <div style="margin-bottom:4px;">${topStocks}</div>
+          ${rec.stocks.length > 3 ? `<div style="font-size:.68rem;color:var(--dim);">...共 ${rec.stocks.length} 支</div>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0;">
+          <button onclick="loadCustomHistoryRecord(${rec.id})"
+            style="background:rgba(168,85,247,.15);border:1px solid rgba(168,85,247,.3);color:var(--pur);padding:4px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;white-space:nowrap;">
+            📂 載入
+          </button>
+          <button onclick="rerunCustomHistory('${rec.codes.join(',')}')"
+            style="background:rgba(39,217,129,.1);border:1px solid rgba(39,217,129,.2);color:var(--grn);padding:4px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;white-space:nowrap;">
+            🔄 重跑
+          </button>
+          <button onclick="deleteCustomHistoryRecord(${rec.id})"
+            style="background:none;border:1px solid rgba(255,77,94,.2);color:var(--red);padding:4px 10px;border-radius:6px;font-size:.72rem;cursor:pointer;white-space:nowrap;">
+            🗑 刪除
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function loadCustomHistoryRecord(id) {
+  const rec = loadCustomHistory().find(r => r.id === id);
+  if (!rec) return;
+  document.getElementById('customHistoryPanel').style.display = 'none';
+  // 把代號填回輸入框
+  document.getElementById('customCodes').value = rec.codes.join(', ');
+  // 顯示分析結果
+  const fakeData = {
+    stocks:   rec.stocks,
+    model_ver: rec.modelVer,
+    total_scanned: rec.stocks.length,
+    total_analyzed: rec.stocks.length,
+  };
+  document.getElementById('emptyState').style.display = 'none';
+  document.getElementById('progressWrap').style.display = 'none';
+  renderResults(fakeData);
+  showToast(`已載入 ${rec.time} 的紀錄`);
+}
+
+function rerunCustomHistory(codesStr) {
+  document.getElementById('customCodes').value = codesStr;
+  document.getElementById('customHistoryPanel').style.display = 'none';
+  startCustomAnalysis();
+}
+
 async function startCustomAnalysis() {
   const codesRaw = document.getElementById('customCodes').value;
   const codes = codesRaw.split(/[,，\s]+/).map(c=>c.trim()).filter(c=>c);
@@ -307,7 +467,21 @@ async function startCustomAnalysis() {
     });
     const {task_id, error} = await r.json();
     if (error) throw new Error(error);
-    pollProgress(task_id, ()=>{ btn.disabled=false; btn.textContent='🔍 分析選定個股'; });
+    // 分析完成後自動儲存紀錄
+    pollProgress(task_id, () => {
+      btn.disabled=false; btn.textContent='🔍 分析選定個股';
+      // 從目前顯示的結果抓股票資料存入紀錄
+      setTimeout(() => {
+        const cards = document.querySelectorAll('#cardsGrid .card');
+        if (cards.length > 0) {
+          // 用全域變數取得最後一次結果
+          if (window._lastCustomResult && window._lastCustomResult.stocks) {
+            addCustomHistoryRecord(codes, modelVer, window._lastCustomResult.stocks);
+            showToast(`✅ 已儲存查詢紀錄（${codes.join('、')}）`);
+          }
+        }
+      }, 500);
+    });
   } catch(e) {
     showError(e.message);
     btn.disabled=false; btn.textContent='🔍 分析選定個股';
@@ -428,6 +602,7 @@ async function loadLatestResult() {
 // 頁面載入後自動檢查狀態
 window.addEventListener('DOMContentLoaded', () => {
   checkAutoResultStatus();
+  updateCustomHistoryCount();  // 顯示查詢紀錄筆數
 });
 
 async function startAnalysis() {
@@ -535,6 +710,8 @@ function renderResults(data) {
   const stocks = data.stocks || [];
   const ver    = data.model_ver || 'v1';
   const isV3   = (ver === 'v3');
+  // 儲存最後結果供自動存檔使用
+  window._lastCustomResult = data;
   document.getElementById('results').style.display = 'block';
 
   const verLabel = ver==='v3' ? '🏰 v3.0 護城河選股'
