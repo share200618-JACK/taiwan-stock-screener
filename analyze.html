@@ -545,7 +545,7 @@ async function loadHistory() {
 
     list.innerHTML = data.history.map(row => {
       const top3 = (row.top3||[]).map(s =>
-        `<span style="background:rgba(168,85,247,.15);border-radius:5px;padding:2px 7px;margin-right:4px;color:var(--pur);">${s.code} ${s.name} <span style="color:var(--gold)">${s.rise_prob}%</span></span>`
+        `<span style="background:rgba(168,85,247,.15);border-radius:5px;padding:2px 7px;margin-right:4px;color:var(--pur);">${s.code} ${s.name} ${s.rise_prob != null ? '<span style="color:var(--gold)">'+s.rise_prob+'%</span>' : ''}</span>`
       ).join('');
       const bullPct = row.total_analyzed > 0
         ? Math.round(row.bullish / row.total_analyzed * 100) : 0;
