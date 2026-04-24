@@ -81,6 +81,37 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--grn);color:#000;padding:10px 20px;border-radius:10px;font-size:.82rem;font-weight:700;z-index:999;opacity:0;transition:opacity .3s;}
 .toast.show{opacity:1;}
 
+/* 分析面板 */
+.analysis-panel{background:var(--s2);border-radius:10px;padding:16px;margin-top:8px;}
+.ap-title{font-size:.82rem;font-weight:700;color:var(--blu);margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;}
+.ap-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+.ap-card{background:var(--s3);border-radius:8px;padding:10px 12px;}
+.ap-label{font-size:.68rem;color:var(--dim);margin-bottom:4px;}
+.ap-value{font-size:.88rem;font-weight:700;}
+.price-row{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+.price-box{flex:1;min-width:80px;border-radius:8px;padding:10px 12px;text-align:center;}
+.price-box.buy{background:rgba(255,77,94,.08);border:1px solid rgba(255,77,94,.25);}
+.price-box.stop{background:rgba(39,217,129,.08);border:1px solid rgba(39,217,129,.2);}
+.price-box.t1{background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.2);}
+.price-box.t2{background:rgba(61,139,255,.08);border:1px solid rgba(61,139,255,.2);}
+.price-box.t3{background:rgba(168,85,247,.08);border:1px solid rgba(168,85,247,.2);}
+.price-lbl{font-size:.65rem;color:var(--dim);margin-bottom:3px;}
+.price-num{font-size:.98rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.price-sub{font-size:.64rem;color:var(--dim);margin-top:2px;}
+.ind-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;}
+.ind-badge{background:var(--s3);border-radius:5px;padding:4px 9px;font-size:.72rem;}
+.ma-row{font-size:.72rem;display:flex;flex-wrap:wrap;gap:4px;margin-bottom:10px;}
+.ma-tag{padding:3px 8px;border-radius:4px;font-family:'JetBrains Mono',monospace;}
+.ma-tag.above{background:rgba(255,77,94,.1);color:var(--red);}
+.ma-tag.below{background:rgba(39,217,129,.1);color:var(--grn);}
+.support-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-size:.75rem;}
+.sup-box{flex:1;min-width:80px;background:var(--s3);border-radius:6px;padding:7px 10px;text-align:center;}
+.win-bar-wrap{background:var(--bd);border-radius:5px;height:8px;margin-top:4px;}
+.win-bar{background:linear-gradient(90deg,var(--grn),var(--gold));border-radius:5px;height:8px;transition:width .5s;}
+.reason-box{background:rgba(61,139,255,.06);border:1px solid rgba(61,139,255,.15);border-radius:8px;padding:10px 12px;font-size:.75rem;color:var(--txt);line-height:1.5;margin-bottom:10px;}
+.ap-loading{text-align:center;color:var(--dim);padding:20px;font-size:.82rem;}
+.mini-chart{width:100%;height:100px;margin-bottom:10px;}
+
 /* 排行分析區 */
 .sector-block{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:20px;}
 .sector-title{font-size:.84rem;font-weight:700;color:var(--gold);margin-bottom:10px;}
@@ -151,35 +182,80 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 <div class="toast" id="toast"></div>
 
 <script>
-const WATCHLIST_KEY  = 'tw_stock_watchlist';
-const NOTES_KEY      = 'tw_stock_notes';
 const API = (location.hostname === 'localhost' || location.protocol === 'file:')
             ? 'http://localhost:5000' : '';
 
 let currentSort = 'time';
-let priceCache  = {};  // code -> {price, chgPct}
+let priceCache  = {};
+let _watchCache = [];   // 記憶體快取，減少 API 請求
 
-// ── 資料操作 ──────────────────────────────────────
-function loadList()  { try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY)||'[]'); } catch{ return[]; } }
-function saveList(l) { localStorage.setItem(WATCHLIST_KEY, JSON.stringify(l)); }
-function loadNotes() { try { return JSON.parse(localStorage.getItem(NOTES_KEY)||'{}'); } catch{ return{}; } }
-function saveNote(code, text) {
-  const notes = loadNotes();
-  if (text.trim()) notes[code] = text.trim();
-  else delete notes[code];
-  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
+// ── Supabase API 操作 ─────────────────────────────
+async function loadList() {
+  try {
+    const r = await fetch(`${API}/api/watchlist`);
+    const d = await r.json();
+    _watchCache = d.stocks || [];
+    return _watchCache;
+  } catch(e) {
+    console.error('讀取追蹤清單失敗:', e);
+    return _watchCache;
+  }
 }
 
-function removeStock(code) {
+async function addToList(stock) {
+  try {
+    const r = await fetch(`${API}/api/watchlist`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(stock)
+    });
+    const d = await r.json();
+    return d.ok;
+  } catch(e) { return false; }
+}
+
+async function removeFromList(code) {
+  try {
+    const r = await fetch(`${API}/api/watchlist/${code}`, {method:'DELETE'});
+    const d = await r.json();
+    return d.ok;
+  } catch(e) { return false; }
+}
+
+async function saveNote(code, text) {
+  try {
+    await fetch(`${API}/api/watchlist/${code}/note`, {
+      method: 'PATCH',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({note: text})
+    });
+    // 同步更新快取
+    const item = _watchCache.find(s => s.code === code);
+    if (item) item.note = text;
+  } catch(e) { console.error(e); }
+}
+
+function isWatchingLocal(code) {
+  return _watchCache.some(s => s.code === code);
+}
+
+async function removeStock(code) {
   if (!confirm(`確定移除 ${code}？`)) return;
-  saveList(loadList().filter(s => s.code !== code));
-  render();
-  showToast(`已移除 ${code}`);
+  const ok = await removeFromList(code);
+  if (ok) {
+    _watchCache = _watchCache.filter(s => s.code !== code);
+    render();
+    showToast(`已移除 ${code}`);
+  } else {
+    showToast('❌ 移除失敗，請重試');
+  }
 }
 
-function clearAll() {
+async function clearAll() {
   if (!confirm('確定清空所有追蹤股票？')) return;
-  localStorage.removeItem(WATCHLIST_KEY);
+  const codes = _watchCache.map(s => s.code);
+  for (const code of codes) await removeFromList(code);
+  _watchCache = [];
   render();
   showToast('已清空追蹤清單');
 }
@@ -238,8 +314,8 @@ function updatePriceDisplay() {
   });
 }
 
-function updateStats() {
-  const list = loadList();
+function updateStats(listData) {
+  const list = listData || _watchCache;
   let up = 0, dn = 0, profSum = 0, profCnt = 0;
   list.forEach(s => {
     const p = priceCache[s.code];
@@ -280,10 +356,9 @@ function renderSectors(list) {
 }
 
 // ── 主渲染 ────────────────────────────────────────
-function renderList() {
+function renderList(listData) {
   const query = (document.getElementById('searchBox').value || '').toLowerCase();
-  let list    = loadList();
-  const notes = loadNotes();
+  let list    = listData || _watchCache;
 
   // 搜尋過濾
   if (query) list = list.filter(s =>
@@ -333,7 +408,8 @@ function renderList() {
       </div>
       <div class="stock-actions">
         <button class="act-btn note-btn" onclick="toggleNote('${s.code}')">📝 筆記</button>
-        <button class="act-btn" onclick="window.location.href='/backtest?code=${s.code}'">📊 回測</button>
+        <button class="act-btn" onclick="toggleAnalysis('${s.code}','${s.name||s.code}',${s.addPrice||0})" style="border-color:rgba(61,139,255,.3);color:var(--blu);">📈 分析</button>
+        <button class="act-btn" onclick="window.location.href='/backtest?code=${s.code}'">⚙️ 回測</button>
         <button class="act-btn del-btn" onclick="removeStock('${s.code}')">✕</button>
       </div>
     </div>
@@ -342,8 +418,207 @@ function renderList() {
       <div class="note-footer">
         <button class="save-note-btn" onclick="saveNoteAndClose('${s.code}')">💾 儲存</button>
       </div>
-    </div>`;
+    </div>
+    <div class="analysis-panel" id="analysis-${s.code}" style="display:none;"></div>`;
   }).join('');
+}
+
+// ══════════════════════════════════════════════════════
+// 技術分析面板
+// ══════════════════════════════════════════════════════
+const _analysisCache = {};
+
+async function toggleAnalysis(code, name, addPrice) {
+  const panel = document.getElementById('analysis-' + code);
+  if (!panel) return;
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = 'block';
+  if (_analysisCache[code]) {
+    renderAnalysisPanel(code, name, addPrice, _analysisCache[code], panel);
+    return;
+  }
+  panel.innerHTML = '<div class="ap-loading">⏳ 載入技術分析中...</div>';
+  try {
+    const r = await fetch(`${API}/api/stock/analysis/${code}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    _analysisCache[code] = d;
+    renderAnalysisPanel(code, name, addPrice, d, panel);
+  } catch(e) {
+    panel.innerHTML = `<div class="ap-loading" style="color:var(--red);">❌ ${e.message}</div>`;
+  }
+}
+
+function renderAnalysisPanel(code, name, addPrice, d, panel) {
+  const ind = d.indicators;
+  const adv = d.advice;
+  const lev = d.levels;
+  const cur = d.price;
+
+  // 均線顏色判斷
+  const maTag = (label, val) => {
+    const cls = cur >= val ? 'above' : 'below';
+    const diff = ((cur - val) / val * 100).toFixed(1);
+    return `<span class="ma-tag ${cls}">${label} ${val} (${diff>0?'+':''}${diff}%)</span>`;
+  };
+
+  // KD 訊號顏色
+  const kdColor = ind.kd_signal.includes('黃金') ? 'var(--red)'
+                : ind.kd_signal.includes('死亡') ? 'var(--grn)'
+                : ind.k > ind.d ? 'var(--red)' : 'var(--grn)';
+
+  // RSI 狀態
+  const rsiStatus = ind.rsi14 >= 70 ? '⚠️ 超買' : ind.rsi14 <= 30 ? '✅ 超賣' : '中性';
+
+  // MACD 狀態
+  const macdStatus = ind.macd_hist > 0 ? '📈 多頭' : '📉 空頭';
+
+  // 布林通道位置
+  const bollStatus = ind.boll_pos > 80 ? '⚠️ 接近上軌' : ind.boll_pos < 20 ? '✅ 接近下軌' : `中軌附近 (${ind.boll_pos}%)`;
+
+  // 加入後報酬
+  const profitHtml = addPrice > 0
+    ? `<span style="color:${cur>=addPrice?'var(--red)':'var(--grn)'};">
+        加入後 ${((cur-addPrice)/addPrice*100).toFixed(1)}%
+       </span>`
+    : '';
+
+  // 迷你走勢圖（SVG spark line）
+  const pts = (d.candles||[]).map(c => c.close);
+  const pMin = Math.min(...pts), pMax = Math.max(...pts);
+  const sparkPath = pts.map((v, i) => {
+    const x = (i / (pts.length-1)) * 100;
+    const y = 100 - ((v - pMin) / (pMax - pMin + 0.001)) * 90;
+    return `${i===0?'M':'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const sparkColor = pts[pts.length-1] >= pts[0] ? 'var(--red)' : 'var(--grn)';
+
+  panel.innerHTML = `
+  <div class="analysis-panel-inner">
+    <div class="ap-title">
+      <span>📈 ${code} ${name} 技術分析</span>
+      <span style="font-size:.7rem;color:var(--dim);">${d.date} ${profitHtml}</span>
+    </div>
+
+    <!-- 迷你走勢圖 -->
+    <svg class="mini-chart" viewBox="0 0 100 100" preserveAspectRatio="none"
+         style="border:1px solid var(--bd);border-radius:6px;background:var(--s3);">
+      <path d="${sparkPath}" fill="none" stroke="${sparkColor}" stroke-width="1.5"/>
+    </svg>
+
+    <!-- 趨勢概況 -->
+    <div class="ind-row">
+      <span class="ind-badge" style="color:${ind.trend==='多頭'?'var(--red)':ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">
+        ${ind.trend==='多頭'?'📈':'ind.trend'==='空頭'?'📉':'➡️'} ${ind.trend}趨勢
+      </span>
+      <span class="ind-badge" style="color:${kdColor};">KD ${ind.k}/${ind.d} ${ind.kd_signal}</span>
+      <span class="ind-badge">RSI ${ind.rsi14} ${rsiStatus}</span>
+      <span class="ind-badge">MACD ${macdStatus} (${ind.macd_hist>0?'+':''}${ind.macd_hist})</span>
+      <span class="ind-badge">布林 ${bollStatus}</span>
+    </div>
+
+    <!-- 均線位置 -->
+    <div class="ma-row">
+      ${maTag('MA5',ind.ma5)} ${maTag('MA20',ind.ma20)}
+      ${maTag('MA60',ind.ma60)} ${maTag('MA120',ind.ma120)}
+    </div>
+
+    <!-- 支撐壓力 -->
+    <div style="font-size:.72rem;color:var(--dim);margin-bottom:5px;">📊 支撐 / 壓力</div>
+    <div class="support-row">
+      <div class="sup-box">
+        <div style="color:var(--dim);font-size:.65rem;">強支撐</div>
+        <div style="color:var(--grn);font-weight:700;">${lev.support2}</div>
+      </div>
+      <div class="sup-box">
+        <div style="color:var(--dim);font-size:.65rem;">支撐</div>
+        <div style="color:var(--grn);font-weight:700;">${lev.support1}</div>
+      </div>
+      <div class="sup-box" style="border:1px solid rgba(255,215,0,.2);">
+        <div style="color:var(--gold);font-size:.65rem;font-weight:700;">現價</div>
+        <div style="color:var(--gold);font-weight:700;">${cur}</div>
+      </div>
+      <div class="sup-box">
+        <div style="color:var(--dim);font-size:.65rem;">壓力</div>
+        <div style="color:var(--red);font-weight:700;">${lev.resist1}</div>
+      </div>
+      <div class="sup-box">
+        <div style="color:var(--dim);font-size:.65rem;">強壓力</div>
+        <div style="color:var(--red);font-weight:700;">${lev.resist2}</div>
+      </div>
+    </div>
+
+    <!-- 進場理由 -->
+    <div class="reason-box">💡 ${adv.buy_reason}</div>
+
+    <!-- 建議買賣價 -->
+    <div style="font-size:.72rem;color:var(--dim);margin-bottom:6px;">💰 建議買賣價</div>
+    <div class="price-row">
+      <div class="price-box buy">
+        <div class="price-lbl">建議進場</div>
+        <div class="price-num" style="color:var(--red);">${adv.buy_suggest}</div>
+        <div class="price-sub">現價 ${((adv.buy_suggest-cur)/cur*100).toFixed(1)}%</div>
+      </div>
+      <div class="price-box stop">
+        <div class="price-lbl">停損價</div>
+        <div class="price-num" style="color:var(--grn);">${adv.stop_loss_price}</div>
+        <div class="price-sub">-${adv.stop_loss_pct}%</div>
+      </div>
+      <div class="price-box t1">
+        <div class="price-lbl">目標①</div>
+        <div class="price-num" style="color:var(--gold);">${adv.target1}</div>
+        <div class="price-sub">+${((adv.target1-adv.buy_suggest)/adv.buy_suggest*100).toFixed(1)}%</div>
+      </div>
+      <div class="price-box t2">
+        <div class="price-lbl">目標②</div>
+        <div class="price-num" style="color:var(--blu);">${adv.target2}</div>
+        <div class="price-sub">+${((adv.target2-adv.buy_suggest)/adv.buy_suggest*100).toFixed(1)}%</div>
+      </div>
+      <div class="price-box t3">
+        <div class="price-lbl">目標③</div>
+        <div class="price-num" style="color:var(--pur);">${adv.target3}</div>
+        <div class="price-sub">+${((adv.target3-adv.buy_suggest)/adv.buy_suggest*100).toFixed(1)}%</div>
+      </div>
+    </div>
+
+    <!-- 風報比 + 歷史勝率 -->
+    <div class="ap-grid">
+      <div class="ap-card">
+        <div class="ap-label">風報比（進場→目標②）</div>
+        <div class="ap-value" style="color:${adv.rr2>=2?'var(--grn)':adv.rr2>=1?'var(--gold)':'var(--red)'};">
+          1 : ${adv.rr2} ${adv.rr2>=2?'✅ 優良':adv.rr2>=1?'⚠️ 尚可':'❌ 偏低'}
+        </div>
+      </div>
+      <div class="ap-card">
+        <div class="ap-label">類似條件歷史勝率（10日+5%）</div>
+        <div class="ap-value" style="color:${adv.hist_win_rate>=60?'var(--grn)':adv.hist_win_rate>=50?'var(--gold)':'var(--red)'};">
+          ${adv.hist_win_rate}%
+        </div>
+        <div class="win-bar-wrap"><div class="win-bar" style="width:${adv.hist_win_rate}%"></div></div>
+      </div>
+      <div class="ap-card">
+        <div class="ap-label">ATR 波動度（14日）</div>
+        <div class="ap-value">${ind.atr} 元 (${((ind.atr/cur)*100).toFixed(1)}%)</div>
+      </div>
+      <div class="ap-card">
+        <div class="ap-label">布林通道位置</div>
+        <div class="ap-value">${ind.boll_pos}%
+          <span style="font-size:.65rem;color:var(--dim);">(下軌${ind.boll_dn} / 上軌${ind.boll_up})</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="text-align:center;margin-top:4px;">
+      <button onclick="window.location.href='/backtest?code=${code}'"
+        style="background:linear-gradient(135deg,var(--pur),#7c3aed);border:none;color:#fff;
+               padding:8px 24px;border-radius:8px;font-size:.78rem;cursor:pointer;font-family:'Noto Sans TC',sans-serif;">
+        ⚙️ 進入完整回測
+      </button>
+    </div>
+  </div>`;
 }
 
 function saveNoteAndClose(code) {
@@ -355,12 +630,13 @@ function saveNoteAndClose(code) {
   showToast('筆記已儲存');
 }
 
-function render() {
-  const list = loadList();
+async function render() {
+  document.getElementById('stockList').innerHTML =
+    '<div style="text-align:center;color:var(--dim);padding:24px;font-size:.82rem;">⏳ 載入中...</div>';
+  const list = await loadList();
   renderSectors(list);
-  renderList();
-  updateStats();
-  // 抓即時股價
+  renderList(list);
+  updateStats(list);
   const codes = list.map(s => s.code);
   if (codes.length) fetchPrices(codes);
 }

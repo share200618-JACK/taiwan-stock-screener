@@ -126,6 +126,71 @@ def supabase_load_history(limit=30):
         return []
 
 
+# ══════════════════════════════════════════════════════
+# Supabase 追蹤清單 CRUD
+# ══════════════════════════════════════════════════════
+
+def sb_watchlist_load():
+    """讀取追蹤清單"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/watchlist"
+        params = {"order": "created_at.desc", "limit": "200"}
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            return r.json()
+        return []
+    except Exception as e:
+        print(f"[Watchlist] 讀取失敗: {e}")
+        return []
+
+def sb_watchlist_add(code, name, add_price, add_time, sector, note=""):
+    """新增追蹤股票"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        # 先刪除同代號舊資料（避免重複）
+        url = f"{SUPABASE_URL}/rest/v1/watchlist"
+        requests.delete(url, params={"code": f"eq.{code}"},
+                       headers=_sb_headers(), timeout=8)
+        # 新增
+        payload = {"code": code, "name": name, "add_price": add_price,
+                   "add_time": add_time, "sector": sector, "note": note}
+        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
+        return r.status_code in (200, 201)
+    except Exception as e:
+        print(f"[Watchlist] 新增失敗: {e}")
+        return False
+
+def sb_watchlist_remove(code):
+    """刪除追蹤股票"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/watchlist"
+        r = requests.delete(url, params={"code": f"eq.{code}"},
+                           headers=_sb_headers(), timeout=8)
+        return r.status_code in (200, 204)
+    except Exception as e:
+        print(f"[Watchlist] 刪除失敗: {e}")
+        return False
+
+def sb_watchlist_update_note(code, note):
+    """更新筆記"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/watchlist"
+        r = requests.patch(url, json={"note": note},
+                          params={"code": f"eq.{code}"},
+                          headers=_sb_headers(), timeout=8)
+        return r.status_code in (200, 204)
+    except Exception as e:
+        print(f"[Watchlist] 更新筆記失敗: {e}")
+        return False
+
+
 app = Flask(__name__, static_folder=".", static_url_path="")
 
 @app.after_request
@@ -210,6 +275,43 @@ def predict_page():
 @app.route("/watchlist")
 def watchlist_page():
     return send_from_directory(".", "watchlist.html")
+
+# ── Watchlist API ──────────────────────────────────
+
+@app.route("/api/watchlist", methods=["GET"])
+def api_watchlist_get():
+    """讀取追蹤清單"""
+    rows = sb_watchlist_load()
+    return jsonify({"stocks": rows, "count": len(rows)})
+
+@app.route("/api/watchlist", methods=["POST"])
+def api_watchlist_add():
+    """加入追蹤"""
+    body = request.get_json() or {}
+    code      = body.get("code","").strip()
+    name      = body.get("name","")
+    add_price = float(body.get("add_price", 0) or 0)
+    add_time  = body.get("add_time", datetime.now().strftime("%Y/%m/%d %H:%M"))
+    sector    = body.get("sector","")
+    note      = body.get("note","")
+    if not code:
+        return jsonify({"error": "缺少代號"}), 400
+    ok = sb_watchlist_add(code, name, add_price, add_time, sector, note)
+    return jsonify({"ok": ok, "code": code})
+
+@app.route("/api/watchlist/<code>", methods=["DELETE"])
+def api_watchlist_remove(code):
+    """移除追蹤"""
+    ok = sb_watchlist_remove(code)
+    return jsonify({"ok": ok, "code": code})
+
+@app.route("/api/watchlist/<code>/note", methods=["PATCH"])
+def api_watchlist_note(code):
+    """更新筆記"""
+    body = request.get_json() or {}
+    note = body.get("note","")
+    ok   = sb_watchlist_update_note(code, note)
+    return jsonify({"ok": ok})
 
 @app.route("/api/health")
 def health():
@@ -4091,6 +4193,192 @@ def analyze_progress(task_id):
     prog = _analyze_tasks.get(task_id)
     if not prog: return jsonify({"error":"找不到任務"}), 404
     return jsonify(prog)
+
+@app.route("/api/stock/analysis/<code>")
+def stock_analysis(code):
+    """
+    個股技術分析 + 建議買賣價
+    回傳：技術指標、支撐壓力、建議進場價、目標價、停損價、回測勝率
+    """
+    try:
+        end_dt   = datetime.today().strftime("%Y-%m-%d")
+        start_dt = (datetime.today() - timedelta(days=365)).strftime("%Y-%m-%d")
+        records  = fetch_history_range(code, start_dt, end_dt)
+
+        if len(records) < 30:
+            return jsonify({"error": f"查無 {code} 足夠的歷史資料"}), 404
+
+        closes = [r["close"] for r in records]
+        highs  = [r["high"]  for r in records]
+        lows   = [r["low"]   for r in records]
+        vols   = [r["vol"]   for r in records]
+        dates  = [r["date"]  for r in records]
+
+        cur = closes[-1]
+
+        # ── 均線 ────────────────────────────────────
+        def sma(arr, n):
+            sl = arr[-n:] if len(arr) >= n else arr
+            return round(sum(sl)/len(sl), 2)
+
+        ma5   = sma(closes, 5)
+        ma10  = sma(closes, 10)
+        ma20  = sma(closes, 20)
+        ma60  = sma(closes, 60)
+        ma120 = sma(closes, 120)
+        ma240 = sma(closes, 240)
+
+        # ── KD ──────────────────────────────────────
+        k_series, d_series = calc_kd_series(closes, highs, lows, 9)
+        k_val = k_series[-1];  d_val = d_series[-1]
+        pk    = k_series[-2];  pd    = d_series[-2]
+
+        # ── RSI ─────────────────────────────────────
+        rsi_s = calc_rsi_series(closes, 14)
+        rsi   = rsi_s[-1]
+        rsi6  = calc_rsi_series(closes, 6)[-1]
+
+        # ── MACD ────────────────────────────────────
+        def ema(arr, n):
+            e = arr[0]; k = 2/(n+1)
+            for v in arr[1:]: e = e*(1-k) + v*k
+            return round(e, 2)
+        ema12 = ema(closes, 12); ema26 = ema(closes, 26)
+        macd  = round(ema12 - ema26, 2)
+        sig   = round(ema([(ema(closes[:i+1],12) - ema(closes[:i+1],26))
+                           for i in range(max(0,len(closes)-9), len(closes))], 9), 2)
+        hist_macd = round(macd - sig, 2)
+
+        # ── ATR（波動度）─────────────────────────────
+        atr = calc_atr(highs, lows, closes, 14)
+        atr_val = round(atr[-1] if isinstance(atr, list) else atr, 2)
+
+        # ── 布林通道 ─────────────────────────────────
+        boll_mid = ma20
+        std20    = (sum((c - boll_mid)**2 for c in closes[-20:])/20)**0.5
+        boll_up  = round(boll_mid + 2*std20, 2)
+        boll_dn  = round(boll_mid - 2*std20, 2)
+        boll_pos = round((cur - boll_dn)/(boll_up - boll_dn + 0.001)*100, 1)
+
+        # ── 支撐壓力（近60日最高/低 + 均線）────────
+        hi60 = round(max(highs[-60:]), 2)
+        lo60 = round(min(lows[-60:]),  2)
+        hi20 = round(max(highs[-20:]), 2)
+        lo20 = round(min(lows[-20:]),  2)
+
+        # 支撐：近期低點 + 下方均線中最近的
+        supports = sorted([lo20, lo60, boll_dn, ma20, ma60], reverse=False)
+        support1 = next((s for s in supports if s < cur * 0.99), lo60)
+        support2 = next((s for s in supports if s < support1 * 0.99), lo60 * 0.95)
+
+        # 壓力：近期高點 + 上方均線
+        resistances = sorted([hi20, hi60, boll_up, ma5], reverse=True)
+        resist1 = next((r for r in resistances if r > cur * 1.01), hi60)
+        resist2 = next((r for r in resistances if r > resist1 * 1.01), hi60 * 1.1)
+
+        # ── 建議買賣價（核心功能）───────────────────
+        # 進場策略：依目前技術面狀況給出建議
+        trend = "多頭" if cur > ma20 > ma60 else "空頭" if cur < ma20 < ma60 else "盤整"
+        kd_signal = "黃金交叉" if k_val > d_val and pk < pd else                     "死亡交叉" if k_val < d_val and pk > pd else                     "多頭排列" if k_val > d_val else "空頭排列"
+
+        # 建議進場價：支撐附近（＝現價或稍微跌一點進場）
+        if trend == "多頭" and k_val < 50:
+            # 多頭回檔進場：在 ma20 附近或現價
+            buy_suggest   = round(min(cur, ma20 * 1.01), 2)
+            buy_reason    = f"多頭趨勢回測 MA20（{ma20}），KD 尚未過熱，逢回可買"
+        elif k_val < 30 and rsi < 35:
+            # 超賣反彈進場
+            buy_suggest   = round(cur * 1.005, 2)  # 略高於現價確認反彈
+            buy_reason    = f"KD={k_val:.0f} RSI={rsi:.0f} 雙超賣，反彈機率高，突破 {round(cur*1.005,2)} 可進場"
+        elif cur > ma60 and hist_macd > 0:
+            # 突破趨勢進場
+            buy_suggest   = round(cur * 1.01, 2)
+            buy_reason    = f"站上 MA60 且 MACD 翻正，追漲突破 {round(cur*1.01,2)} 可進場"
+        else:
+            buy_suggest   = round(support1 * 1.01, 2)
+            buy_reason    = f"等待回測支撐 {support1}，反彈確認後進場"
+
+        # 目標價：ATR 法則 + 壓力位
+        target1 = round(buy_suggest * (1 + max(atr_val/cur*100, 5)/100), 2)   # 最低目標 5%
+        target2 = round(min(resist1, buy_suggest * 1.12), 2)                   # 中目標
+        target3 = round(min(resist2, buy_suggest * 1.20), 2)                   # 高目標
+
+        # 停損價：ATR 法則（買入價 - 1.5×ATR）
+        stop_loss_price = round(buy_suggest - atr_val * 1.5, 2)
+        stop_loss_pct   = round((buy_suggest - stop_loss_price) / buy_suggest * 100, 1)
+
+        # 風報比
+        rr1 = round((target1 - buy_suggest) / (buy_suggest - stop_loss_price), 2) if buy_suggest > stop_loss_price else 0
+        rr2 = round((target2 - buy_suggest) / (buy_suggest - stop_loss_price), 2) if buy_suggest > stop_loss_price else 0
+
+        # ── 回測勝率（近半年出現類似條件的勝率）──
+        win_count = 0; total_count = 0
+        for i in range(30, len(closes) - 10):
+            ki = k_series[i]; di = d_series[i]
+            # 類似條件：KD 低檔或均線支撐
+            if ki < 40 or (closes[i] > ma20 and closes[i] < ma20 * 1.02):
+                total_count += 1
+                future_max = max(closes[i:i+10])
+                if future_max >= closes[i] * 1.05:  # 10天內漲 5%
+                    win_count += 1
+        hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
+
+        # ── 近30日 K線資料（前端繪圖用）─────────────
+        recent_n = min(60, len(records))
+        candles  = [{
+            "date":  records[-recent_n+i]["date"],
+            "open":  records[-recent_n+i].get("open", closes[-recent_n+i]),
+            "high":  highs[-recent_n+i],
+            "low":   lows[-recent_n+i],
+            "close": closes[-recent_n+i],
+            "vol":   vols[-recent_n+i],
+            "ma5":   round(sum(closes[max(0,-recent_n+i-4):-recent_n+i+1])/min(5,i+1),2) if i>=0 else closes[-recent_n+i],
+            "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
+        } for i in range(recent_n)]
+
+        return jsonify({
+            "code":   code,
+            "price":  cur,
+            "date":   dates[-1],
+            # 技術指標
+            "indicators": {
+                "ma5":  ma5,  "ma10": ma10, "ma20": ma20,
+                "ma60": ma60, "ma120":ma120,"ma240":ma240,
+                "k": round(k_val,1), "d": round(d_val,1),
+                "rsi14": round(rsi,1), "rsi6": round(rsi6,1),
+                "macd":  macd, "macd_signal": sig, "macd_hist": hist_macd,
+                "atr":   atr_val,
+                "boll_up":  boll_up, "boll_mid": boll_mid, "boll_dn": boll_dn,
+                "boll_pos": boll_pos,
+                "trend":      trend,
+                "kd_signal":  kd_signal,
+                "hi60": hi60, "lo60": lo60,
+                "hi20": hi20, "lo20": lo20,
+            },
+            # 支撐壓力
+            "levels": {
+                "support1":  round(support1,2), "support2":  round(support2,2),
+                "resist1":   round(resist1,2),  "resist2":   round(resist2,2),
+            },
+            # 建議買賣價
+            "advice": {
+                "buy_suggest":      buy_suggest,
+                "buy_reason":       buy_reason,
+                "stop_loss_price":  stop_loss_price,
+                "stop_loss_pct":    stop_loss_pct,
+                "target1":          target1,
+                "target2":          target2,
+                "target3":          target3,
+                "rr1":              rr1,
+                "rr2":              rr2,
+                "hist_win_rate":    hist_win_rate,
+            },
+            "candles": candles,
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
 
 @app.route("/api/sector/rotation")
 def sector_rotation_api():
