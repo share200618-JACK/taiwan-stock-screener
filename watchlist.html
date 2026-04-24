@@ -115,6 +115,25 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .chart-label{font-size:.7rem;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between;}
 .chart-legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;}
 
+/* 登入面板 */
+.login-overlay{position:fixed;inset:0;background:rgba(10,12,16,.97);z-index:100;display:flex;align-items:center;justify-content:center;}
+.login-box{background:var(--s1);border:1px solid var(--bd);border-radius:16px;padding:32px 28px;width:100%;max-width:360px;margin:20px;}
+.login-title{font-size:1.1rem;font-weight:700;margin-bottom:6px;text-align:center;}
+.login-sub{font-size:.78rem;color:var(--dim);text-align:center;margin-bottom:24px;}
+.login-tabs{display:flex;gap:0;margin-bottom:20px;background:var(--s2);border-radius:8px;padding:3px;}
+.login-tab{flex:1;padding:7px;border:none;border-radius:6px;font-size:.8rem;cursor:pointer;background:none;color:var(--dim);font-family:'Noto Sans TC',sans-serif;transition:all .15s;}
+.login-tab.active{background:var(--s3);color:var(--txt);font-weight:600;}
+.login-input{width:100%;background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:10px 13px;color:var(--txt);font-size:.88rem;font-family:'Noto Sans TC',sans-serif;outline:none;margin-bottom:10px;}
+.login-input:focus{border-color:var(--pur);}
+.login-btn{width:100%;padding:11px;border:none;border-radius:9px;font-size:.9rem;font-weight:700;cursor:pointer;font-family:'Noto Sans TC',sans-serif;margin-top:4px;transition:all .15s;}
+.login-btn.primary{background:linear-gradient(135deg,var(--pur),#7c3aed);color:#fff;}
+.login-btn.primary:hover{opacity:.9;}
+.login-err{color:var(--red);font-size:.76rem;text-align:center;margin-top:8px;min-height:18px;}
+.user-bar{display:flex;align-items:center;gap:10px;background:var(--s2);border-radius:8px;padding:7px 12px;margin-bottom:16px;font-size:.8rem;}
+.user-avatar{width:28px;height:28px;background:linear-gradient(135deg,var(--pur),#7c3aed);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;flex-shrink:0;}
+.user-name{font-weight:600;color:var(--pur);}
+.logout-btn{margin-left:auto;padding:4px 10px;border:1px solid var(--bd);border-radius:5px;background:none;color:var(--dim);font-size:.72rem;cursor:pointer;}
+
 /* 排行分析區 */
 .sector-block{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:20px;}
 .sector-title{font-size:.84rem;font-weight:700;color:var(--gold);margin-bottom:10px;}
@@ -126,6 +145,38 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 </style>
 </head>
 <body>
+<!-- 登入覆蓋層 -->
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-box">
+    <div style="text-align:center;font-size:2rem;margin-bottom:8px;">📊</div>
+    <div class="login-title">台股追蹤清單</div>
+    <div class="login-sub">登入後，你的追蹤清單永久保存<br>不同用戶各自獨立，互不影響</div>
+
+    <!-- 登入/註冊頁籤 -->
+    <div class="login-tabs">
+      <button class="login-tab active" id="tabLogin" onclick="switchLoginTab('login')">登入</button>
+      <button class="login-tab" id="tabRegister" onclick="switchLoginTab('register')">註冊新帳號</button>
+    </div>
+
+    <!-- 登入表單 -->
+    <div id="formLogin">
+      <input class="login-input" id="loginUsername" type="text" placeholder="輸入你的暱稱" maxlength="20">
+      <input class="login-input" id="loginPin" type="password" placeholder="4 位數字 PIN" maxlength="4" inputmode="numeric">
+      <button class="login-btn primary" onclick="doLogin()">🚀 登入</button>
+    </div>
+
+    <!-- 註冊表單 -->
+    <div id="formRegister" style="display:none;">
+      <input class="login-input" id="regUsername" type="text" placeholder="設定暱稱（2~20字）" maxlength="20">
+      <input class="login-input" id="regPin" type="password" placeholder="設定 4 位數字 PIN" maxlength="4" inputmode="numeric">
+      <input class="login-input" id="regPin2" type="password" placeholder="再次輸入 PIN 確認" maxlength="4" inputmode="numeric">
+      <button class="login-btn primary" onclick="doRegister()">✨ 建立帳號</button>
+    </div>
+
+    <div class="login-err" id="loginErr"></div>
+  </div>
+</div>
+
 <div class="w">
   <header>
     <div class="logo">
@@ -137,6 +188,16 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       <a href="/" class="back-btn">← 選股</a>
     </div>
   </header>
+
+  <!-- 用戶狀態列 -->
+  <div class="user-bar" id="userBar" style="display:none;">
+    <div class="user-avatar" id="userAvatar">?</div>
+    <div>
+      <div class="user-name" id="userName">—</div>
+      <div style="font-size:.68rem;color:var(--dim);">我的追蹤清單</div>
+    </div>
+    <button class="logout-btn" onclick="doLogout()">登出</button>
+  </div>
 
   <!-- 統計列 -->
   <div class="stats-row">
@@ -190,12 +251,118 @@ const API = (location.hostname === 'localhost' || location.protocol === 'file:')
 
 let currentSort = 'time';
 let priceCache  = {};
-let _watchCache = [];   // 記憶體快取，減少 API 請求
+let _watchCache = [];
+let _userToken  = '';
+let _userName   = '';
+
+// ══════════════════════════════════════════════════════
+// 用戶認證
+// ══════════════════════════════════════════════════════
+const TOKEN_KEY    = 'tw_user_token';
+const USERNAME_KEY = 'tw_username';
+
+function switchLoginTab(tab) {
+  document.getElementById('tabLogin').classList.toggle('active', tab==='login');
+  document.getElementById('tabRegister').classList.toggle('active', tab==='register');
+  document.getElementById('formLogin').style.display    = tab==='login'    ? '' : 'none';
+  document.getElementById('formRegister').style.display = tab==='register' ? '' : 'none';
+  document.getElementById('loginErr').textContent = '';
+}
+
+async function doLogin() {
+  const username = document.getElementById('loginUsername').value.trim();
+  const pin      = document.getElementById('loginPin').value.trim();
+  const errEl    = document.getElementById('loginErr');
+  if (!username || !pin) { errEl.textContent = '請輸入暱稱和 PIN'; return; }
+  errEl.textContent = '登入中...';
+  try {
+    const r = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, pin})
+    });
+    const d = await r.json();
+    if (d.error) { errEl.textContent = d.error; return; }
+    onLoginSuccess(d.token, d.username);
+  } catch(e) {
+    errEl.textContent = '連線失敗，請稍後再試';
+  }
+}
+
+async function doRegister() {
+  const username = document.getElementById('regUsername').value.trim();
+  const pin      = document.getElementById('regPin').value.trim();
+  const pin2     = document.getElementById('regPin2').value.trim();
+  const errEl    = document.getElementById('loginErr');
+  if (!username || username.length < 2) { errEl.textContent = '暱稱至少 2 個字'; return; }
+  if (pin.length !== 4 || !/^\d{4}$/.test(pin)) { errEl.textContent = 'PIN 必須是 4 位數字'; return; }
+  if (pin !== pin2) { errEl.textContent = '兩次 PIN 不一致'; return; }
+  errEl.textContent = '建立帳號中...';
+  try {
+    const r = await fetch(`${API}/api/auth/register`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, pin})
+    });
+    const d = await r.json();
+    if (d.error) { errEl.textContent = d.error; return; }
+    onLoginSuccess(d.token, d.username);
+  } catch(e) {
+    errEl.textContent = '連線失敗，請稍後再試';
+  }
+}
+
+function onLoginSuccess(token, username) {
+  _userToken = token;
+  _userName  = username;
+  localStorage.setItem(TOKEN_KEY,    token);
+  localStorage.setItem(USERNAME_KEY, username);
+  document.getElementById('loginOverlay').style.display = 'none';
+  // 更新 user bar
+  document.getElementById('userBar').style.display  = 'flex';
+  document.getElementById('userName').textContent   = username;
+  document.getElementById('userAvatar').textContent = username.charAt(0).toUpperCase();
+  render();
+}
+
+function doLogout() {
+  if (!confirm('確定登出？')) return;
+  _userToken = ''; _userName = '';
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(USERNAME_KEY);
+  _watchCache = [];
+  document.getElementById('userBar').style.display    = 'none';
+  document.getElementById('loginOverlay').style.display = 'flex';
+  document.getElementById('stockList').innerHTML = '';
+}
+
+async function initAuth() {
+  // 檢查本機是否有已存的 token
+  const savedToken    = localStorage.getItem(TOKEN_KEY);
+  const savedUsername = localStorage.getItem(USERNAME_KEY);
+  if (savedToken && savedUsername) {
+    // 驗證 token 是否還有效
+    try {
+      const r = await fetch(`${API}/api/auth/verify`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({token: savedToken})
+      });
+      const d = await r.json();
+      if (d.valid) {
+        onLoginSuccess(savedToken, savedUsername);
+        return;
+      }
+    } catch(e) {}
+  }
+  // 顯示登入畫面
+  document.getElementById('loginOverlay').style.display = 'flex';
+}
 
 // ── Supabase API 操作 ─────────────────────────────
 async function loadList() {
   try {
-    const r = await fetch(`${API}/api/watchlist`);
+    const r = await fetch(`${API}/api/watchlist?token=${_userToken||'default'}`);
     const d = await r.json();
     _watchCache = d.stocks || [];
     return _watchCache;
@@ -210,7 +377,7 @@ async function addToList(stock) {
     const r = await fetch(`${API}/api/watchlist`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify(stock)
+      body: JSON.stringify({...stock, user_token: _userToken||'default'})
     });
     const d = await r.json();
     return d.ok;
@@ -219,7 +386,11 @@ async function addToList(stock) {
 
 async function removeFromList(code) {
   try {
-    const r = await fetch(`${API}/api/watchlist/${code}`, {method:'DELETE'});
+    const r = await fetch(`${API}/api/watchlist/${code}?token=${_userToken||'default'}`, {
+      method:'DELETE',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({user_token: _userToken||'default'})
+    });
     const d = await r.json();
     return d.ok;
   } catch(e) { return false; }
@@ -230,7 +401,7 @@ async function saveNote(code, text) {
     await fetch(`${API}/api/watchlist/${code}/note`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({note: text})
+      body: JSON.stringify({note: text, user_token: _userToken||'default'})
     });
     // 同步更新快取
     const item = _watchCache.find(s => s.code === code);
@@ -880,11 +1051,11 @@ function showToast(msg) {
   setTimeout(() => t.classList.remove('show'), 2500);
 }
 
-// 初始化
-render();
+// 初始化：先認證再載入
+initAuth();
 // 每 5 分鐘更新一次股價
 setInterval(() => {
-  const codes = loadList().map(s => s.code);
+  const codes = _watchCache.map(s => s.code);
   if (codes.length) fetchPrices(codes);
 }, 300000);
 </script>

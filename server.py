@@ -130,13 +130,83 @@ def supabase_load_history(limit=30):
 # Supabase 追蹤清單 CRUD
 # ══════════════════════════════════════════════════════
 
-def sb_watchlist_load():
-    """讀取追蹤清單"""
+# ── 用戶認證 ──────────────────────────────────────
+
+def _hash_pin(pin):
+    """簡單 PIN hash（SHA256）"""
+    import hashlib
+    return hashlib.sha256(pin.encode()).hexdigest()
+
+def _gen_token(username):
+    """產生用戶唯一 token"""
+    import hashlib, time
+    raw = f"{username}_{time.time()}_{os.urandom(8).hex()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+def sb_user_register(username, pin):
+    """註冊新用戶，回傳 token 或 None"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None, "未設定資料庫"
+    try:
+        url   = f"{SUPABASE_URL}/rest/v1/users"
+        token = _gen_token(username)
+        payload = {
+            "username":   username.strip(),
+            "pin_hash":   _hash_pin(pin),
+            "user_token": token,
+        }
+        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
+        if r.status_code in (200, 201):
+            return token, None
+        # 用戶名重複
+        if "duplicate" in r.text.lower() or "unique" in r.text.lower():
+            return None, "此暱稱已被使用，請換一個"
+        return None, f"註冊失敗 ({r.status_code})"
+    except Exception as e:
+        return None, str(e)
+
+def sb_user_login(username, pin):
+    """登入，回傳 token 或 None"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None, "未設定資料庫"
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/users"
+        params = {"username": f"eq.{username.strip()}", "select": "user_token,pin_hash"}
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            rows = r.json()
+            if not rows:
+                return None, "找不到此暱稱"
+            row = rows[0]
+            if row["pin_hash"] == _hash_pin(pin):
+                return row["user_token"], None
+            return None, "PIN 錯誤"
+        return None, f"登入失敗 ({r.status_code})"
+    except Exception as e:
+        return None, str(e)
+
+def sb_token_valid(token):
+    """驗證 token 是否存在"""
+    if not token or not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/users"
+        params = {"user_token": f"eq.{token}", "select": "id"}
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=8)
+        return r.status_code == 200 and len(r.json()) > 0
+    except:
+        return False
+
+# ── Watchlist（支援多用戶）─────────────────────────
+
+def sb_watchlist_load(user_token="default"):
+    """讀取指定用戶的追蹤清單"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return []
     try:
         url = f"{SUPABASE_URL}/rest/v1/watchlist"
-        params = {"order": "created_at.desc", "limit": "200"}
+        params = {"user_token": f"eq.{user_token}",
+                  "order": "created_at.desc", "limit": "200"}
         r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
         if r.status_code == 200:
             return r.json()
@@ -145,45 +215,48 @@ def sb_watchlist_load():
         print(f"[Watchlist] 讀取失敗: {e}")
         return []
 
-def sb_watchlist_add(code, name, add_price, add_time, sector, note=""):
+def sb_watchlist_add(code, name, add_price, add_time, sector, note="", user_token="default"):
     """新增追蹤股票"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return False
     try:
-        # 先刪除同代號舊資料（避免重複）
         url = f"{SUPABASE_URL}/rest/v1/watchlist"
-        requests.delete(url, params={"code": f"eq.{code}"},
+        # 先刪除該用戶的同代號舊資料
+        requests.delete(url, params={"code": f"eq.{code}",
+                                     "user_token": f"eq.{user_token}"},
                        headers=_sb_headers(), timeout=8)
-        # 新增
         payload = {"code": code, "name": name, "add_price": add_price,
-                   "add_time": add_time, "sector": sector, "note": note}
+                   "add_time": add_time, "sector": sector, "note": note,
+                   "user_token": user_token}
         r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
         return r.status_code in (200, 201)
     except Exception as e:
         print(f"[Watchlist] 新增失敗: {e}")
         return False
 
-def sb_watchlist_remove(code):
+def sb_watchlist_remove(code, user_token="default"):
     """刪除追蹤股票"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return False
     try:
         url = f"{SUPABASE_URL}/rest/v1/watchlist"
-        r = requests.delete(url, params={"code": f"eq.{code}"},
+        r = requests.delete(url, params={"code": f"eq.{code}",
+                                         "user_token": f"eq.{user_token}"},
                            headers=_sb_headers(), timeout=8)
         return r.status_code in (200, 204)
     except Exception as e:
         print(f"[Watchlist] 刪除失敗: {e}")
         return False
 
-def sb_watchlist_update_note(code, note):
+def sb_watchlist_update_note(code, note, user_token="default"):
     """更新筆記"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return False
     try:
         url = f"{SUPABASE_URL}/rest/v1/watchlist"
         r = requests.patch(url, json={"note": note},
-                          params={"code": f"eq.{code}"},
+                          params={"code": f"eq.{code}",
+                                  "user_token": f"eq.{user_token}"},
                           headers=_sb_headers(), timeout=8)
         return r.status_code in (200, 204)
     except Exception as e:
@@ -276,41 +349,85 @@ def predict_page():
 def watchlist_page():
     return send_from_directory(".", "watchlist.html")
 
+# ── 用戶認證 API ──────────────────────────────────
+
+@app.route("/api/auth/register", methods=["POST"])
+def api_register():
+    body     = request.get_json() or {}
+    username = body.get("username","").strip()
+    pin      = body.get("pin","").strip()
+    if not username or len(username) < 2:
+        return jsonify({"error": "暱稱至少 2 個字"}), 400
+    if not pin or len(pin) != 4 or not pin.isdigit():
+        return jsonify({"error": "PIN 必須是 4 位數字"}), 400
+    token, err = sb_user_register(username, pin)
+    if err:
+        return jsonify({"error": err}), 400
+    return jsonify({"ok": True, "token": token, "username": username})
+
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    body     = request.get_json() or {}
+    username = body.get("username","").strip()
+    pin      = body.get("pin","").strip()
+    if not username or not pin:
+        return jsonify({"error": "請輸入暱稱和 PIN"}), 400
+    token, err = sb_user_login(username, pin)
+    if err:
+        return jsonify({"error": err}), 401
+    return jsonify({"ok": True, "token": token, "username": username})
+
+@app.route("/api/auth/verify", methods=["POST"])
+def api_verify():
+    body  = request.get_json() or {}
+    token = body.get("token","")
+    valid = sb_token_valid(token)
+    return jsonify({"valid": valid})
+
+def _get_token():
+    """從 request header 或 body 取得 user_token"""
+    token = request.headers.get("X-User-Token","")
+    if not token:
+        body  = request.get_json(silent=True) or {}
+        token = body.get("user_token","")
+    return token or "default"
+
 # ── Watchlist API ──────────────────────────────────
 
 @app.route("/api/watchlist", methods=["GET"])
 def api_watchlist_get():
-    """讀取追蹤清單"""
-    rows = sb_watchlist_load()
+    token = request.args.get("token", "default")
+    rows  = sb_watchlist_load(token)
     return jsonify({"stocks": rows, "count": len(rows)})
 
 @app.route("/api/watchlist", methods=["POST"])
 def api_watchlist_add():
-    """加入追蹤"""
-    body = request.get_json() or {}
+    body      = request.get_json() or {}
     code      = body.get("code","").strip()
     name      = body.get("name","")
     add_price = float(body.get("add_price", 0) or 0)
     add_time  = body.get("add_time", datetime.now().strftime("%Y/%m/%d %H:%M"))
     sector    = body.get("sector","")
     note      = body.get("note","")
+    token     = body.get("user_token","default")
     if not code:
         return jsonify({"error": "缺少代號"}), 400
-    ok = sb_watchlist_add(code, name, add_price, add_time, sector, note)
+    ok = sb_watchlist_add(code, name, add_price, add_time, sector, note, token)
     return jsonify({"ok": ok, "code": code})
 
 @app.route("/api/watchlist/<code>", methods=["DELETE"])
 def api_watchlist_remove(code):
-    """移除追蹤"""
-    ok = sb_watchlist_remove(code)
+    body  = request.get_json(silent=True) or {}
+    token = body.get("user_token") or request.args.get("token","default")
+    ok    = sb_watchlist_remove(code, token)
     return jsonify({"ok": ok, "code": code})
 
 @app.route("/api/watchlist/<code>/note", methods=["PATCH"])
 def api_watchlist_note(code):
-    """更新筆記"""
-    body = request.get_json() or {}
-    note = body.get("note","")
-    ok   = sb_watchlist_update_note(code, note)
+    body  = request.get_json() or {}
+    note  = body.get("note","")
+    token = body.get("user_token","default")
+    ok    = sb_watchlist_update_note(code, note, token)
     return jsonify({"ok": ok})
 
 @app.route("/api/health")
