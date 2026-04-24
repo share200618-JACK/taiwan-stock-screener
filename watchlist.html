@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>我的追蹤清單</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
 :root{
@@ -110,7 +111,9 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .win-bar{background:linear-gradient(90deg,var(--grn),var(--gold));border-radius:5px;height:8px;transition:width .5s;}
 .reason-box{background:rgba(61,139,255,.06);border:1px solid rgba(61,139,255,.15);border-radius:8px;padding:10px 12px;font-size:.75rem;color:var(--txt);line-height:1.5;margin-bottom:10px;}
 .ap-loading{text-align:center;color:var(--dim);padding:20px;font-size:.82rem;}
-.mini-chart{width:100%;height:100px;margin-bottom:10px;}
+.chart-container{background:var(--s3);border:1px solid var(--bd);border-radius:8px;padding:10px;margin-bottom:10px;}
+.chart-label{font-size:.7rem;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between;}
+.chart-legend-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;}
 
 /* 排行分析區 */
 .sector-block{background:var(--s1);border:1px solid var(--bd);border-radius:11px;padding:14px 16px;margin-bottom:20px;}
@@ -487,15 +490,12 @@ function renderAnalysisPanel(code, name, addPrice, d, panel) {
        </span>`
     : '';
 
-  // 迷你走勢圖（SVG spark line）
-  const pts = (d.candles||[]).map(c => c.close);
-  const pMin = Math.min(...pts), pMax = Math.max(...pts);
-  const sparkPath = pts.map((v, i) => {
-    const x = (i / (pts.length-1)) * 100;
-    const y = 100 - ((v - pMin) / (pMax - pMin + 0.001)) * 90;
-    return `${i===0?'M':'L'}${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
-  const sparkColor = pts[pts.length-1] >= pts[0] ? 'var(--red)' : 'var(--grn)';
+  // 圖表 ID（每支股票獨立）
+  const chartId  = `kline_${code}`;
+  const kdId     = `kd_${code}`;
+  const candles  = d.candles || [];
+  const pts      = candles.map(c => c.close);
+  const sparkColor = pts.length && pts[pts.length-1] >= pts[0] ? '#ff4d5e' : '#27d981';
 
   panel.innerHTML = `
   <div class="analysis-panel-inner">
@@ -504,11 +504,31 @@ function renderAnalysisPanel(code, name, addPrice, d, panel) {
       <span style="font-size:.7rem;color:var(--dim);">${d.date} ${profitHtml}</span>
     </div>
 
-    <!-- 迷你走勢圖 -->
-    <svg class="mini-chart" viewBox="0 0 100 100" preserveAspectRatio="none"
-         style="border:1px solid var(--bd);border-radius:6px;background:var(--s3);">
-      <path d="${sparkPath}" fill="none" stroke="${sparkColor}" stroke-width="1.5"/>
-    </svg>
+    <!-- K 線圖 -->
+    <div class="chart-container">
+      <div class="chart-label">
+        <span>📈 K線圖（近60日）</span>
+        <span>
+          <span class="chart-legend-dot" style="background:#e4eaf5;"></span>收盤
+          <span class="chart-legend-dot" style="background:#f0b429;margin-left:6px;"></span>MA5
+          <span class="chart-legend-dot" style="background:#3d8bff;margin-left:6px;"></span>MA20
+          <span class="chart-legend-dot" style="background:#a855f7;margin-left:6px;"></span>MA60
+        </span>
+      </div>
+      <canvas id="${chartId}" height="180"></canvas>
+    </div>
+
+    <!-- KD 圖 -->
+    <div class="chart-container">
+      <div class="chart-label">
+        <span>📊 KD 指標</span>
+        <span>
+          <span class="chart-legend-dot" style="background:#f0b429;"></span>K=${ind.k}
+          <span class="chart-legend-dot" style="background:#3d8bff;margin-left:6px;"></span>D=${ind.d}
+        </span>
+      </div>
+      <canvas id="${kdId}" height="80"></canvas>
+    </div>
 
     <!-- 趨勢概況 -->
     <div class="ind-row">
@@ -620,6 +640,217 @@ function renderAnalysisPanel(code, name, addPrice, d, panel) {
       </button>
     </div>
   </div>`;
+
+  // 繪製圖表（面板 HTML 插入後執行）
+  setTimeout(() => drawCharts(code, d), 50);
+}
+
+// 圖表實例快取（避免重複建立）
+const _chartInst = {};
+
+function drawCharts(code, d) {
+  const candles = d.candles || [];
+  if (!candles.length) return;
+
+  const labels  = candles.map(c => c.date.substring(5));  // MM-DD
+  const closes  = candles.map(c => c.close);
+  const ma5s    = candles.map(c => c.ma5);
+  const ma20s   = candles.map(c => c.ma20);
+
+  // MA60：從指標拿（candles 可能沒有）
+  const ind = d.indicators;
+  const chartId = `kline_${code}`;
+  const kdId    = `kd_${code}`;
+
+  // 銷毀舊圖表
+  if (_chartInst[chartId]) { _chartInst[chartId].destroy(); }
+  if (_chartInst[kdId])    { _chartInst[kdId].destroy(); }
+
+  const ctxK = document.getElementById(chartId);
+  const ctxKD = document.getElementById(kdId);
+  if (!ctxK || !ctxKD) return;
+
+  // ── K線圖 ──────────────────────────────────────
+  const lineColor = closes[closes.length-1] >= closes[0] ? '#ff4d5e' : '#27d981';
+
+  _chartInst[chartId] = new Chart(ctxK.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: '收盤價',
+          data: closes,
+          borderColor: '#e4eaf5',
+          borderWidth: 1.8,
+          pointRadius: 0,
+          tension: 0.1,
+          fill: {
+            target: 'origin',
+            above: lineColor + '12',
+          },
+          order: 4,
+        },
+        {
+          label: 'MA5',
+          data: ma5s,
+          borderColor: '#f0b429',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1,
+          order: 3,
+        },
+        {
+          label: 'MA20',
+          data: ma20s,
+          borderColor: '#3d8bff',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1,
+          order: 2,
+        },
+        // 支撐線（水平）
+        {
+          label: '支撐',
+          data: Array(labels.length).fill(d.levels.support1),
+          borderColor: '#27d98150',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0,
+          order: 1,
+        },
+        // 壓力線（水平）
+        {
+          label: '壓力',
+          data: Array(labels.length).fill(d.levels.resist1),
+          borderColor: '#ff4d5e50',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          tension: 0,
+          order: 0,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#1e2330',
+          borderColor: '#252a38',
+          borderWidth: 1,
+          callbacks: {
+            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}`
+          }
+        },
+        // 建議進場標記
+        annotation: {}
+      },
+      scales: {
+        x: {
+          ticks: { color: '#6a748f', maxTicksLimit: 8, font: { size: 10 } },
+          grid:  { color: 'rgba(255,255,255,.04)' }
+        },
+        y: {
+          ticks:    { color: '#6a748f', font: { size: 10 } },
+          grid:     { color: 'rgba(255,255,255,.04)' },
+          position: 'right'
+        }
+      }
+    }
+  });
+
+  // ── KD 圖 ──────────────────────────────────────
+  // 從歷史資料計算 KD 序列
+  const k_series = [], d_series = [];
+  let k = 50, dv = 50;
+  for (let i = 0; i < closes.length; i++) {
+    const n   = Math.min(9, i + 1);
+    const rh  = Math.max(...candles.slice(Math.max(0, i-n+1), i+1).map(c => c.high || closes[i]));
+    const rl  = Math.min(...candles.slice(Math.max(0, i-n+1), i+1).map(c => c.low  || closes[i]));
+    const rsv = rh === rl ? 0 : (closes[i] - rl) / (rh - rl) * 100;
+    k  = k  * 2/3 + rsv * 1/3;
+    dv = dv * 2/3 + k   * 1/3;
+    k_series.push(Math.round(k * 10) / 10);
+    d_series.push(Math.round(dv * 10) / 10);
+  }
+
+  _chartInst[kdId] = new Chart(ctxKD.getContext('2d'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'K',
+          data: k_series,
+          borderColor: '#f0b429',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1,
+        },
+        {
+          label: 'D',
+          data: d_series,
+          borderColor: '#3d8bff',
+          borderWidth: 1.5,
+          pointRadius: 0,
+          tension: 0.1,
+        },
+        // 超買線 80
+        {
+          label: '超買',
+          data: Array(labels.length).fill(80),
+          borderColor: '#ff4d5e30',
+          borderWidth: 1,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          tension: 0,
+        },
+        // 超賣線 20
+        {
+          label: '超賣',
+          data: Array(labels.length).fill(20),
+          borderColor: '#27d98130',
+          borderWidth: 1,
+          borderDash: [3, 3],
+          pointRadius: 0,
+          tension: 0,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          labels: { color: '#6a748f', font: { size: 10 }, boxWidth: 12 }
+        },
+        tooltip: {
+          backgroundColor: '#1e2330',
+          borderColor: '#252a38',
+          borderWidth: 1,
+        }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#6a748f', maxTicksLimit: 8, font: { size: 10 } },
+          grid:  { color: 'rgba(255,255,255,.04)' }
+        },
+        y: {
+          min: 0, max: 100,
+          ticks:    { color: '#6a748f', font: { size: 10 } },
+          grid:     { color: 'rgba(255,255,255,.04)' },
+          position: 'right'
+        }
+      }
+    }
+  });
 }
 
 async function saveNoteAndClose(code) {
