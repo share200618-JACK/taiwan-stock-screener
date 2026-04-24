@@ -616,7 +616,8 @@ async function loadLatestResult() {
 // 頁面載入後自動檢查狀態
 window.addEventListener('DOMContentLoaded', () => {
   checkAutoResultStatus();
-  updateCustomHistoryCount();  // 顯示查詢紀錄筆數
+  updateCustomHistoryCount();
+  loadWatchingCodes();  // 載入已追蹤的代號，讓按鈕顯示正確狀態
 });
 
 async function startAnalysis() {
@@ -721,44 +722,63 @@ function showError(msg) {
 }
 
 // ══════════════════════════════════════════════════════
-// 追蹤清單（Watch List）— localStorage 儲存
+// 追蹤清單（Watch List）— Supabase 永久儲存
 // ══════════════════════════════════════════════════════
-const WATCHLIST_KEY = 'tw_stock_watchlist';
+let _watchingCodes = new Set();  // 快取已追蹤的代號
 
-function loadWatchList() {
-  try { return JSON.parse(localStorage.getItem(WATCHLIST_KEY) || '[]'); }
-  catch { return []; }
+async function loadWatchingCodes() {
+  try {
+    const r = await fetch(`${API}/api/watchlist`);
+    const d = await r.json();
+    _watchingCodes = new Set((d.stocks||[]).map(s => s.code));
+  } catch(e) { console.log('追蹤清單載入失敗:', e); }
 }
-function saveWatchList(list) {
-  localStorage.setItem(WATCHLIST_KEY, JSON.stringify(list));
-}
+
 function isWatching(code) {
-  return loadWatchList().some(s => s.code === code);
+  return _watchingCodes.has(code);
 }
-function toggleWatch(code, name, price, sector, btn) {
-  let list = loadWatchList();
-  if (isWatching(code)) {
-    list = list.filter(s => s.code !== code);
-    if (btn) { btn.textContent = '+ 追蹤'; btn.style.background = 'rgba(39,217,129,.15)'; btn.style.color = 'var(--grn)'; }
-    showToast(`已移除 ${code} ${name}`);
-  } else {
-    list.unshift({
-      code, name, price,
-      sector:    sector || '—',
-      addTime:   new Date().toLocaleString('zh-TW', {hour12:false}),
-      addPrice:  price,
+
+async function toggleWatch(code, name, price, sector, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '...'; }
+  try {
+    if (isWatching(code)) {
+      // 移除
+      const r = await fetch(`${API}/api/watchlist/${code}`, {method:'DELETE'});
+      const d = await r.json();
+      if (d.ok) {
+        _watchingCodes.delete(code);
+        showToast(`已移除 ${code} ${name}`);
+      }
+    } else {
+      // 加入
+      const r = await fetch(`${API}/api/watchlist`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          code, name,
+          add_price: price,
+          add_time:  new Date().toLocaleString('zh-TW', {hour12:false}),
+          sector:    sector || '',
+        })
+      });
+      const d = await r.json();
+      if (d.ok) {
+        _watchingCodes.add(code);
+        showToast(`✅ 已加入追蹤：${code} ${name}`);
+      }
+    }
+  } catch(e) {
+    showToast(`❌ 操作失敗：${e.message}`);
+  } finally {
+    // 同步更新所有同代號按鈕
+    document.querySelectorAll(`[data-watch-code="${code}"]`).forEach(el => {
+      const watching = isWatching(code);
+      el.disabled    = false;
+      el.textContent = watching ? '✓ 追蹤中' : '+ 追蹤';
+      el.style.background = watching ? 'rgba(168,85,247,.2)' : 'rgba(39,217,129,.15)';
+      el.style.color = watching ? 'var(--pur)' : 'var(--grn)';
     });
-    if (btn) { btn.textContent = '✓ 追蹤中'; btn.style.background = 'rgba(168,85,247,.2)'; btn.style.color = 'var(--pur)'; }
-    showToast(`✅ 已加入追蹤：${code} ${name}`);
   }
-  saveWatchList(list);
-  // 同步更新所有同代號的按鈕
-  document.querySelectorAll(`[data-watch-code="${code}"]`).forEach(el => {
-    const watching = isWatching(code);
-    el.textContent = watching ? '✓ 追蹤中' : '+ 追蹤';
-    el.style.background = watching ? 'rgba(168,85,247,.2)' : 'rgba(39,217,129,.15)';
-    el.style.color = watching ? 'var(--pur)' : 'var(--grn)';
-  });
 }
 
 // ══════════════════════════════════════════════════════

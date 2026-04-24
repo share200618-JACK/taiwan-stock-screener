@@ -369,7 +369,6 @@ function renderList(listData) {
   // 排序
   if (currentSort === 'code')   list.sort((a,b) => a.code.localeCompare(b.code));
   if (currentSort === 'sector') list.sort((a,b) => (a.sector||'').localeCompare(b.sector||''));
-  // 'time' 預設是加入順序（已是最新在前）
 
   const el = document.getElementById('stockList');
   const empty = document.getElementById('emptyState');
@@ -383,10 +382,12 @@ function renderList(listData) {
 
   el.innerHTML = list.map((s, i) => {
     const p = priceCache[s.code];
-    const curPrice = p ? p.price : s.addPrice;
+    // Supabase 欄位是 add_price，本地快取是 addPrice，兩者都支援
+    const addPrice = s.add_price || s.addPrice || 0;
+    const curPrice = p ? p.price : addPrice;
     const chgPct   = p ? p.chgPct : 0;
-    const profit   = s.addPrice > 0 ? ((curPrice - s.addPrice) / s.addPrice * 100).toFixed(1) : null;
-    const note     = notes[s.code] || '';
+    const profit   = addPrice > 0 ? ((curPrice - addPrice) / addPrice * 100).toFixed(1) : null;
+    const note     = s.note || '';
 
     return `
     <div class="stock-item" id="item-${s.code}">
@@ -396,7 +397,7 @@ function renderList(listData) {
         <div class="stock-name">${s.name||s.code}</div>
         <div class="stock-meta">
           ${s.sector ? `<span style="color:var(--pur)">${s.sector}</span> ・ ` : ''}
-          加入 ${s.addTime||'—'}
+          加入 ${s.add_time||s.addTime||'—'}
           ${note ? ` ・ 📝 ${note.substring(0,20)}${note.length>20?'...':''}` : ''}
         </div>
       </div>
@@ -408,7 +409,7 @@ function renderList(listData) {
       </div>
       <div class="stock-actions">
         <button class="act-btn note-btn" onclick="toggleNote('${s.code}')">📝 筆記</button>
-        <button class="act-btn" onclick="toggleAnalysis('${s.code}','${s.name||s.code}',${s.addPrice||0})" style="border-color:rgba(61,139,255,.3);color:var(--blu);">📈 分析</button>
+        <button class="act-btn" onclick="toggleAnalysis('${s.code}','${s.name||s.code}',${s.add_price||s.addPrice||0})" style="border-color:rgba(61,139,255,.3);color:var(--blu);">📈 分析</button>
         <button class="act-btn" onclick="window.location.href='/backtest?code=${s.code}'">⚙️ 回測</button>
         <button class="act-btn del-btn" onclick="removeStock('${s.code}')">✕</button>
       </div>
@@ -621,10 +622,10 @@ function renderAnalysisPanel(code, name, addPrice, d, panel) {
   </div>`;
 }
 
-function saveNoteAndClose(code) {
+async function saveNoteAndClose(code) {
   const ta = document.getElementById('noteInput-' + code);
   if (!ta) return;
-  saveNote(code, ta.value);
+  await saveNote(code, ta.value);
   document.getElementById('note-' + code).style.display = 'none';
   renderList();
   showToast('筆記已儲存');
