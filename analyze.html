@@ -102,6 +102,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 /* 免責聲明 */
 .disclaimer{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;font-size:.74rem;color:var(--dim);line-height:1.8;margin-top:18px;}
 </style>
+<script src="/auth.js"></script>
 </head>
 <body>
 <div class="w">
@@ -112,6 +113,10 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   </div>
   <a href="/watchlist" class="back-btn" style="border-color:rgba(39,217,129,.3);color:var(--grn);">👁️ 追蹤清單</a>
   <a class="back-btn" href="/">← 回到選股</a>
+</div>
+<!-- 用戶狀態列 -->
+<div id="authBar" style="margin-bottom:12px;"></div>
+<div style="display:none">
 </header>
 
 <!-- 設定區：模式切換 -->
@@ -614,10 +619,15 @@ async function loadLatestResult() {
 }
 
 // 頁面載入後自動檢查狀態
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
+  // 驗證登入
+  const user = await requireAuth();
+  if (!user) return;  // 未登入，已跳轉到 /login
+  renderAuthBar('authBar');
+
   checkAutoResultStatus();
   updateCustomHistoryCount();
-  loadWatchingCodes();  // 載入已追蹤的代號，讓按鈕顯示正確狀態
+  loadWatchingCodes();
 });
 
 async function startAnalysis() {
@@ -728,7 +738,7 @@ let _watchingCodes = new Set();  // 快取已追蹤的代號
 
 async function loadWatchingCodes() {
   try {
-    const r = await fetch(`${API}/api/watchlist`);
+    const r = await fetch(`${API}/api/watchlist?token=${getToken()||'default'}`);
     const d = await r.json();
     _watchingCodes = new Set((d.stocks||[]).map(s => s.code));
   } catch(e) { console.log('追蹤清單載入失敗:', e); }
@@ -743,7 +753,11 @@ async function toggleWatch(code, name, price, sector, btn) {
   try {
     if (isWatching(code)) {
       // 移除
-      const r = await fetch(`${API}/api/watchlist/${code}`, {method:'DELETE'});
+      const r = await fetch(`${API}/api/watchlist/${code}?token=${getToken()||'default'}`, {
+      method:'DELETE',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({user_token: getToken()||'default'})
+    });
       const d = await r.json();
       if (d.ok) {
         _watchingCodes.delete(code);
@@ -756,9 +770,10 @@ async function toggleWatch(code, name, price, sector, btn) {
         headers: {'Content-Type':'application/json'},
         body: JSON.stringify({
           code, name,
-          add_price: price,
-          add_time:  new Date().toLocaleString('zh-TW', {hour12:false}),
-          sector:    sector || '',
+          add_price:  price,
+          add_time:   new Date().toLocaleString('zh-TW', {hour12:false}),
+          sector:     sector || '',
+          user_token: getToken() || 'default',
         })
       });
       const d = await r.json();

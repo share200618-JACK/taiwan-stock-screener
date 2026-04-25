@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登入 — 台股智慧選股</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@700&display=swap');
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Noto Sans TC',sans-serif;background:#0a0c10;color:#e4eaf5;
+     min-height:100vh;display:flex;align-items:center;justify-content:center;}
+body::before{content:'';position:fixed;inset:0;
+  background:radial-gradient(ellipse 60% 40% at 20% 20%,rgba(168,85,247,.1) 0%,transparent 60%),
+             radial-gradient(ellipse 50% 50% at 80% 80%,rgba(39,217,129,.07) 0%,transparent 60%);
+  pointer-events:none;}
+
+.box{background:#111318;border:1px solid #252a38;border-radius:20px;
+     padding:36px 32px;width:100%;max-width:380px;margin:20px;
+     box-shadow:0 20px 60px rgba(0,0,0,.5);position:relative;z-index:1;}
+
+.logo{text-align:center;margin-bottom:28px;}
+.logo-icon{width:56px;height:56px;background:linear-gradient(135deg,#a855f7,#7c3aed);
+           border-radius:14px;display:inline-flex;align-items:center;justify-content:center;
+           font-size:28px;margin-bottom:12px;box-shadow:0 0 30px rgba(168,85,247,.3);}
+.logo h1{font-size:1.2rem;font-weight:700;}
+.logo h1 span{color:#a855f7;}
+.logo p{font-size:.75rem;color:#6a748f;margin-top:4px;}
+
+.tabs{display:flex;background:#161b25;border-radius:10px;padding:4px;margin-bottom:24px;}
+.tab{flex:1;padding:9px;border:none;border-radius:7px;font-size:.82rem;font-weight:600;
+     cursor:pointer;background:none;color:#6a748f;font-family:'Noto Sans TC',sans-serif;
+     transition:all .15s;}
+.tab.active{background:#1e2330;color:#e4eaf5;box-shadow:0 2px 8px rgba(0,0,0,.3);}
+
+.field{margin-bottom:14px;}
+.field label{display:block;font-size:.74rem;color:#6a748f;margin-bottom:5px;}
+.field input{width:100%;background:#161b25;border:1px solid #252a38;border-radius:9px;
+             padding:11px 14px;color:#e4eaf5;font-size:.9rem;
+             font-family:'Noto Sans TC',sans-serif;outline:none;transition:border-color .15s;}
+.field input:focus{border-color:#a855f7;}
+.field .hint{font-size:.68rem;color:#6a748f;margin-top:4px;}
+
+.btn{width:100%;padding:12px;border:none;border-radius:10px;font-size:.92rem;font-weight:700;
+     cursor:pointer;font-family:'Noto Sans TC',sans-serif;margin-top:6px;
+     background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;
+     transition:opacity .15s;box-shadow:0 4px 20px rgba(168,85,247,.3);}
+.btn:hover{opacity:.9;}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+
+.err{color:#ff4d5e;font-size:.76rem;text-align:center;margin-top:10px;min-height:20px;}
+.ok {color:#27d981;font-size:.76rem;text-align:center;margin-top:10px;}
+
+.divider{text-align:center;color:#6a748f;font-size:.72rem;margin:16px 0;position:relative;}
+.divider::before,.divider::after{content:'';position:absolute;top:50%;width:35%;height:1px;background:#252a38;}
+.divider::before{left:0;} .divider::after{right:0;}
+
+.features{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:20px;}
+.feature{background:#161b25;border-radius:8px;padding:10px 12px;font-size:.72rem;}
+.feature-icon{font-size:1.1rem;margin-bottom:3px;}
+.feature-text{color:#6a748f;}
+</style>
+</head>
+<body>
+<div class="box">
+  <div class="logo">
+    <div class="logo-icon">📊</div>
+    <h1>台股<span>智慧選股</span>系統</h1>
+    <p>登入後享有完整功能・資料永久保存・多裝置同步</p>
+  </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tabLogin" onclick="switchTab('login')">登入</button>
+    <button class="tab" id="tabReg" onclick="switchTab('reg')">免費註冊</button>
+  </div>
+
+  <!-- 登入表單 -->
+  <div id="fLogin">
+    <div class="field">
+      <label>暱稱</label>
+      <input id="lUser" type="text" placeholder="輸入你的暱稱" maxlength="20"
+             onkeydown="if(event.key==='Enter')document.getElementById('lPin').focus()">
+    </div>
+    <div class="field">
+      <label>PIN 碼</label>
+      <input id="lPin" type="password" placeholder="4 位數字" maxlength="4" inputmode="numeric"
+             onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn" id="btnLogin" onclick="doLogin()">🚀 登入</button>
+  </div>
+
+  <!-- 註冊表單 -->
+  <div id="fReg" style="display:none;">
+    <div class="field">
+      <label>設定暱稱</label>
+      <input id="rUser" type="text" placeholder="2~20 個字" maxlength="20">
+      <div class="hint">暱稱是你的唯一識別，建立後無法修改</div>
+    </div>
+    <div class="field">
+      <label>設定 PIN 碼</label>
+      <input id="rPin" type="password" placeholder="4 位數字" maxlength="4" inputmode="numeric">
+    </div>
+    <div class="field">
+      <label>確認 PIN 碼</label>
+      <input id="rPin2" type="password" placeholder="再輸入一次" maxlength="4" inputmode="numeric"
+             onkeydown="if(event.key==='Enter')doRegister()">
+    </div>
+    <button class="btn" id="btnReg" onclick="doRegister()">✨ 建立帳號</button>
+  </div>
+
+  <div class="err" id="errMsg"></div>
+
+  <div class="features">
+    <div class="feature"><div class="feature-icon">🤖</div><div class="feature-text">AI 智慧選股分析</div></div>
+    <div class="feature"><div class="feature-icon">👁️</div><div class="feature-text">個人追蹤清單</div></div>
+    <div class="feature"><div class="feature-icon">📊</div><div class="feature-text">技術分析 + 回測</div></div>
+    <div class="feature"><div class="feature-icon">🏰</div><div class="feature-text">v3.0 護城河選股</div></div>
+  </div>
+</div>
+
+<script>
+const API      = location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+const TOKEN_KEY    = 'tw_user_token';
+const USERNAME_KEY = 'tw_username';
+
+// 取得登入後要跳轉的頁面
+const params   = new URLSearchParams(location.search);
+const redirect = params.get('redirect') || '/analyze';
+
+// 已登入就直接跳轉
+const existingToken = localStorage.getItem(TOKEN_KEY);
+const existingUser  = localStorage.getItem(USERNAME_KEY);
+if (existingToken && existingUser) {
+  verifyAndRedirect(existingToken, existingUser);
+}
+
+async function verifyAndRedirect(token, username) {
+  try {
+    const r = await fetch(`${API}/api/auth/verify`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({token})
+    });
+    const d = await r.json();
+    if (d.valid) {
+      location.href = redirect;
+    }
+  } catch(e) {}
+}
+
+function switchTab(tab) {
+  document.getElementById('tabLogin').classList.toggle('active', tab==='login');
+  document.getElementById('tabReg').classList.toggle('active',   tab==='reg');
+  document.getElementById('fLogin').style.display = tab==='login' ? '' : 'none';
+  document.getElementById('fReg').style.display   = tab==='reg'   ? '' : 'none';
+  document.getElementById('errMsg').textContent   = '';
+}
+
+async function doLogin() {
+  const username = document.getElementById('lUser').value.trim();
+  const pin      = document.getElementById('lPin').value.trim();
+  const errEl    = document.getElementById('errMsg');
+  const btn      = document.getElementById('btnLogin');
+  if (!username || !pin) { errEl.textContent = '請輸入暱稱和 PIN'; return; }
+  btn.disabled = true; btn.textContent = '登入中...';
+  errEl.textContent = '';
+  try {
+    const r = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, pin})
+    });
+    const d = await r.json();
+    if (d.error) { errEl.textContent = d.error; btn.disabled=false; btn.textContent='🚀 登入'; return; }
+    localStorage.setItem(TOKEN_KEY,    d.token);
+    localStorage.setItem(USERNAME_KEY, d.username);
+    btn.textContent = '✅ 登入成功！跳轉中...';
+    setTimeout(() => location.href = redirect, 500);
+  } catch(e) {
+    errEl.textContent = '連線失敗，請稍後再試';
+    btn.disabled=false; btn.textContent='🚀 登入';
+  }
+}
+
+async function doRegister() {
+  const username = document.getElementById('rUser').value.trim();
+  const pin      = document.getElementById('rPin').value.trim();
+  const pin2     = document.getElementById('rPin2').value.trim();
+  const errEl    = document.getElementById('errMsg');
+  const btn      = document.getElementById('btnReg');
+  if (!username || username.length < 2) { errEl.textContent = '暱稱至少 2 個字'; return; }
+  if (pin.length !== 4 || !/^\d{4}$/.test(pin)) { errEl.textContent = 'PIN 必須是 4 位數字'; return; }
+  if (pin !== pin2) { errEl.textContent = '兩次 PIN 不一致'; return; }
+  btn.disabled = true; btn.textContent = '建立中...';
+  errEl.textContent = '';
+  try {
+    const r = await fetch(`${API}/api/auth/register`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username, pin})
+    });
+    const d = await r.json();
+    if (d.error) { errEl.textContent = d.error; btn.disabled=false; btn.textContent='✨ 建立帳號'; return; }
+    localStorage.setItem(TOKEN_KEY,    d.token);
+    localStorage.setItem(USERNAME_KEY, d.username);
+    btn.textContent = '✅ 帳號建立！跳轉中...';
+    setTimeout(() => location.href = redirect, 500);
+  } catch(e) {
+    errEl.textContent = '連線失敗，請稍後再試';
+    btn.disabled=false; btn.textContent='✨ 建立帳號';
+  }
+}
+</script>
+</body>
+</html>

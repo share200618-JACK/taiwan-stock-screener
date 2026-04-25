@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>我的追蹤清單</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="/auth.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
 :root{
@@ -327,36 +328,23 @@ function onLoginSuccess(token, username) {
 
 function doLogout() {
   if (!confirm('確定登出？')) return;
-  _userToken = ''; _userName = '';
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USERNAME_KEY);
-  _watchCache = [];
-  document.getElementById('userBar').style.display    = 'none';
-  document.getElementById('loginOverlay').style.display = 'flex';
-  document.getElementById('stockList').innerHTML = '';
+  authLogout();  // auth.js 提供，清除 token 並跳轉 /login
 }
 
 async function initAuth() {
-  // 檢查本機是否有已存的 token
-  const savedToken    = localStorage.getItem(TOKEN_KEY);
-  const savedUsername = localStorage.getItem(USERNAME_KEY);
-  if (savedToken && savedUsername) {
-    // 驗證 token 是否還有效
-    try {
-      const r = await fetch(`${API}/api/auth/verify`, {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({token: savedToken})
-      });
-      const d = await r.json();
-      if (d.valid) {
-        onLoginSuccess(savedToken, savedUsername);
-        return;
-      }
-    } catch(e) {}
-  }
-  // 顯示登入畫面
-  document.getElementById('loginOverlay').style.display = 'flex';
+  const user = await requireAuth();
+  if (!user) return;
+  // 直接用 auth.js 的 token
+  _userToken = user.token;
+  _userName  = user.username;
+  // 更新 user bar
+  document.getElementById('userBar').style.display  = 'flex';
+  document.getElementById('userName').textContent   = _userName;
+  document.getElementById('userAvatar').textContent = _userName.charAt(0).toUpperCase();
+  // 隱藏舊的登入覆蓋層（如果還存在）
+  const ol = document.getElementById('loginOverlay');
+  if (ol) ol.style.display = 'none';
+  render();
 }
 
 // ── Supabase API 操作 ─────────────────────────────
