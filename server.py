@@ -148,7 +148,7 @@ def sb_user_register(username, pin):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return None, "未設定資料庫"
     try:
-        url   = f"{SUPABASE_URL}/rest/v1/users"
+        url   = f"{SUPABASE_URL}/rest/v1/tw_users"
         token = _gen_token(username)
         payload = {
             "username":   username.strip(),
@@ -170,7 +170,7 @@ def sb_user_login(username, pin):
     if not SUPABASE_URL or not SUPABASE_KEY:
         return None, "未設定資料庫"
     try:
-        url = f"{SUPABASE_URL}/rest/v1/users"
+        url = f"{SUPABASE_URL}/rest/v1/tw_users"
         params = {"username": f"eq.{username.strip()}", "select": "user_token,pin_hash"}
         r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
         if r.status_code == 200:
@@ -190,7 +190,7 @@ def sb_token_valid(token):
     if not token or not SUPABASE_URL or not SUPABASE_KEY:
         return False
     try:
-        url = f"{SUPABASE_URL}/rest/v1/users"
+        url = f"{SUPABASE_URL}/rest/v1/tw_users"
         params = {"user_token": f"eq.{token}", "select": "id"}
         r = requests.get(url, params=params, headers=_sb_headers(), timeout=8)
         return r.status_code == 200 and len(r.json()) > 0
