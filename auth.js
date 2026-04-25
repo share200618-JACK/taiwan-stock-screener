@@ -22,17 +22,22 @@ async function requireAuth() {
     location.href = '/login?redirect=' + encodeURIComponent(location.pathname);
     return null;
   }
-  // 快速驗證（30秒內不重複驗證）
+  // 快速驗證（5分鐘內不重複驗證，避免頻繁請求）
   const lastVerify = parseInt(sessionStorage.getItem('last_verify') || '0');
-  if (Date.now() - lastVerify < 30000) {
+  if (Date.now() - lastVerify < 300000) {
     return {token, username};
   }
   try {
+    // 5 秒 timeout 保護，避免卡住
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
     const r = await fetch(`${_API_BASE}/api/auth/verify`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({token})
+      body: JSON.stringify({token}),
+      signal: controller.signal
     });
+    clearTimeout(timer);
     const d = await r.json();
     if (!d.valid) {
       authLogout();
@@ -41,7 +46,7 @@ async function requireAuth() {
     sessionStorage.setItem('last_verify', Date.now().toString());
     return {token, username};
   } catch(e) {
-    // 網路錯誤時允許繼續使用（離線容錯）
+    // 網路錯誤或 timeout → 允許繼續（離線容錯）
     return {token, username};
   }
 }

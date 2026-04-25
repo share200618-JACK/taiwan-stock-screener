@@ -116,7 +116,6 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 </div>
 <!-- 用戶狀態列 -->
 <div id="authBar" style="margin-bottom:12px;"></div>
-<div style="display:none">
 </header>
 
 <!-- 設定區：模式切換 -->
@@ -619,15 +618,16 @@ async function loadLatestResult() {
 }
 
 // 頁面載入後自動檢查狀態
-window.addEventListener('DOMContentLoaded', async () => {
-  // 驗證登入
-  const user = await requireAuth();
-  if (!user) return;  // 未登入，已跳轉到 /login
-  renderAuthBar('authBar');
-
+window.addEventListener('DOMContentLoaded', () => {
+  // 先執行頁面功能，背景驗證登入
   checkAutoResultStatus();
   updateCustomHistoryCount();
   loadWatchingCodes();
+
+  // 背景驗證（不阻塞頁面）
+  requireAuth().then(user => {
+    if (user) renderAuthBar('authBar');
+  }).catch(() => {});
 });
 
 async function startAnalysis() {

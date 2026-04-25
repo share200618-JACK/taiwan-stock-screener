@@ -332,19 +332,28 @@ function doLogout() {
 }
 
 async function initAuth() {
-  const user = await requireAuth();
-  if (!user) return;
-  // 直接用 auth.js 的 token
-  _userToken = user.token;
-  _userName  = user.username;
-  // 更新 user bar
+  // 先從 localStorage 取得 token（即使還沒驗證也先用）
+  _userToken = getToken() || 'default';
+  _userName  = getUsername() || '';
+
+  if (!_userToken || _userToken === 'default') {
+    // 沒有 token，跳轉登入
+    location.href = '/login?redirect=/watchlist';
+    return;
+  }
+
+  // 先顯示 user bar，再背景驗證
   document.getElementById('userBar').style.display  = 'flex';
   document.getElementById('userName').textContent   = _userName;
-  document.getElementById('userAvatar').textContent = _userName.charAt(0).toUpperCase();
-  // 隱藏舊的登入覆蓋層（如果還存在）
+  document.getElementById('userAvatar').textContent = _userName ? _userName.charAt(0).toUpperCase() : '?';
   const ol = document.getElementById('loginOverlay');
   if (ol) ol.style.display = 'none';
+
+  // 載入追蹤清單
   render();
+
+  // 背景驗證 token（不阻塞）
+  requireAuth().catch(() => {});
 }
 
 // ── Supabase API 操作 ─────────────────────────────
