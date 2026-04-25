@@ -192,12 +192,21 @@ async function doRegister() {
   if (pin !== pin2) { errEl.textContent = '兩次 PIN 不一致'; return; }
   btn.disabled = true; btn.textContent = '建立中...';
   errEl.textContent = '';
+  // 15 秒 timeout 保護
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    controller.abort();
+    errEl.textContent = '連線超時，請稍後再試';
+    btn.disabled=false; btn.textContent='✨ 建立帳號';
+  }, 15000);
   try {
     const r = await fetch(`${API}/api/auth/register`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({username, pin})
+      body: JSON.stringify({username, pin}),
+      signal: controller.signal
     });
+    clearTimeout(timer);
     const d = await r.json();
     if (d.error) { errEl.textContent = d.error; btn.disabled=false; btn.textContent='✨ 建立帳號'; return; }
     localStorage.setItem(TOKEN_KEY,    d.token);
@@ -205,8 +214,11 @@ async function doRegister() {
     btn.textContent = '✅ 帳號建立！跳轉中...';
     setTimeout(() => location.href = redirect, 500);
   } catch(e) {
-    errEl.textContent = '連線失敗，請稍後再試';
-    btn.disabled=false; btn.textContent='✨ 建立帳號';
+    clearTimeout(timer);
+    if (e.name !== 'AbortError') {
+      errEl.textContent = '連線失敗：' + e.message;
+      btn.disabled=false; btn.textContent='✨ 建立帳號';
+    }
   }
 }
 </script>
