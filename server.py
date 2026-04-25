@@ -359,6 +359,24 @@ def watchlist_page():
 
 # ── 用戶認證 API ──────────────────────────────────
 
+@app.route("/api/auth/test")
+def api_auth_test():
+    """測試 Supabase tw_users 連線"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定 SUPABASE_URL 或 SUPABASE_KEY"})
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/tw_users"
+        r = requests.get(url, params={"limit": "1"}, headers=_sb_headers(), timeout=8)
+        return jsonify({
+            "ok": r.status_code == 200,
+            "status": r.status_code,
+            "supabase_url": SUPABASE_URL[:40] + "...",
+            "key_prefix": SUPABASE_KEY[:20] + "...",
+            "response": r.text[:200]
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
 @app.route("/api/auth/register", methods=["POST"])
 def api_register():
     body     = request.get_json() or {}
