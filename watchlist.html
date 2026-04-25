@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>我的追蹤清單</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <script src="/auth.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
@@ -555,18 +556,17 @@ function renderAnalysisPanel(code, name, addPrice, d, panel) {
       <span style="font-size:.7rem;color:var(--dim);">${d.date} ${profitHtml}</span>
     </div>
 
-    <!-- K 線圖 -->
+    <!-- 蠟燭圖 -->
     <div class="chart-container">
       <div class="chart-label">
-        <span>📈 K線圖（近60日）</span>
-        <span>
-          <span class="chart-legend-dot" style="background:#e4eaf5;"></span>收盤
-          <span class="chart-legend-dot" style="background:#f0b429;margin-left:6px;"></span>MA5
-          <span class="chart-legend-dot" style="background:#3d8bff;margin-left:6px;"></span>MA20
-          <span class="chart-legend-dot" style="background:#a855f7;margin-left:6px;"></span>MA60
+        <span>🕯️ K線圖（近60日）</span>
+        <span style="font-size:.65rem;">
+          <span style="color:#f0b429;">── MA5</span>
+          <span style="color:#3d8bff;margin-left:6px;">── MA20</span>
+          <span style="color:#a855f7;margin-left:6px;">── MA60</span>
         </span>
       </div>
-      <canvas id="${chartId}" height="180"></canvas>
+      <div id="${chartId}" style="height:200px;"></div>
     </div>
 
     <!-- KD 圖 -->
@@ -699,124 +699,82 @@ function renderAnalysisPanel(code, name, addPrice, d, panel) {
 // 圖表實例快取（避免重複建立）
 const _chartInst = {};
 
+const _chartInst = {};
+
 function drawCharts(code, d) {
   const candles = d.candles || [];
   if (!candles.length) return;
 
-  const labels  = candles.map(c => c.date.substring(5));  // MM-DD
-  const closes  = candles.map(c => c.close);
-  const ma5s    = candles.map(c => c.ma5);
-  const ma20s   = candles.map(c => c.ma20);
-
-  // MA60：從指標拿（candles 可能沒有）
-  const ind = d.indicators;
   const chartId = `kline_${code}`;
   const kdId    = `kd_${code}`;
 
   // 銷毀舊圖表
-  if (_chartInst[chartId]) { _chartInst[chartId].destroy(); }
-  if (_chartInst[kdId])    { _chartInst[kdId].destroy(); }
+  if (_chartInst[chartId]) {
+    try { _chartInst[chartId].remove(); } catch(e) {}
+    _chartInst[chartId] = null;
+  }
+  if (_chartInst[kdId]) {
+    try { _chartInst[kdId].destroy(); } catch(e) {}
+    _chartInst[kdId] = null;
+  }
 
-  const ctxK = document.getElementById(chartId);
-  const ctxKD = document.getElementById(kdId);
-  if (!ctxK || !ctxKD) return;
+  // ── 蠟燭圖（lightweight-charts）──────────────────
+  const klineEl = document.getElementById(chartId);
+  if (klineEl && window.LightweightCharts) {
+    klineEl.innerHTML = '';
+    const chart = LightweightCharts.createChart(klineEl, {
+      width:  klineEl.offsetWidth || 300,
+      height: 200,
+      layout: { background:{color:'#161b25'}, textColor:'#6a748f' },
+      grid:   { vertLines:{color:'rgba(255,255,255,.03)'}, horzLines:{color:'rgba(255,255,255,.03)'} },
+      rightPriceScale: { borderColor:'#252a38' },
+      timeScale:       { borderColor:'#252a38', timeVisible:true },
+      crosshair:       { mode: LightweightCharts.CrosshairMode.Normal },
+    });
 
-  // ── K線圖 ──────────────────────────────────────
-  const lineColor = closes[closes.length-1] >= closes[0] ? '#ff4d5e' : '#27d981';
+    // 蠟燭資料
+    const candleData = candles.map(c => ({
+      time:  c.date,
+      open:  c.open  || c.close,
+      high:  c.high  || c.close,
+      low:   c.low   || c.close,
+      close: c.close,
+    })).sort((a,b) => a.time.localeCompare(b.time));
 
-  _chartInst[chartId] = new Chart(ctxK.getContext('2d'), {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: '收盤價',
-          data: closes,
-          borderColor: '#e4eaf5',
-          borderWidth: 1.8,
-          pointRadius: 0,
-          tension: 0.1,
-          fill: {
-            target: 'origin',
-            above: lineColor + '12',
-          },
-          order: 4,
-        },
-        {
-          label: 'MA5',
-          data: ma5s,
-          borderColor: '#f0b429',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.1,
-          order: 3,
-        },
-        {
-          label: 'MA20',
-          data: ma20s,
-          borderColor: '#3d8bff',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.1,
-          order: 2,
-        },
-        // 支撐線（水平）
-        {
-          label: '支撐',
-          data: Array(labels.length).fill(d.levels.support1),
-          borderColor: '#27d98150',
-          borderWidth: 1,
-          borderDash: [4, 4],
-          pointRadius: 0,
-          tension: 0,
-          order: 1,
-        },
-        // 壓力線（水平）
-        {
-          label: '壓力',
-          data: Array(labels.length).fill(d.levels.resist1),
-          borderColor: '#ff4d5e50',
-          borderWidth: 1,
-          borderDash: [4, 4],
-          pointRadius: 0,
-          tension: 0,
-          order: 0,
-        },
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1e2330',
-          borderColor: '#252a38',
-          borderWidth: 1,
-          callbacks: {
-            label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}`
-          }
-        },
-        // 建議進場標記
-        annotation: {}
-      },
-      scales: {
-        x: {
-          ticks: { color: '#6a748f', maxTicksLimit: 8, font: { size: 10 } },
-          grid:  { color: 'rgba(255,255,255,.04)' }
-        },
-        y: {
-          ticks:    { color: '#6a748f', font: { size: 10 } },
-          grid:     { color: 'rgba(255,255,255,.04)' },
-          position: 'right'
-        }
-      }
+    const candleSeries = chart.addCandlestickSeries({
+      upColor:   '#ff4d5e', downColor: '#27d981',
+      borderUpColor: '#ff4d5e', borderDownColor: '#27d981',
+      wickUpColor:   '#ff4d5e', wickDownColor:   '#27d981',
+    });
+    candleSeries.setData(candleData);
+
+    // MA5
+    const ma5Series = chart.addLineSeries({ color:'#f0b429', lineWidth:1.5, priceLineVisible:false });
+    ma5Series.setData(candles.map(c=>({time:c.date, value:c.ma5})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
+
+    // MA20
+    const ma20Series = chart.addLineSeries({ color:'#3d8bff', lineWidth:1.5, priceLineVisible:false });
+    ma20Series.setData(candles.map(c=>({time:c.date, value:c.ma20})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
+
+    // 支撐線
+    const lev = d.levels;
+    if (lev) {
+      const supSeries = chart.addLineSeries({ color:'rgba(39,217,129,.5)', lineWidth:1, lineStyle:LightweightCharts.LineStyle.Dashed, priceLineVisible:false });
+      supSeries.setData([{time:candleData[0].time, value:lev.support1},{time:candleData[candleData.length-1].time, value:lev.support1}]);
+      const resSeries = chart.addLineSeries({ color:'rgba(255,77,94,.5)', lineWidth:1, lineStyle:LightweightCharts.LineStyle.Dashed, priceLineVisible:false });
+      resSeries.setData([{time:candleData[0].time, value:lev.resist1},{time:candleData[candleData.length-1].time, value:lev.resist1}]);
     }
-  });
 
-  // ── KD 圖 ──────────────────────────────────────
-  // 從歷史資料計算 KD 序列
+    chart.timeScale().fitContent();
+    _chartInst[chartId] = chart;
+  }
+
+  // ── KD 圖（Chart.js）─────────────────────────────
+  const ctxKD = document.getElementById(kdId);
+  if (!ctxKD) return;
+
+  const closes = candles.map(c => c.close);
+  const labels = candles.map(c => c.date.substring(5));
   const k_series = [], d_series = [];
   let k = 50, dv = 50;
   for (let i = 0; i < closes.length; i++) {
@@ -826,79 +784,24 @@ function drawCharts(code, d) {
     const rsv = rh === rl ? 0 : (closes[i] - rl) / (rh - rl) * 100;
     k  = k  * 2/3 + rsv * 1/3;
     dv = dv * 2/3 + k   * 1/3;
-    k_series.push(Math.round(k * 10) / 10);
+    k_series.push(Math.round(k  * 10) / 10);
     d_series.push(Math.round(dv * 10) / 10);
   }
 
   _chartInst[kdId] = new Chart(ctxKD.getContext('2d'), {
     type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'K',
-          data: k_series,
-          borderColor: '#f0b429',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.1,
-        },
-        {
-          label: 'D',
-          data: d_series,
-          borderColor: '#3d8bff',
-          borderWidth: 1.5,
-          pointRadius: 0,
-          tension: 0.1,
-        },
-        // 超買線 80
-        {
-          label: '超買',
-          data: Array(labels.length).fill(80),
-          borderColor: '#ff4d5e30',
-          borderWidth: 1,
-          borderDash: [3, 3],
-          pointRadius: 0,
-          tension: 0,
-        },
-        // 超賣線 20
-        {
-          label: '超賣',
-          data: Array(labels.length).fill(20),
-          borderColor: '#27d98130',
-          borderWidth: 1,
-          borderDash: [3, 3],
-          pointRadius: 0,
-          tension: 0,
-        },
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: {
-          display: true,
-          labels: { color: '#6a748f', font: { size: 10 }, boxWidth: 12 }
-        },
-        tooltip: {
-          backgroundColor: '#1e2330',
-          borderColor: '#252a38',
-          borderWidth: 1,
-        }
-      },
-      scales: {
-        x: {
-          ticks: { color: '#6a748f', maxTicksLimit: 8, font: { size: 10 } },
-          grid:  { color: 'rgba(255,255,255,.04)' }
-        },
-        y: {
-          min: 0, max: 100,
-          ticks:    { color: '#6a748f', font: { size: 10 } },
-          grid:     { color: 'rgba(255,255,255,.04)' },
-          position: 'right'
-        }
+    data: { labels, datasets: [
+      { label:'K', data:k_series, borderColor:'#f0b429', borderWidth:1.5, pointRadius:0, tension:.1 },
+      { label:'D', data:d_series, borderColor:'#3d8bff', borderWidth:1.5, pointRadius:0, tension:.1 },
+      { data:Array(labels.length).fill(80), borderColor:'rgba(255,77,94,.25)', borderWidth:1, borderDash:[3,3], pointRadius:0, tension:0 },
+      { data:Array(labels.length).fill(20), borderColor:'rgba(39,217,129,.25)', borderWidth:1, borderDash:[3,3], pointRadius:0, tension:0 },
+    ]},
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1} },
+      scales:{
+        x:{ ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:9}}, grid:{color:'rgba(255,255,255,.03)'} },
+        y:{ min:0, max:100, ticks:{color:'#6a748f',font:{size:9}}, grid:{color:'rgba(255,255,255,.03)'}, position:'right' }
       }
     }
   });

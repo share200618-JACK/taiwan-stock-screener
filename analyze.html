@@ -120,6 +120,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .modal-section.active{display:block;}
 .modal-loading{text-align:center;padding:32px;color:#6a748f;}
 </style>
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <script src="/auth.js"></script>
 </head>
 <body>
@@ -814,7 +815,7 @@ function renderModalContent(tab) {
           <span>📈 K線（近60日）</span>
           <span style="color:${ind.trend==='多頭'?'var(--red)':'ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">${ind.trend}趨勢</span>
         </div>
-        <canvas id="modalKlineChart" height="160"></canvas>
+        <div id="modalKlineChart" style="height:180px;"></div>
       </div>
       <div style="background:#161b25;border:1px solid #252a38;border-radius:8px;padding:10px;margin-bottom:12px;">
         <div style="font-size:.7rem;color:#6a748f;margin-bottom:6px;">📊 KD 指標（K=${ind.k} / D=${ind.d}）</div>
@@ -953,35 +954,54 @@ function renderModalContent(tab) {
 }
 
 function drawModalCharts(d) {
-  if (_modalChartK)  { _modalChartK.destroy();  _modalChartK  = null; }
-  if (_modalChartKD) { _modalChartKD.destroy(); _modalChartKD = null; }
+  if (_modalChartK) { try { _modalChartK.remove(); } catch(e) {} _modalChartK = null; }
+  if (_modalChartKD) { try { _modalChartKD.destroy(); } catch(e) {} _modalChartKD = null; }
 
   const candles = d.candles || [];
   if (!candles.length) return;
-  const labels = candles.map(c => c.date.substring(5));
-  const closes = candles.map(c => c.close);
-  const ma5s   = candles.map(c => c.ma5);
-  const ma20s  = candles.map(c => c.ma20);
-  const lev    = d.levels;
+  const lev = d.levels;
 
-  const ctxK  = document.getElementById('modalKlineChart');
-  const ctxKD = document.getElementById('modalKDChart');
-  if (!ctxK || !ctxKD) return;
+  const klineEl = document.getElementById('modalKlineChart');
+  const ctxKD   = document.getElementById('modalKDChart');
+  if (!klineEl || !ctxKD) return;
 
-  _modalChartK = new Chart(ctxK.getContext('2d'), {
-    type: 'line',
-    data: { labels, datasets: [
-      { label:'收盤', data:closes, borderColor:'#e4eaf5', borderWidth:1.8, pointRadius:0, tension:.1, fill:{target:'origin',above:'rgba(255,77,94,.06)'} },
-      { label:'MA5',  data:ma5s,  borderColor:'#f0b429', borderWidth:1.5, pointRadius:0, tension:.1 },
-      { label:'MA20', data:ma20s, borderColor:'#3d8bff', borderWidth:1.5, pointRadius:0, tension:.1 },
-      { label:'支撐', data:Array(labels.length).fill(lev.support1), borderColor:'rgba(39,217,129,.4)', borderWidth:1, borderDash:[4,4], pointRadius:0 },
-      { label:'壓力', data:Array(labels.length).fill(lev.resist1),  borderColor:'rgba(255,77,94,.4)',  borderWidth:1, borderDash:[4,4], pointRadius:0 },
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1} },
-      scales:{ x:{ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:9}},grid:{color:'rgba(255,255,255,.03)'}},
-               y:{ticks:{color:'#6a748f',font:{size:9}},grid:{color:'rgba(255,255,255,.03)'},position:'right'} } }
-  });
+  // 蠟燭圖
+  klineEl.innerHTML = '';
+  if (window.LightweightCharts) {
+    const chart = LightweightCharts.createChart(klineEl, {
+      width: klineEl.offsetWidth || 300, height: 180,
+      layout: { background:{color:'#161b25'}, textColor:'#6a748f' },
+      grid: { vertLines:{color:'rgba(255,255,255,.03)'}, horzLines:{color:'rgba(255,255,255,.03)'} },
+      rightPriceScale: { borderColor:'#252a38' },
+      timeScale: { borderColor:'#252a38' },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+
+    const candleData = candles.map(c=>({
+      time:c.date, open:c.open||c.close, high:c.high||c.close, low:c.low||c.close, close:c.close
+    })).sort((a,b)=>a.time.localeCompare(b.time));
+
+    const cs = chart.addCandlestickSeries({
+      upColor:'#ff4d5e', downColor:'#27d981',
+      borderUpColor:'#ff4d5e', borderDownColor:'#27d981',
+      wickUpColor:'#ff4d5e', wickDownColor:'#27d981',
+    });
+    cs.setData(candleData);
+
+    const ma5s  = chart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false});
+    ma5s.setData(candles.map(c=>({time:c.date,value:c.ma5})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
+    const ma20s = chart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false});
+    ma20s.setData(candles.map(c=>({time:c.date,value:c.ma20})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
+
+    if (lev) {
+      const ss = chart.addLineSeries({color:'rgba(39,217,129,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
+      ss.setData([{time:candleData[0].time,value:lev.support1},{time:candleData[candleData.length-1].time,value:lev.support1}]);
+      const rs = chart.addLineSeries({color:'rgba(255,77,94,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
+      rs.setData([{time:candleData[0].time,value:lev.resist1},{time:candleData[candleData.length-1].time,value:lev.resist1}]);
+    }
+    chart.timeScale().fitContent();
+    _modalChartK = chart;
+  }
 
   // KD 計算
   const k_s=[], d_s=[]; let k=50,dv=50;
