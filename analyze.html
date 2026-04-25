@@ -101,6 +101,24 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 
 /* 免責聲明 */
 .disclaimer{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;font-size:.74rem;color:var(--dim);line-height:1.8;margin-top:18px;}
+/* ── 股票分析彈出面板 ── */
+.stock-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;
+  display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px);}
+.stock-modal{background:#111318;border:1px solid #252a38;border-radius:20px 20px 0 0;
+  width:100%;max-width:700px;max-height:90vh;overflow-y:auto;
+  padding:20px 18px 32px;animation:slideUp .25s ease;}
+@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
+.modal-close{width:32px;height:32px;background:#1e2330;border:none;border-radius:50%;
+  color:#6a748f;font-size:1.2rem;cursor:pointer;}
+.modal-tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #252a38;padding-bottom:10px;overflow-x:auto;}
+.modal-tab{padding:6px 14px;border:none;border-radius:7px;font-size:.78rem;font-weight:600;
+  cursor:pointer;background:#1e2330;color:#6a748f;font-family:'Noto Sans TC',sans-serif;
+  transition:all .15s;white-space:nowrap;flex-shrink:0;}
+.modal-tab.active{background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;}
+.modal-section{display:none;}
+.modal-section.active{display:block;}
+.modal-loading{text-align:center;padding:32px;color:#6a748f;}
 </style>
 <script src="/auth.js"></script>
 </head>
@@ -117,6 +135,27 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 <!-- 用戶狀態列 -->
 <div id="authBar" style="margin-bottom:12px;"></div>
 </header>
+
+<!-- 股票分析彈出面板 -->
+<div class="stock-modal-overlay" id="stockModalOverlay" style="display:none;" onclick="if(event.target===this)closeStockPanel()">
+  <div class="stock-modal" id="stockModal">
+    <div class="modal-header">
+      <div>
+        <div style="font-size:.82rem;color:var(--dim);" id="modalCode">—</div>
+        <div style="font-size:1.05rem;font-weight:700;" id="modalName">—</div>
+      </div>
+      <button class="modal-close" onclick="closeStockPanel()">✕</button>
+    </div>
+    <div class="modal-tabs">
+      <button class="modal-tab active" onclick="switchModalTab('tech')">📈 技術分析</button>
+      <button class="modal-tab" onclick="switchModalTab('advice')">💰 買賣建議</button>
+      <button class="modal-tab" onclick="switchModalTab('ai')">🤖 AI 評估</button>
+    </div>
+    <div id="modalContent">
+      <div class="modal-loading">⏳ 載入中...</div>
+    </div>
+  </div>
+</div>
 
 <!-- 設定區：模式切換 -->
 <div class="settings">
@@ -707,6 +746,269 @@ function pollProgress(taskId, onDone) {
   }, 2000);
 }
 
+// ══════════════════════════════════════════════════════
+// 股票分析彈出面板
+// ══════════════════════════════════════════════════════
+const _modalCache   = {};
+let   _modalData    = null;
+let   _modalTab     = 'tech';
+let   _modalChartK  = null;
+let   _modalChartKD = null;
+
+function openStockPanel(code, name, price, sector) {
+  document.getElementById('modalCode').textContent = code;
+  document.getElementById('modalName').textContent = name;
+  document.getElementById('stockModalOverlay').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+  switchModalTab('tech');
+  if (_modalCache[code]) {
+    _modalData = _modalCache[code];
+    renderModalContent(_modalTab);
+  } else {
+    document.getElementById('modalContent').innerHTML = '<div class="modal-loading">⏳ 載入技術分析中...</div>';
+    fetchStockAnalysis(code, name, price, sector);
+  }
+}
+
+function closeStockPanel() {
+  document.getElementById('stockModalOverlay').style.display = 'none';
+  document.body.style.overflow = '';
+  if (_modalChartK)  { _modalChartK.destroy();  _modalChartK  = null; }
+  if (_modalChartKD) { _modalChartKD.destroy(); _modalChartKD = null; }
+}
+
+function switchModalTab(tab) {
+  _modalTab = tab;
+  document.querySelectorAll('.modal-tab').forEach((el, i) => {
+    el.classList.toggle('active', ['tech','advice','ai'][i] === tab);
+  });
+  if (_modalData) renderModalContent(tab);
+}
+
+async function fetchStockAnalysis(code, name, price, sector) {
+  try {
+    const r = await fetch(`${API}/api/stock/analysis/${code}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    _modalCache[code] = d;
+    _modalData = d;
+    renderModalContent(_modalTab);
+  } catch(e) {
+    document.getElementById('modalContent').innerHTML =
+      `<div class="modal-loading" style="color:var(--red);">❌ ${e.message}</div>`;
+  }
+}
+
+function renderModalContent(tab) {
+  const d   = _modalData;
+  const ind = d.indicators;
+  const adv = d.advice;
+  const lev = d.levels;
+  const cur = d.price;
+
+  if (tab === 'tech') {
+    // K線圖 + KD圖 + 技術指標
+    document.getElementById('modalContent').innerHTML = `
+      <div style="background:#161b25;border:1px solid #252a38;border-radius:8px;padding:10px;margin-bottom:10px;">
+        <div style="font-size:.7rem;color:#6a748f;margin-bottom:6px;display:flex;justify-content:space-between;">
+          <span>📈 K線（近60日）</span>
+          <span style="color:${ind.trend==='多頭'?'var(--red)':'ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">${ind.trend}趨勢</span>
+        </div>
+        <canvas id="modalKlineChart" height="160"></canvas>
+      </div>
+      <div style="background:#161b25;border:1px solid #252a38;border-radius:8px;padding:10px;margin-bottom:12px;">
+        <div style="font-size:.7rem;color:#6a748f;margin-bottom:6px;">📊 KD 指標（K=${ind.k} / D=${ind.d}）</div>
+        <canvas id="modalKDChart" height="70"></canvas>
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
+        ${[['MA5',ind.ma5],['MA20',ind.ma20],['MA60',ind.ma60],['MA120',ind.ma120]].map(([l,v])=>{
+          const cls = cur>=v?'color:var(--red)':'color:var(--grn)';
+          const diff = ((cur-v)/v*100).toFixed(1);
+          return `<span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
+            ${l} <span style="${cls};font-weight:700;">${v}</span>
+            <span style="color:#6a748f;font-size:.65rem;">(${diff>0?'+':''}${diff}%)</span>
+          </span>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
+          KD ${ind.k}/${ind.d} <span style="color:${ind.kd_signal.includes('黃金')?'var(--red)':'var(--grn)'};">${ind.kd_signal}</span>
+        </span>
+        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
+          RSI ${ind.rsi14} <span style="color:${ind.rsi14>70?'var(--red)':ind.rsi14<30?'var(--grn)':'#6a748f'};">${ind.rsi14>70?'超買':ind.rsi14<30?'超賣':'中性'}</span>
+        </span>
+        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
+          MACD ${ind.macd_hist>0?'📈 多頭':'📉 空頭'} (${ind.macd_hist>0?'+':''}${ind.macd_hist})
+        </span>
+        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
+          布林 ${ind.boll_pos}% ${ind.boll_pos>80?'⚠️接近上軌':ind.boll_pos<20?'✅接近下軌':'中軌'}
+        </span>
+      </div>`;
+    setTimeout(() => drawModalCharts(d), 50);
+
+  } else if (tab === 'advice') {
+    // 買賣建議
+    document.getElementById('modalContent').innerHTML = `
+      <div style="background:rgba(61,139,255,.06);border:1px solid rgba(61,139,255,.15);border-radius:8px;padding:11px 13px;font-size:.78rem;margin-bottom:12px;">
+        💡 ${adv.buy_reason}
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+        ${[
+          ['建議進場', adv.buy_suggest, `現價 ${((adv.buy_suggest-cur)/cur*100).toFixed(1)}%`, 'rgba(255,77,94,.08)', '1px solid rgba(255,77,94,.25)', 'var(--red)'],
+          ['停損價',   adv.stop_loss_price, `-${adv.stop_loss_pct}%`, 'rgba(39,217,129,.08)', '1px solid rgba(39,217,129,.2)', 'var(--grn)'],
+          ['目標①',   adv.target1, `+${((adv.target1-adv.buy_suggest)/adv.buy_suggest*100).toFixed(1)}%`, 'rgba(240,180,41,.08)', '1px solid rgba(240,180,41,.2)', 'var(--gold)'],
+          ['目標②',   adv.target2, `+${((adv.target2-adv.buy_suggest)/adv.buy_suggest*100).toFixed(1)}%`, 'rgba(61,139,255,.08)', '1px solid rgba(61,139,255,.2)', 'var(--blu)'],
+          ['目標③',   adv.target3, `+${((adv.target3-adv.buy_suggest)/adv.buy_suggest*100).toFixed(1)}%`, 'rgba(168,85,247,.08)', '1px solid rgba(168,85,247,.2)', 'var(--pur)'],
+        ].map(([label,val,sub,bg,border,color])=>`
+          <div style="flex:1;min-width:80px;background:${bg};border:${border};border-radius:8px;padding:9px;text-align:center;">
+            <div style="font-size:.65rem;color:#6a748f;margin-bottom:3px;">${label}</div>
+            <div style="font-size:.95rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:${color};">${val}</div>
+            <div style="font-size:.63rem;color:#6a748f;">${sub}</div>
+          </div>`).join('')}
+      </div>
+      <!-- 支撐壓力 -->
+      <div style="font-size:.72rem;color:#6a748f;margin-bottom:6px;">📊 支撐 / 壓力</div>
+      <div style="display:flex;gap:6px;margin-bottom:12px;">
+        ${[['強支撐',lev.support2,'var(--grn)'],['支撐',lev.support1,'var(--grn)'],
+           ['現價',cur,'var(--gold)'],['壓力',lev.resist1,'var(--red)'],['強壓力',lev.resist2,'var(--red)']
+          ].map(([l,v,c])=>`
+          <div style="flex:1;background:#1e2330;border-radius:6px;padding:7px 5px;text-align:center;">
+            <div style="font-size:.62rem;color:#6a748f;">${l}</div>
+            <div style="font-size:.78rem;font-weight:700;color:${c};">${v}</div>
+          </div>`).join('')}
+      </div>
+      <!-- 風報比 -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <div style="background:#1e2330;border-radius:8px;padding:10px 12px;">
+          <div style="font-size:.68rem;color:#6a748f;margin-bottom:4px;">風報比（→目標②）</div>
+          <div style="font-size:.9rem;font-weight:700;color:${adv.rr2>=2?'var(--grn)':adv.rr2>=1?'var(--gold)':'var(--red)'};">
+            1 : ${adv.rr2} ${adv.rr2>=2?'✅':'⚠️'}
+          </div>
+        </div>
+        <div style="background:#1e2330;border-radius:8px;padding:10px 12px;">
+          <div style="font-size:.68rem;color:#6a748f;margin-bottom:4px;">類似條件歷史勝率</div>
+          <div style="font-size:.9rem;font-weight:700;color:${adv.hist_win_rate>=60?'var(--grn)':adv.hist_win_rate>=50?'var(--gold)':'var(--red)'};">
+            ${adv.hist_win_rate}%
+          </div>
+          <div style="background:#252a38;border-radius:3px;height:5px;margin-top:4px;">
+            <div style="width:${adv.hist_win_rate}%;background:linear-gradient(90deg,var(--grn),var(--gold));border-radius:3px;height:5px;"></div>
+          </div>
+        </div>
+      </div>`;
+
+  } else if (tab === 'ai') {
+    // AI 評估（從卡片資料抓）
+    const code = document.getElementById('modalCode').textContent;
+    // 找到這支股票的 AI 結果
+    const stockData = window._lastRenderData?.stocks?.find(s => s.code === code);
+    if (!stockData) {
+      document.getElementById('modalContent').innerHTML = '<div class="modal-loading">請先執行 AI 分析</div>';
+      return;
+    }
+    const prob = stockData.rise_prob || 0;
+    const conf = stockData.confidence || 0;
+    const reasons_bull = stockData.reasons_bull || [];
+    const reasons_bear = stockData.reasons_bear || [];
+    document.getElementById('modalContent').innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;">
+        <div style="background:#1e2330;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:.72rem;color:#6a748f;margin-bottom:6px;">上漲機率</div>
+          <div style="font-size:1.8rem;font-weight:700;color:${prob>=50?'var(--red)':'var(--grn)'};">${prob}%</div>
+        </div>
+        <div style="background:#1e2330;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:.72rem;color:#6a748f;margin-bottom:6px;">信心度</div>
+          <div style="font-size:1.8rem;font-weight:700;color:var(--pur);">${conf}%</div>
+        </div>
+      </div>
+      ${reasons_bull.length ? `
+      <div style="margin-bottom:10px;">
+        <div style="font-size:.74rem;color:var(--red);font-weight:700;margin-bottom:6px;">📈 看漲依據</div>
+        ${reasons_bull.map(r=>`
+          <div style="font-size:.75rem;color:var(--txt);margin-bottom:4px;display:flex;gap:6px;">
+            <span style="color:var(--red);flex-shrink:0;">▲</span><span>${r}</span>
+          </div>`).join('')}
+      </div>` : ''}
+      ${reasons_bear.length ? `
+      <div>
+        <div style="font-size:.74rem;color:var(--grn);font-weight:700;margin-bottom:6px;">📉 風險提示</div>
+        ${reasons_bear.map(r=>`
+          <div style="font-size:.75rem;color:var(--txt);margin-bottom:4px;display:flex;gap:6px;">
+            <span style="color:var(--grn);flex-shrink:0;">▼</span><span>${r}</span>
+          </div>`).join('')}
+      </div>` : ''}
+      <div style="margin-top:14px;display:flex;gap:8px;justify-content:center;">
+        <button onclick="closeStockPanel();window.location.href='/backtest?code=${code}'"
+          style="background:linear-gradient(135deg,var(--pur),#7c3aed);border:none;color:#fff;
+                 padding:9px 20px;border-radius:8px;font-size:.8rem;cursor:pointer;">
+          ⚙️ 進入完整回測
+        </button>
+        <button onclick="toggleWatch('${code}','${stockData.name||code}',${stockData.price||0},'${stockData.sector||''}',this)"
+                data-watch-code="${code}"
+          style="border:1px solid rgba(39,217,129,.3);background:rgba(39,217,129,.1);color:var(--grn);
+                 padding:9px 20px;border-radius:8px;font-size:.8rem;cursor:pointer;">
+          ${isWatching(code)?'✓ 追蹤中':'+ 加入追蹤'}
+        </button>
+      </div>`;
+  }
+}
+
+function drawModalCharts(d) {
+  if (_modalChartK)  { _modalChartK.destroy();  _modalChartK  = null; }
+  if (_modalChartKD) { _modalChartKD.destroy(); _modalChartKD = null; }
+
+  const candles = d.candles || [];
+  if (!candles.length) return;
+  const labels = candles.map(c => c.date.substring(5));
+  const closes = candles.map(c => c.close);
+  const ma5s   = candles.map(c => c.ma5);
+  const ma20s  = candles.map(c => c.ma20);
+  const lev    = d.levels;
+
+  const ctxK  = document.getElementById('modalKlineChart');
+  const ctxKD = document.getElementById('modalKDChart');
+  if (!ctxK || !ctxKD) return;
+
+  _modalChartK = new Chart(ctxK.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [
+      { label:'收盤', data:closes, borderColor:'#e4eaf5', borderWidth:1.8, pointRadius:0, tension:.1, fill:{target:'origin',above:'rgba(255,77,94,.06)'} },
+      { label:'MA5',  data:ma5s,  borderColor:'#f0b429', borderWidth:1.5, pointRadius:0, tension:.1 },
+      { label:'MA20', data:ma20s, borderColor:'#3d8bff', borderWidth:1.5, pointRadius:0, tension:.1 },
+      { label:'支撐', data:Array(labels.length).fill(lev.support1), borderColor:'rgba(39,217,129,.4)', borderWidth:1, borderDash:[4,4], pointRadius:0 },
+      { label:'壓力', data:Array(labels.length).fill(lev.resist1),  borderColor:'rgba(255,77,94,.4)',  borderWidth:1, borderDash:[4,4], pointRadius:0 },
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1} },
+      scales:{ x:{ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:9}},grid:{color:'rgba(255,255,255,.03)'}},
+               y:{ticks:{color:'#6a748f',font:{size:9}},grid:{color:'rgba(255,255,255,.03)'},position:'right'} } }
+  });
+
+  // KD 計算
+  const k_s=[], d_s=[]; let k=50,dv=50;
+  for(let i=0;i<closes.length;i++){
+    const n=Math.min(9,i+1);
+    const rh=Math.max(...candles.slice(Math.max(0,i-n+1),i+1).map(c=>c.high||closes[i]));
+    const rl=Math.min(...candles.slice(Math.max(0,i-n+1),i+1).map(c=>c.low||closes[i]));
+    const rsv=rh===rl?0:(closes[i]-rl)/(rh-rl)*100;
+    k=k*2/3+rsv/3; dv=dv*2/3+k/3;
+    k_s.push(Math.round(k*10)/10); d_s.push(Math.round(dv*10)/10);
+  }
+
+  _modalChartKD = new Chart(ctxKD.getContext('2d'), {
+    type:'line',
+    data:{ labels, datasets:[
+      { label:'K', data:k_s, borderColor:'#f0b429', borderWidth:1.5, pointRadius:0, tension:.1 },
+      { label:'D', data:d_s, borderColor:'#3d8bff', borderWidth:1.5, pointRadius:0, tension:.1 },
+      { data:Array(labels.length).fill(80), borderColor:'rgba(255,77,94,.2)', borderWidth:1, borderDash:[3,3], pointRadius:0 },
+      { data:Array(labels.length).fill(20), borderColor:'rgba(39,217,129,.2)', borderWidth:1, borderDash:[3,3], pointRadius:0 },
+    ]},
+    options:{ responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1} },
+      scales:{ x:{ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:9}},grid:{color:'rgba(255,255,255,.03)'}},
+               y:{min:0,max:100,ticks:{color:'#6a748f',font:{size:9}},grid:{color:'rgba(255,255,255,.03)'},position:'right'} } }
+  });
+}
+
 function showToast(msg) {
   const t = document.createElement('div');
   t.textContent = msg;
@@ -864,8 +1166,8 @@ function renderResults(data) {
   const ver    = data.model_ver || 'v1';
   const isV3   = (ver === 'v3');
   window._lastCustomResult = data;
+  window._lastRenderData   = data;  // 供彈出面板的 AI 評估頁籤使用
   document.getElementById('results').style.display = 'block';
-  // 產業分布統計
   renderSectorSummary(stocks);
 
   const verLabel = ver==='v3' ? '🏰 v3.0 護城河選股'
@@ -1018,7 +1320,7 @@ function renderResults(data) {
       <span class="acc-badge" style="background:rgba(168,85,247,.12);color:var(--pur);border-color:rgba(168,85,247,.2);">訓練 ${s.data_years||'?'} 年</span>
     ` : '';
 
-    return `<div class="card ${cardCls}">
+    return `<div class="card ${cardCls}" onclick="openStockPanel('${s.code}','${s.name||s.code}',${s.price||0},'${s.sector||s.industry_category||''}')" style="cursor:pointer;transition:border-color .15s;" onmouseover="this.style.borderColor='rgba(168,85,247,.6)'" onmouseout="this.style.borderColor=''">
       <div class="card-rank">#${i+1}</div>
       <div class="card-code">${s.code}</div>
       <div class="card-name">${s.name||s.code}</div>
