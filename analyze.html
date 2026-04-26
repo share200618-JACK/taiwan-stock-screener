@@ -812,7 +812,7 @@ function renderModalContent(tab) {
       <div style="background:#161b25;border:1px solid #252a38;border-radius:8px;padding:10px;margin-bottom:10px;">
         <div style="font-size:.7rem;color:#6a748f;margin-bottom:6px;display:flex;justify-content:space-between;">
           <span>📈 K線（近60日）</span>
-          <span style="color:${ind.trend==='多頭'?'var(--red)':'ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">${ind.trend}趨勢</span>
+          <span style="color:${ind.trend==='多頭'?'var(--red)':ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">${ind.trend}趨勢</span>
         </div>
         <div id="modalKlineChart" style="height:180px;"></div>
       </div>
