@@ -567,77 +567,108 @@ def fetch_history_range(code, start_date, end_date):
     # ── 上櫃（OTC / TPEX）───────────────────────────
     otc_records = []
     if use_otc:
-        tmp_cur = cur
-        while tmp_cur <= end_dt:
-            roc_year = tmp_cur.year - 1911
-            ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
-            fetched  = False
-
-            # 方法一：TPEX 舊版 API（最穩定）
+        # ① 優先用 FinMind（穩定，不會被 TPEX block）
+        token = _get_finmind_token()
+        if token:
             try:
-                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-                r    = SESSION.get(url, timeout=12)
+                fm_start = (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
+                r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                                params={"dataset":"TaiwanStockPrice","data_id":code,
+                                        "start_date":fm_start,"end_date":end_date},
+                                headers={"Authorization": f"Bearer {token}"},
+                                timeout=15)
                 data = r.json()
-                rows = data.get("aaData", [])
-                if rows:
-                    for row in rows:
-                        try:
-                            date_parts = str(row[0]).strip().split("/")
-                            if len(date_parts) != 3: continue
-                            dt = datetime(int(date_parts[0])+1911,
-                                          int(date_parts[1]), int(date_parts[2]))
-                            c = safe_float(str(row[6]).replace(",",""))
-                            if c > 0:
-                                otc_records.append({
-                                    "date":   dt.strftime("%Y-%m-%d"),
-                                    "open":   safe_float(str(row[3]).replace(",","")),
-                                    "high":   safe_float(str(row[4]).replace(",","")),
-                                    "low":    safe_float(str(row[5]).replace(",","")),
-                                    "close":  c,
-                                    "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
-                                    "change": safe_float(str(row[7]).replace(",","")),
-                                })
-                            fetched = True
-                        except: continue
+                if data.get("status") == 200:
+                    for row in data.get("data", []):
+                        c = safe_float(row.get("close", 0))
+                        if c > 0:
+                            otc_records.append({
+                                "date":   row.get("date","")[:10],
+                                "open":   safe_float(row.get("open", 0)),
+                                "high":   safe_float(row.get("max", 0)),
+                                "low":    safe_float(row.get("min", 0)),
+                                "close":  c,
+                                "vol":    round(safe_float(row.get("Trading_Volume", 0)) / 1000),
+                                "change": safe_float(row.get("spread", 0)),
+                            })
+                    if otc_records:
+                        print(f"  [OTC FinMind] {code}: {len(otc_records)} 筆")
             except Exception as e:
-                print(f"  [OTC方法1] {code} {ym_otc}: {e}")
+                print(f"  [OTC FinMind] {code}: {e}")
 
-            # 方法二：備用 API
-            if not fetched:
+        # ② FinMind 沒資料才 fallback 到 TPEX
+        if not otc_records:
+            tmp_cur = cur
+            while tmp_cur <= end_dt:
+                roc_year = tmp_cur.year - 1911
+                ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
+                fetched  = False
+
+                # 方法一：TPEX 舊版 API
                 try:
-                    _time.sleep(1)
-                    url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
-                            f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
-                    r2   = SESSION.get(url2, timeout=12)
-                    rows2 = r2.json()
-                    if isinstance(rows2, list):
-                        for row in rows2:
+                    url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                            f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                    r    = SESSION.get(url, timeout=12)
+                    data = r.json()
+                    rows = data.get("aaData", [])
+                    if rows:
+                        for row in rows:
                             try:
-                                d_str = row.get("Date","") or row.get("date","")
-                                c2    = safe_float(row.get("Close","") or row.get("close",""))
-                                if not d_str or c2 <= 0: continue
-                                if "/" in d_str:
-                                    pts = d_str.split("/")
-                                    dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
-                                else:
-                                    dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
-                                otc_records.append({
-                                    "date":   dt.strftime("%Y-%m-%d"),
-                                    "open":   safe_float(row.get("Open","") or row.get("open","")),
-                                    "high":   safe_float(row.get("High","") or row.get("high","")),
-                                    "low":    safe_float(row.get("Low","")  or row.get("low","")),
-                                    "close":  c2,
-                                    "vol":    round(safe_float(row.get("TradingShares","") or
-                                                   row.get("volume","")) / 1000),
-                                    "change": safe_float(row.get("Change","") or row.get("change","")),
-                                })
+                                date_parts = str(row[0]).strip().split("/")
+                                if len(date_parts) != 3: continue
+                                dt = datetime(int(date_parts[0])+1911,
+                                              int(date_parts[1]), int(date_parts[2]))
+                                c = safe_float(str(row[6]).replace(",",""))
+                                if c > 0:
+                                    otc_records.append({
+                                        "date":   dt.strftime("%Y-%m-%d"),
+                                        "open":   safe_float(str(row[3]).replace(",","")),
+                                        "high":   safe_float(str(row[4]).replace(",","")),
+                                        "low":    safe_float(str(row[5]).replace(",","")),
+                                        "close":  c,
+                                        "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
+                                        "change": safe_float(str(row[7]).replace(",","")),
+                                    })
+                                fetched = True
                             except: continue
                 except Exception as e:
-                    print(f"  [OTC方法2] {code} {ym_otc}: {e}")
+                    print(f"  [OTC方法1] {code} {ym_otc}: {e}")
 
-            tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
-            _time.sleep(0.5)
+                # 方法二：備用 API
+                if not fetched:
+                    try:
+                        _time.sleep(1)
+                        url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+                                f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
+                        r2   = SESSION.get(url2, timeout=12)
+                        rows2 = r2.json()
+                        if isinstance(rows2, list):
+                            for row in rows2:
+                                try:
+                                    d_str = row.get("Date","") or row.get("date","")
+                                    c2    = safe_float(row.get("Close","") or row.get("close",""))
+                                    if not d_str or c2 <= 0: continue
+                                    if "/" in d_str:
+                                        pts = d_str.split("/")
+                                        dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
+                                    else:
+                                        dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
+                                    otc_records.append({
+                                        "date":   dt.strftime("%Y-%m-%d"),
+                                        "open":   safe_float(row.get("Open","") or row.get("open","")),
+                                        "high":   safe_float(row.get("High","") or row.get("high","")),
+                                        "low":    safe_float(row.get("Low","")  or row.get("low","")),
+                                        "close":  c2,
+                                        "vol":    round(safe_float(row.get("TradingShares","") or
+                                                       row.get("volume","")) / 1000),
+                                        "change": safe_float(row.get("Change","") or row.get("change","")),
+                                    })
+                                except: continue
+                    except Exception as e:
+                        print(f"  [OTC方法2] {code} {ym_otc}: {e}")
+
+                tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
+                _time.sleep(2.0)  # 加長等待避免 TPEX block
 
     if otc_records:
         _market_map[code] = "otc"  # 確認是上櫃
@@ -733,29 +764,56 @@ def fetch_history_recent(code):
 
     # ── 上櫃（OTC）──────────────────────────────────
     if use_otc:
-        for delta in [1, 0]:
-            d      = today - timedelta(days=delta * 32)
-            roc_y  = d.year - 1911
-            ym_otc = f"{roc_y}/{d.month:02d}"
+        # ① 優先用 FinMind（穩定，不會被 block）
+        token = _get_finmind_token()
+        if token:
             try:
-                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-                r    = SESSION.get(url, timeout=10)
+                start_fm = (today - timedelta(days=65)).strftime("%Y-%m-%d")
+                r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                                params={"dataset":"TaiwanStockPrice","data_id":code,
+                                        "start_date":start_fm},
+                                headers={"Authorization": f"Bearer {token}"},
+                                timeout=12)
                 data = r.json()
-                rows = data.get("aaData", [])
-                for row in rows:
-                    try:
-                        c = safe_float(str(row[6]).replace(",",""))
+                if data.get("status") == 200:
+                    for row in data.get("data", []):
+                        c = safe_float(row.get("close", 0))
                         if c > 0:
                             records.append({
                                 "close": c,
-                                "high":  safe_float(str(row[4]).replace(",","")),
-                                "low":   safe_float(str(row[5]).replace(",","")),
-                                "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
+                                "high":  safe_float(row.get("max", 0)),
+                                "low":   safe_float(row.get("min", 0)),
+                                "vol":   round(safe_float(row.get("Trading_Volume", 0)) / 1000),
                             })
-                    except: continue
-            except: pass
-            _time.sleep(0.5)
+            except Exception as e:
+                print(f"  [OTC FinMind recent] {code}: {e}")
+
+        # ② FinMind 沒資料才 fallback 到 TPEX（加長 sleep 避免 block）
+        if not records:
+            for delta in [1, 0]:
+                d      = today - timedelta(days=delta * 32)
+                roc_y  = d.year - 1911
+                ym_otc = f"{roc_y}/{d.month:02d}"
+                try:
+                    url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                            f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                    r    = SESSION.get(url, timeout=10)
+                    data = r.json()
+                    rows = data.get("aaData", [])
+                    for row in rows:
+                        try:
+                            c = safe_float(str(row[6]).replace(",",""))
+                            if c > 0:
+                                records.append({
+                                    "close": c,
+                                    "high":  safe_float(str(row[4]).replace(",","")),
+                                    "low":   safe_float(str(row[5]).replace(",","")),
+                                    "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
+                                })
+                        except: continue
+                except Exception as e:
+                    print(f"  [OTC TPEX fallback] {code} {ym_otc}: {e}")
+                _time.sleep(2.0)  # 加長等待避免 TPEX block
 
     if records:
         _market_map[code] = "otc"
@@ -4651,23 +4709,6 @@ def trigger_auto_analysis():
     threading.Thread(target=run_bg, daemon=True).start()
     return jsonify({"ok": True, "msg": "已啟動 v2.0 分析，約 10~15 分鐘完成，請稍後重新整理"})
 
-@app.route("/api/analyze/schedule_status")
-def schedule_status():
-    """查詢排程狀態：上次分析時間、下次預計時間、台灣現在時間"""
-    tw_dt      = datetime.utcnow() + timedelta(hours=8)
-    last_date  = _get_last_analysis_date()
-    yesterday  = (tw_dt - timedelta(days=1)).strftime("%Y-%m-%d")
-    tw_date    = tw_dt.strftime("%Y-%m-%d")
-    missed     = last_date < yesterday if last_date else True
-    next_run   = f"今晚 22:00（{tw_date}）" if tw_dt.hour < 22 else f"明晚 22:00"
-    return jsonify({
-        "tw_now":       tw_dt.strftime("%Y-%m-%d %H:%M:%S"),
-        "last_analysis":last_date or "無",
-        "missed":       missed,
-        "status":       "⚠️ 昨天分析遺漏，將自動補跑" if missed else "✅ 正常",
-        "next_scheduled": next_run,
-    })
-
 @app.route("/api/analyze/custom", methods=["POST"])
 def start_custom_analyze():
     """自訂個股分析"""
@@ -4870,60 +4911,49 @@ def _get_last_analysis_date():
 def _start_daily_schedule():
     """
     每天 22:00 台灣時間自動分析。
-    啟動時也會檢查：若今天或昨天沒有資料，自動補跑。
+    啟動時也會檢查：若昨天或今天沒有資料，自動補跑。
     """
     import time as _time
 
-    def _should_run(tw_dt, last_ran_date):
-        """
-        判斷是否需要執行分析。
-        - 例行排程：22:00~23:59，且今天還沒跑過
-        - 補跑：昨天（或更早）的資料不存在，且今天任何時間都可補
-        """
-        tw_date   = tw_dt.strftime("%Y-%m-%d")
-        tw_hour   = tw_dt.hour
+    def _should_run_now(tw_dt, last_db_date):
+        """判斷現在是否需要跑分析"""
+        tw_date = tw_dt.strftime("%Y-%m-%d")
+        tw_hour = tw_dt.hour
+        # 今天 22:00 後且今天還沒跑
+        if tw_hour >= 22 and last_db_date != tw_date:
+            return True, f"例行排程 {tw_date} 22:00"
+        # 啟動補跑：昨天的資料不存在（Render 重啟錯過了）
         yesterday = (tw_dt - timedelta(days=1)).strftime("%Y-%m-%d")
-
-        # 今天已跑過 → 不需要
-        if last_ran_date >= tw_date:
-            return False, ""
-
-        # 例行排程：22:00 ~ 23:59
-        if tw_hour >= 22:
-            return True, f"例行排程 {tw_date} {tw_hour:02d}:xx"
-
-        # 補跑：上次分析在昨天之前（表示昨晚沒跑成功）
-        if last_ran_date < yesterday:
-            return True, f"補跑遺漏分析（上次：{last_ran_date or '無'}，今天：{tw_date}）"
-
+        if last_db_date < yesterday and tw_hour < 22:
+            return True, f"補跑昨日遺漏分析（上次：{last_db_date}）"
         return False, ""
 
     def _scheduler():
-        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00，含補跑機制）")
-        _time.sleep(45)  # 等伺服器完全啟動
+        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00）")
+        _time.sleep(30)  # 等伺服器完全啟動
 
         # 啟動時先從 DB 查最後執行日期
-        last_ran_date = _get_last_analysis_date()
-        print(f"[排程] 資料庫最後分析日期：{last_ran_date or '無'}")
+        last_db_date = _get_last_analysis_date()
+        print(f"[排程] 資料庫最後分析日期：{last_db_date or '無'}")
 
         while True:
             try:
-                tw_dt = datetime.utcnow() + timedelta(hours=8)
+                now_utc = datetime.utcnow()
+                tw_dt   = now_utc + timedelta(hours=8)
+                tw_date = tw_dt.strftime("%Y-%m-%d")
 
-                should_run, reason = _should_run(tw_dt, last_ran_date)
+                should_run, reason = _should_run_now(tw_dt, last_db_date)
                 if should_run:
                     print(f"[排程] ⏰ {reason}")
                     _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
-                    # 跑完後重新從 DB 確認日期（而非直接信任本地變數）
-                    last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
-                    print(f"[排程] ✅ 分析完成，last_ran_date 更新為 {last_ran_date}")
-                    _time.sleep(3600)  # 跑完後休息 1 小時，防止重複觸發
+                    last_db_date = tw_date  # 更新記錄
+                    print(f"[排程] ✅ 分析完成，下次：明天 22:00")
+                    _time.sleep(120)
                 else:
                     _time.sleep(60)
             except Exception as e:
                 print(f"[排程] ❌ 錯誤: {e}")
-                import traceback; traceback.print_exc()
-                _time.sleep(120)
+                _time.sleep(60)
 
     t = threading.Thread(target=_scheduler, daemon=True)
     t.start()
