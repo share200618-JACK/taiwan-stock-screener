@@ -4523,105 +4523,6 @@ def stock_analysis(code):
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/broker/<code>")
-def broker_analysis(code):
-    """
-    券商分點買賣超分析（近一週）
-    dataset: TaiwanStockTradingDailyReport
-    回傳: 淨買超排行、淨賣超排行、每日買賣超彙總
-    """
-    try:
-        from datetime import datetime, timedelta
-        end_dt   = datetime.today().strftime("%Y-%m-%d")
-        start_dt = (datetime.today() - timedelta(days=10)).strftime("%Y-%m-%d")  # 抓10天確保有5個交易日
-
-        rows = fetch_finmind("TaiwanStockTradingDailyReport", code, start_dt, end_dt)
-        if not rows:
-            return jsonify({"error": "查無分點資料，請確認 FinMind Token 已設定且有分點資料權限"}), 404
-
-        # ── 彙總各分點近一週買賣 ─────────────────────
-        broker_map = {}   # broker_id -> {name, buy, sell, net, days:[]}
-        daily_map  = {}   # date -> {total_buy, total_sell, net}
-
-        for row in rows:
-            date      = row.get("date","")[:10]
-            broker_id = str(row.get("broker_id", row.get("stock_id","")))
-            # FinMind 分點欄位：broker_id, broker_name, buy, sell
-            name = row.get("broker_name", row.get("name", broker_id))
-            buy  = int(str(row.get("buy",0)).replace(",","") or 0)
-            sell = int(str(row.get("sell",0)).replace(",","") or 0)
-            net  = buy - sell
-
-            # 分點彙總
-            if broker_id not in broker_map:
-                broker_map[broker_id] = {"id": broker_id, "name": name, "buy": 0, "sell": 0, "net": 0, "days": {}}
-            broker_map[broker_id]["buy"]  += buy
-            broker_map[broker_id]["sell"] += sell
-            broker_map[broker_id]["net"]  += net
-            broker_map[broker_id]["days"][date] = broker_map[broker_id]["days"].get(date, 0) + net
-
-            # 每日彙總
-            if date not in daily_map:
-                daily_map[date] = {"date": date, "buy": 0, "sell": 0, "net": 0}
-            daily_map[date]["buy"]  += buy
-            daily_map[date]["sell"] += sell
-            daily_map[date]["net"]  += net
-
-        brokers = list(broker_map.values())
-
-        # 淨買超前 15 名
-        top_buy = sorted([b for b in brokers if b["net"] > 0],
-                         key=lambda x: x["net"], reverse=True)[:15]
-        # 淨賣超前 15 名
-        top_sell = sorted([b for b in brokers if b["net"] < 0],
-                          key=lambda x: x["net"])[:15]
-
-        # 計算集中度：前5大買超佔全部買量的比例
-        total_buy_vol = sum(b["buy"] for b in brokers)
-        top5_buy_vol  = sum(b["buy"] for b in top_buy[:5])
-        concentration = round(top5_buy_vol / total_buy_vol * 100, 1) if total_buy_vol > 0 else 0
-
-        # 每日排序
-        daily = sorted(daily_map.values(), key=lambda x: x["date"])
-
-        # 整理分點資料（把 days dict 轉成排序 list）
-        for b in top_buy + top_sell:
-            b["day_list"] = sorted(b["days"].items())
-            del b["days"]
-
-        # 主力動向判斷
-        net_total = sum(b["net"] for b in brokers)
-        if net_total > 500:
-            signal = "主力積極買超 🔥"
-            signal_color = "red"
-        elif net_total > 0:
-            signal = "主力小幅買超 📈"
-            signal_color = "red"
-        elif net_total > -500:
-            signal = "主力小幅賣超 📉"
-            signal_color = "green"
-        else:
-            signal = "主力積極出貨 ⚠️"
-            signal_color = "green"
-
-        return jsonify({
-            "code":          code,
-            "start_date":    start_dt,
-            "end_date":      end_dt,
-            "top_buy":       top_buy,
-            "top_sell":      top_sell,
-            "daily":         daily,
-            "net_total":     net_total,
-            "concentration": concentration,
-            "signal":        signal,
-            "signal_color":  signal_color,
-            "total_brokers": len(brokers),
-        })
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
 @app.route("/api/sector/rotation")
 def sector_rotation_api():
     """取得當日產業輪動熱度排行"""
@@ -4749,6 +4650,23 @@ def trigger_auto_analysis():
             print(f"[auto_analysis] 執行失敗: {e}")
     threading.Thread(target=run_bg, daemon=True).start()
     return jsonify({"ok": True, "msg": "已啟動 v2.0 分析，約 10~15 分鐘完成，請稍後重新整理"})
+
+@app.route("/api/analyze/schedule_status")
+def schedule_status():
+    """查詢排程狀態：上次分析時間、下次預計時間、台灣現在時間"""
+    tw_dt      = datetime.utcnow() + timedelta(hours=8)
+    last_date  = _get_last_analysis_date()
+    yesterday  = (tw_dt - timedelta(days=1)).strftime("%Y-%m-%d")
+    tw_date    = tw_dt.strftime("%Y-%m-%d")
+    missed     = last_date < yesterday if last_date else True
+    next_run   = f"今晚 22:00（{tw_date}）" if tw_dt.hour < 22 else f"明晚 22:00"
+    return jsonify({
+        "tw_now":       tw_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "last_analysis":last_date or "無",
+        "missed":       missed,
+        "status":       "⚠️ 昨天分析遺漏，將自動補跑" if missed else "✅ 正常",
+        "next_scheduled": next_run,
+    })
 
 @app.route("/api/analyze/custom", methods=["POST"])
 def start_custom_analyze():
@@ -4952,49 +4870,60 @@ def _get_last_analysis_date():
 def _start_daily_schedule():
     """
     每天 22:00 台灣時間自動分析。
-    啟動時也會檢查：若昨天或今天沒有資料，自動補跑。
+    啟動時也會檢查：若今天或昨天沒有資料，自動補跑。
     """
     import time as _time
 
-    def _should_run_now(tw_dt, last_db_date):
-        """判斷現在是否需要跑分析"""
-        tw_date = tw_dt.strftime("%Y-%m-%d")
-        tw_hour = tw_dt.hour
-        # 今天 22:00 後且今天還沒跑
-        if tw_hour >= 22 and last_db_date != tw_date:
-            return True, f"例行排程 {tw_date} 22:00"
-        # 啟動補跑：昨天的資料不存在（Render 重啟錯過了）
+    def _should_run(tw_dt, last_ran_date):
+        """
+        判斷是否需要執行分析。
+        - 例行排程：22:00~23:59，且今天還沒跑過
+        - 補跑：昨天（或更早）的資料不存在，且今天任何時間都可補
+        """
+        tw_date   = tw_dt.strftime("%Y-%m-%d")
+        tw_hour   = tw_dt.hour
         yesterday = (tw_dt - timedelta(days=1)).strftime("%Y-%m-%d")
-        if last_db_date < yesterday and tw_hour < 22:
-            return True, f"補跑昨日遺漏分析（上次：{last_db_date}）"
+
+        # 今天已跑過 → 不需要
+        if last_ran_date >= tw_date:
+            return False, ""
+
+        # 例行排程：22:00 ~ 23:59
+        if tw_hour >= 22:
+            return True, f"例行排程 {tw_date} {tw_hour:02d}:xx"
+
+        # 補跑：上次分析在昨天之前（表示昨晚沒跑成功）
+        if last_ran_date < yesterday:
+            return True, f"補跑遺漏分析（上次：{last_ran_date or '無'}，今天：{tw_date}）"
+
         return False, ""
 
     def _scheduler():
-        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00）")
-        _time.sleep(30)  # 等伺服器完全啟動
+        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00，含補跑機制）")
+        _time.sleep(45)  # 等伺服器完全啟動
 
         # 啟動時先從 DB 查最後執行日期
-        last_db_date = _get_last_analysis_date()
-        print(f"[排程] 資料庫最後分析日期：{last_db_date or '無'}")
+        last_ran_date = _get_last_analysis_date()
+        print(f"[排程] 資料庫最後分析日期：{last_ran_date or '無'}")
 
         while True:
             try:
-                now_utc = datetime.utcnow()
-                tw_dt   = now_utc + timedelta(hours=8)
-                tw_date = tw_dt.strftime("%Y-%m-%d")
+                tw_dt = datetime.utcnow() + timedelta(hours=8)
 
-                should_run, reason = _should_run_now(tw_dt, last_db_date)
+                should_run, reason = _should_run(tw_dt, last_ran_date)
                 if should_run:
                     print(f"[排程] ⏰ {reason}")
                     _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
-                    last_db_date = tw_date  # 更新記錄
-                    print(f"[排程] ✅ 分析完成，下次：明天 22:00")
-                    _time.sleep(120)
+                    # 跑完後重新從 DB 確認日期（而非直接信任本地變數）
+                    last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
+                    print(f"[排程] ✅ 分析完成，last_ran_date 更新為 {last_ran_date}")
+                    _time.sleep(3600)  # 跑完後休息 1 小時，防止重複觸發
                 else:
                     _time.sleep(60)
             except Exception as e:
                 print(f"[排程] ❌ 錯誤: {e}")
-                _time.sleep(60)
+                import traceback; traceback.print_exc()
+                _time.sleep(120)
 
     t = threading.Thread(target=_scheduler, daemon=True)
     t.start()
