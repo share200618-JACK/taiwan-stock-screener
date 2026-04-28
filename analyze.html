@@ -102,23 +102,40 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 /* 免責聲明 */
 .disclaimer{background:var(--s1);border:1px solid var(--bd);border-radius:10px;padding:14px 16px;font-size:.74rem;color:var(--dim);line-height:1.8;margin-top:18px;}
 /* ── 股票分析彈出面板 ── */
-.stock-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;
-  display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(4px);}
-.stock-modal{background:#111318;border:1px solid #252a38;border-radius:20px 20px 0 0;
-  width:100%;max-width:700px;max-height:90vh;overflow-y:auto;
-  padding:20px 18px 32px;animation:slideUp .25s ease;}
-@keyframes slideUp{from{transform:translateY(100%)}to{transform:translateY(0)}}
-.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
-.modal-close{width:32px;height:32px;background:#1e2330;border:none;border-radius:50%;
-  color:#6a748f;font-size:1.2rem;cursor:pointer;}
-.modal-tabs{display:flex;gap:6px;margin-bottom:14px;border-bottom:1px solid #252a38;padding-bottom:10px;overflow-x:auto;}
+.stock-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:200;
+  display:flex;align-items:flex-end;justify-content:center;backdrop-filter:blur(6px);}
+.stock-modal{background:#0d1117;border:1px solid #1e2538;border-radius:20px 20px 0 0;
+  width:100%;max-width:780px;max-height:94vh;overflow-y:auto;
+  padding:20px 18px 36px;animation:slideUp .28s cubic-bezier(.16,1,.3,1);}
+@keyframes slideUp{from{transform:translateY(100%);opacity:0}to{transform:translateY(0);opacity:1}}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;}
+.modal-header-left{display:flex;align-items:center;gap:12px;}
+.modal-price-badge{font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace;
+  padding:3px 10px;border-radius:6px;background:#1e2538;}
+.modal-close{width:32px;height:32px;background:#1e2538;border:none;border-radius:50%;
+  color:#6a748f;font-size:1.1rem;cursor:pointer;transition:background .15s;}
+.modal-close:hover{background:#252d42;}
+.modal-tabs{display:flex;gap:5px;margin-bottom:14px;border-bottom:1px solid #1e2538;padding-bottom:10px;overflow-x:auto;}
 .modal-tab{padding:6px 14px;border:none;border-radius:7px;font-size:.78rem;font-weight:600;
-  cursor:pointer;background:#1e2330;color:#6a748f;font-family:'Noto Sans TC',sans-serif;
+  cursor:pointer;background:#1a2030;color:#6a748f;font-family:'Noto Sans TC',sans-serif;
   transition:all .15s;white-space:nowrap;flex-shrink:0;}
-.modal-tab.active{background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;}
+.modal-tab.active{background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;box-shadow:0 2px 12px rgba(168,85,247,.3);}
 .modal-section{display:none;}
 .modal-section.active{display:block;}
-.modal-loading{text-align:center;padding:32px;color:#6a748f;}
+.modal-loading{text-align:center;padding:40px;color:#6a748f;}
+/* 技術指標格 */
+.ind-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:7px;margin-bottom:10px;}
+.ind-grid.four{grid-template-columns:repeat(4,1fr);}
+.ind-box{background:#131921;border:1px solid #1e2538;border-radius:8px;padding:8px 10px;}
+.ind-box .ib-label{font-size:.62rem;color:#4a5568;margin-bottom:3px;text-transform:uppercase;letter-spacing:.5px;}
+.ind-box .ib-val{font-size:.88rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.ind-box .ib-sub{font-size:.62rem;color:#4a5568;margin-top:1px;}
+/* 圖表包框 */
+.chart-wrap{background:#0d1117;border:1px solid #1e2538;border-radius:10px;overflow:hidden;margin-bottom:8px;}
+.chart-label{font-size:.65rem;color:#4a5568;padding:7px 10px 4px;display:flex;justify-content:space-between;align-items:center;}
+.chart-legend{display:flex;gap:10px;}
+.chart-legend span{display:flex;align-items:center;gap:4px;font-size:.62rem;}
+.chart-legend i{width:16px;height:2px;display:inline-block;border-radius:1px;}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <script src="/auth.js"></script>
@@ -141,16 +158,20 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 <div class="stock-modal-overlay" id="stockModalOverlay" style="display:none;" onclick="if(event.target===this)closeStockPanel()">
   <div class="stock-modal" id="stockModal">
     <div class="modal-header">
-      <div>
-        <div style="font-size:.82rem;color:var(--dim);" id="modalCode">—</div>
-        <div style="font-size:1.05rem;font-weight:700;" id="modalName">—</div>
+      <div class="modal-header-left">
+        <div>
+          <div style="font-size:.75rem;color:var(--dim);" id="modalCode">—</div>
+          <div style="font-size:1.05rem;font-weight:700;" id="modalName">—</div>
+        </div>
+        <div class="modal-price-badge" id="modalPriceBadge" style="display:none;"></div>
       </div>
       <button class="modal-close" onclick="closeStockPanel()">✕</button>
     </div>
     <div class="modal-tabs">
-      <button class="modal-tab active" onclick="switchModalTab('tech')">📈 技術分析</button>
+      <button class="modal-tab active" onclick="switchModalTab('tech')">📈 技術線圖</button>
       <button class="modal-tab" onclick="switchModalTab('advice')">💰 買賣建議</button>
       <button class="modal-tab" onclick="switchModalTab('ai')">🤖 AI 評估</button>
+      <button class="modal-tab" onclick="switchModalTab('broker')">🏦 主力分點</button>
     </div>
     <div id="modalContent">
       <div class="modal-loading">⏳ 載入中...</div>
@@ -698,32 +719,17 @@ async function startAnalysis() {
 function pollProgress(taskId, onDone) {
   if (pollTimer) clearInterval(pollTimer);
   let errorCount = 0;
-  let retryDelay = 2000;
-  const MAX_ERRORS = 15;        // 從 3 次提高到 15 次（約 30 秒）才放棄
-  const MAX_RETRY_DELAY = 8000; // 最長重試間隔 8 秒
-
-  function scheduleNext() {
-    pollTimer = setTimeout(doPoll, retryDelay);
-  }
-
-  async function doPoll() {
+  pollTimer = setInterval(async () => {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 25000); // 25秒 timeout
-      const r = await fetch(`${API}/api/analyze/progress/${taskId}`, {
-        signal: controller.signal
-      });
-      clearTimeout(timeout);
+      const r    = await fetch(`${API}/api/analyze/progress/${taskId}`);
       const prog = await r.json();
-
-      // 連線成功，重置錯誤計數與延遲
-      errorCount = 0;
-      retryDelay = 2000;
 
       // 找不到任務 → 伺服器可能重啟，嘗試載入最新結果
       if (prog.error && (prog.error.includes('找不到') || r.status === 404)) {
+        clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
         if(onDone) onDone(); else resetBtn();
+        // 自動嘗試載入最新結果
         const latest = await fetch(`${API}/api/analyze/latest`);
         const latestData = await latest.json();
         if (!latestData.error) {
@@ -737,38 +743,28 @@ function pollProgress(taskId, onDone) {
       }
 
       if (prog.error) {
+        clearInterval(pollTimer);
         showError(prog.error);
         if(onDone) onDone(); else resetBtn();
         return;
       }
-
       setProgress(prog.pct, prog.msg);
-
       if (prog.done && prog.result) {
+        clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
         renderResults(prog.result);
         if(onDone) onDone(); else resetBtn();
-        return; // 完成，不再 scheduleNext
       }
-
-      scheduleNext(); // 繼續輪詢
-
     } catch(e) {
       errorCount++;
-      if (errorCount >= MAX_ERRORS) {
+      if (errorCount >= 3) {
+        clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
         if(onDone) onDone(); else resetBtn();
         showError('連線中斷，請重新整理頁面或點「📂 最新結果」查看');
-        return;
       }
-      // 指數退避：每次失敗拉長等待時間，最多 8 秒
-      retryDelay = Math.min(retryDelay * 1.5, MAX_RETRY_DELAY);
-      setProgress(null, `⚠️ 連線不穩，${Math.round(retryDelay/1000)}秒後重試 (${errorCount}/${MAX_ERRORS})...`);
-      scheduleNext();
     }
-  }
-
-  doPoll(); // 立即執行第一次
+  }, 2000);
 }
 
 // ══════════════════════════════════════════════════════
@@ -783,6 +779,8 @@ let   _modalChartKD = null;
 function openStockPanel(code, name, price, sector) {
   document.getElementById('modalCode').textContent = code;
   document.getElementById('modalName').textContent = name;
+  const pb = document.getElementById('modalPriceBadge');
+  if (pb) pb.style.display = 'none';
   document.getElementById('stockModalOverlay').style.display = 'flex';
   document.body.style.overflow = 'hidden';
   switchModalTab('tech');
@@ -805,7 +803,7 @@ function closeStockPanel() {
 function switchModalTab(tab) {
   _modalTab = tab;
   document.querySelectorAll('.modal-tab').forEach((el, i) => {
-    el.classList.toggle('active', ['tech','advice','ai'][i] === tab);
+    el.classList.toggle('active', ['tech','advice','ai','broker'][i] === tab);
   });
   if (_modalData) renderModalContent(tab);
 }
@@ -832,42 +830,105 @@ function renderModalContent(tab) {
   const cur = d.price;
 
   if (tab === 'tech') {
-    // K線圖 + KD圖 + 技術指標
+    // 更新 header 顯示價格
+    const priceBadge = document.getElementById('modalPriceBadge');
+    if (priceBadge) {
+      const prevClose = d.candles?.slice(-2,-1)[0]?.close || cur;
+      const chgPct = ((cur - prevClose)/prevClose*100).toFixed(2);
+      const isUp = parseFloat(chgPct) >= 0;
+      priceBadge.style.display = 'block';
+      priceBadge.style.color = isUp ? 'var(--red)' : 'var(--grn)';
+      priceBadge.style.borderColor = isUp ? 'rgba(240,62,77,.2)' : 'rgba(25,201,125,.2)';
+      priceBadge.innerHTML = `${cur} <span style="font-size:.7rem;opacity:.7;">${isUp?'+':''}${chgPct}%</span>`;
+    }
+
     document.getElementById('modalContent').innerHTML = `
-      <div style="background:#161b25;border:1px solid #252a38;border-radius:8px;padding:10px;margin-bottom:10px;">
-        <div style="font-size:.7rem;color:#6a748f;margin-bottom:6px;display:flex;justify-content:space-between;">
-          <span>📈 K線（近60日）</span>
-          <span style="color:${ind.trend==='多頭'?'var(--red)':ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">${ind.trend}趨勢</span>
+      <!-- K 線圖 -->
+      <div class="chart-wrap">
+        <div class="chart-label">
+          <span>K 線 + 成交量（近 60 日）</span>
+          <div class="chart-legend">
+            <span><i style="background:#f0b429;"></i>MA5</span>
+            <span><i style="background:#3d8bff;"></i>MA20</span>
+            <span><i style="background:#a855f7;border-top:2px dashed #a855f7;height:0;"></i>進場</span>
+            <span><i style="background:#ff8c00;border-top:2px dashed #ff8c00;height:0;"></i>停損</span>
+          </div>
         </div>
-        <div id="modalKlineChart" style="height:180px;"></div>
+        <div id="modalKlineChart" style="height:290px;"></div>
       </div>
-      <div style="background:#161b25;border:1px solid #252a38;border-radius:8px;padding:10px;margin-bottom:12px;">
-        <div style="font-size:.7rem;color:#6a748f;margin-bottom:6px;">📊 KD 指標（K=${ind.k} / D=${ind.d}）</div>
-        <canvas id="modalKDChart" height="70"></canvas>
+      <!-- KD 圖 -->
+      <div class="chart-wrap">
+        <div class="chart-label">
+          <span>KD 隨機指標</span>
+          <div class="chart-legend">
+            <span><i style="background:#f0b429;"></i>K=${ind.k}</span>
+            <span><i style="background:#3d8bff;"></i>D=${ind.d}</span>
+            <span style="color:${ind.kd_signal.includes('黃金')?'var(--red)':ind.kd_signal.includes('死亡')?'var(--grn)':'#6a748f'};">${ind.kd_signal}</span>
+          </div>
+        </div>
+        <div id="modalKDChart" style="height:80px;"></div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px;">
-        ${[['MA5',ind.ma5],['MA20',ind.ma20],['MA60',ind.ma60],['MA120',ind.ma120]].map(([l,v])=>{
-          const cls = cur>=v?'color:var(--red)':'color:var(--grn)';
-          const diff = ((cur-v)/v*100).toFixed(1);
-          return `<span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
-            ${l} <span style="${cls};font-weight:700;">${v}</span>
-            <span style="color:#6a748f;font-size:.65rem;">(${diff>0?'+':''}${diff}%)</span>
-          </span>`;
-        }).join('')}
+      <!-- 指標儀表板 -->
+      <div style="margin-bottom:8px;">
+        <div style="font-size:.65rem;color:#4a5568;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px;">均線位置</div>
+        <div class="ind-grid four">
+          ${[['MA5',ind.ma5],['MA20',ind.ma20],['MA60',ind.ma60],['MA120',ind.ma120]].map(([l,v])=>{
+            const diff = ((cur-v)/v*100);
+            const isAbove = cur >= v;
+            return `<div class="ind-box" style="border-color:${isAbove?'rgba(240,62,77,.2)':'rgba(25,201,125,.2)'};">
+              <div class="ib-label">${l}</div>
+              <div class="ib-val" style="color:${isAbove?'var(--red)':'var(--grn)'};">${v}</div>
+              <div class="ib-sub">${diff>0?'▲':diff<0?'▼':'—'} ${Math.abs(diff).toFixed(1)}%</div>
+            </div>`;
+          }).join('')}
+        </div>
       </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;">
-        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
-          KD ${ind.k}/${ind.d} <span style="color:${ind.kd_signal.includes('黃金')?'var(--red)':'var(--grn)'};">${ind.kd_signal}</span>
-        </span>
-        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
-          RSI ${ind.rsi14} <span style="color:${ind.rsi14>70?'var(--red)':ind.rsi14<30?'var(--grn)':'#6a748f'};">${ind.rsi14>70?'超買':ind.rsi14<30?'超賣':'中性'}</span>
-        </span>
-        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
-          MACD ${ind.macd_hist>0?'📈 多頭':'📉 空頭'} (${ind.macd_hist>0?'+':''}${ind.macd_hist})
-        </span>
-        <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
-          布林 ${ind.boll_pos}% ${ind.boll_pos>80?'⚠️接近上軌':ind.boll_pos<20?'✅接近下軌':'中軌'}
-        </span>
+      <div class="ind-grid" style="margin-bottom:8px;">
+        <div>
+          <div style="font-size:.65rem;color:#4a5568;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px;">動能指標</div>
+          <div class="ind-grid">
+            <div class="ind-box">
+              <div class="ib-label">RSI 14</div>
+              <div class="ib-val" style="color:${ind.rsi14>70?'var(--red)':ind.rsi14<30?'var(--grn)':'#c8d0e0'};">${ind.rsi14}</div>
+              <div class="ib-sub">${ind.rsi14>70?'⚠ 超買':ind.rsi14<30?'✅ 超賣':'中性'}</div>
+            </div>
+            <div class="ind-box">
+              <div class="ib-label">MACD 柱</div>
+              <div class="ib-val" style="color:${ind.macd_hist>0?'var(--red)':'var(--grn)'};">${ind.macd_hist>0?'+':''}${ind.macd_hist}</div>
+              <div class="ib-sub">${ind.macd_hist>0?'多頭擴張':'空頭壓制'}</div>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div style="font-size:.65rem;color:#4a5568;text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px;">布林通道</div>
+          <div class="ind-box" style="height:calc(100% - 20px);">
+            <div style="display:flex;justify-content:space-between;font-size:.62rem;color:#4a5568;margin-bottom:6px;">
+              <span>下軌 ${ind.boll_dn}</span><span>上軌 ${ind.boll_up}</span>
+            </div>
+            <div style="background:#1e2538;border-radius:4px;height:8px;position:relative;overflow:hidden;">
+              <div style="position:absolute;left:0;right:0;top:0;bottom:0;background:linear-gradient(90deg,rgba(25,201,125,.2),rgba(168,85,247,.15),rgba(240,62,77,.2));"></div>
+              <div style="position:absolute;top:50%;transform:translateY(-50%);left:calc(${Math.min(Math.max(ind.boll_pos,2),98)}% - 5px);
+                width:10px;height:10px;border-radius:50%;background:${ind.boll_pos>80?'var(--red)':ind.boll_pos<20?'var(--grn)':'#a855f7'};
+                box-shadow:0 0 6px ${ind.boll_pos>80?'var(--red)':ind.boll_pos<20?'var(--grn)':'#a855f7'};margin-top:1px;"></div>
+            </div>
+            <div class="ib-sub" style="margin-top:5px;">位置 ${ind.boll_pos}% ${ind.boll_pos>80?'⚠ 接近上軌':ind.boll_pos<20?'✅ 接近下軌':''}</div>
+          </div>
+        </div>
+      </div>
+      <!-- 趨勢總覽 -->
+      <div style="background:#131921;border:1px solid #1e2538;border-radius:8px;padding:10px 12px;display:flex;align-items:center;gap:10px;">
+        <div style="width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.1rem;
+          background:${ind.trend==='多頭'?'rgba(240,62,77,.15)':ind.trend==='空頭'?'rgba(25,201,125,.15)':'rgba(240,180,41,.15)'};">
+          ${ind.trend==='多頭'?'📈':ind.trend==='空頭'?'📉':'📊'}
+        </div>
+        <div>
+          <div style="font-size:.8rem;font-weight:700;color:${ind.trend==='多頭'?'var(--red)':ind.trend==='空頭'?'var(--grn)':'var(--gold)'};">
+            ${ind.trend}趨勢・${ind.kd_signal}
+          </div>
+          <div style="font-size:.68rem;color:#4a5568;margin-top:2px;">
+            60日高 ${ind.hi60} ／ 60日低 ${ind.lo60} ／ ATR ${ind.atr}
+          </div>
+        </div>
       </div>`;
     setTimeout(() => drawModalCharts(d), 50);
 
@@ -974,7 +1035,116 @@ function renderModalContent(tab) {
           ${isWatching(code)?'✓ 追蹤中':'+ 加入追蹤'}
         </button>
       </div>`;
+  } else if (tab === 'broker') {
+    const code = document.getElementById('modalCode').textContent;
+    document.getElementById('modalContent').innerHTML =
+      `<div class="modal-loading">⏳ 載入分點資料中...</div>`;
+    fetchBrokerData(code);
   }
+}
+
+async function fetchBrokerData(code) {
+  try {
+    const r = await fetch(`${API}/api/broker/${code}`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    renderBrokerTab(d);
+  } catch(e) {
+    document.getElementById('modalContent').innerHTML =
+      `<div class="modal-loading" style="color:var(--red);">❌ ${e.message}</div>`;
+  }
+}
+
+function renderBrokerTab(d) {
+  const fmt = n => n >= 0
+    ? `<span style="color:var(--red);">+${(n/1000).toFixed(1)}K</span>`
+    : `<span style="color:var(--grn);">${(n/1000).toFixed(1)}K</span>`;
+
+  const barRow = (b, maxAbs, isBuy) => {
+    const pct = Math.min(Math.abs(b.net) / maxAbs * 100, 100).toFixed(1);
+    const color = isBuy ? 'var(--red)' : 'var(--grn)';
+    const netK  = (b.net / 1000).toFixed(1);
+    return `
+      <div style="display:grid;grid-template-columns:90px 1fr 60px;gap:6px;align-items:center;margin-bottom:6px;">
+        <div style="font-size:.7rem;color:#c8d0e0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+             title="${b.name}">${b.name}</div>
+        <div style="background:#131921;border-radius:3px;height:10px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${color};border-radius:3px;
+            box-shadow:0 0 6px ${color};transition:width .4s ease;"></div>
+        </div>
+        <div style="font-size:.72rem;font-weight:700;font-family:'JetBrains Mono',monospace;
+          color:${color};text-align:right;">${isBuy?'+':''}${netK}K</div>
+      </div>`;
+  };
+
+  const maxBuy  = d.top_buy[0]  ? Math.abs(d.top_buy[0].net)  : 1;
+  const maxSell = d.top_sell[0] ? Math.abs(d.top_sell[0].net) : 1;
+
+  // 每日趨勢 mini bars
+  const dailyMax = Math.max(...d.daily.map(x => Math.abs(x.net)), 1);
+  const dailyBars = d.daily.map(x => {
+    const h = Math.max(Math.abs(x.net) / dailyMax * 36, 3).toFixed(0);
+    const c = x.net >= 0 ? 'var(--red)' : 'var(--grn)';
+    const dateShort = x.date.slice(5);
+    const netK = (x.net/1000).toFixed(1);
+    return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;">
+      <div style="font-size:.6rem;color:${c};font-weight:700;">${netK>0?'+':''}${netK}</div>
+      <div style="width:100%;display:flex;align-items:flex-end;justify-content:center;height:36px;">
+        <div style="width:70%;background:${c};border-radius:2px 2px 0 0;height:${h}px;
+          box-shadow:0 0 4px ${c};opacity:.85;"></div>
+      </div>
+      <div style="font-size:.58rem;color:#4a5568;">${dateShort}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('modalContent').innerHTML = `
+    <!-- 總覽 -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:12px;">
+      <div class="ind-box" style="border-color:${d.signal_color==='red'?'rgba(240,62,77,.25)':'rgba(25,201,125,.25)'};">
+        <div class="ib-label">主力動向</div>
+        <div style="font-size:.78rem;font-weight:700;color:${d.signal_color==='red'?'var(--red)':'var(--grn)'};">${d.signal}</div>
+      </div>
+      <div class="ind-box">
+        <div class="ib-label">週淨買超（張）</div>
+        <div class="ib-val">${fmt(d.net_total)}</div>
+      </div>
+      <div class="ind-box">
+        <div class="ib-label">前5大集中度</div>
+        <div class="ib-val" style="color:${d.concentration>40?'var(--red)':d.concentration>20?'var(--gold)':'#c8d0e0'};">
+          ${d.concentration}%</div>
+        <div class="ib-sub">${d.concentration>40?'⚠ 籌碼集中':d.concentration>20?'略集中':'分散'}</div>
+      </div>
+    </div>
+
+    <!-- 每日趨勢 -->
+    <div class="chart-wrap" style="margin-bottom:10px;">
+      <div class="chart-label"><span>每日主力淨買超（張）</span>
+        <span style="font-size:.6rem;color:#4a5568;">${d.start_date} ~ ${d.end_date}</span></div>
+      <div style="display:flex;gap:4px;padding:8px 10px 4px;align-items:flex-end;">
+        ${dailyBars}
+      </div>
+    </div>
+
+    <!-- 買超排行 -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:4px;">
+      <div>
+        <div style="font-size:.65rem;color:#4a5568;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+          🔴 淨買超前 ${Math.min(d.top_buy.length,10)} 名
+        </div>
+        ${d.top_buy.slice(0,10).map(b => barRow(b, maxBuy, true)).join('')}
+        ${d.top_buy.length===0?'<div style="font-size:.72rem;color:#4a5568;">無買超分點</div>':''}
+      </div>
+      <div>
+        <div style="font-size:.65rem;color:#4a5568;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">
+          🟢 淨賣超前 ${Math.min(d.top_sell.length,10)} 名
+        </div>
+        ${d.top_sell.slice(0,10).map(b => barRow(b, maxSell, false)).join('')}
+        ${d.top_sell.length===0?'<div style="font-size:.72rem;color:#4a5568;">無賣超分點</div>':''}
+      </div>
+    </div>
+    <div style="font-size:.62rem;color:#4a5568;margin-top:8px;text-align:center;">
+      共 ${d.total_brokers} 個分點參與交易・資料來源：FinMind
+    </div>`;
 }
 
 function drawModalCharts(d) {
@@ -984,73 +1154,135 @@ function drawModalCharts(d) {
   const candles = d.candles || [];
   if (!candles.length) return;
   const lev = d.levels;
+  const adv = d.advice;
+  const ind = d.indicators;
 
+  if (!window.LightweightCharts) return;
+  const LC = LightweightCharts;
+
+  // ── 主 K 線圖（含成交量）────────────────────────
   const klineEl = document.getElementById('modalKlineChart');
-  const ctxKD   = document.getElementById('modalKDChart');
-  if (!klineEl || !ctxKD) return;
-
-  // 蠟燭圖
+  if (!klineEl) return;
   klineEl.innerHTML = '';
-  if (window.LightweightCharts) {
-    const chart = LightweightCharts.createChart(klineEl, {
-      width: klineEl.offsetWidth || 300, height: 180,
-      layout: { background:{color:'#161b25'}, textColor:'#6a748f' },
-      grid: { vertLines:{color:'rgba(255,255,255,.03)'}, horzLines:{color:'rgba(255,255,255,.03)'} },
-      rightPriceScale: { borderColor:'#252a38' },
-      timeScale: { borderColor:'#252a38' },
-      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    });
 
-    const candleData = candles.map(c=>({
-      time:c.date, open:c.open||c.close, high:c.high||c.close, low:c.low||c.close, close:c.close
-    })).sort((a,b)=>a.time.localeCompare(b.time));
-
-    const cs = chart.addCandlestickSeries({
-      upColor:'#ff4d5e', downColor:'#27d981',
-      borderUpColor:'#ff4d5e', borderDownColor:'#27d981',
-      wickUpColor:'#ff4d5e', wickDownColor:'#27d981',
-    });
-    cs.setData(candleData);
-
-    const ma5s  = chart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false});
-    ma5s.setData(candles.map(c=>({time:c.date,value:c.ma5})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
-    const ma20s = chart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false});
-    ma20s.setData(candles.map(c=>({time:c.date,value:c.ma20})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
-
-    if (lev) {
-      const ss = chart.addLineSeries({color:'rgba(39,217,129,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
-      ss.setData([{time:candleData[0].time,value:lev.support1},{time:candleData[candleData.length-1].time,value:lev.support1}]);
-      const rs = chart.addLineSeries({color:'rgba(255,77,94,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
-      rs.setData([{time:candleData[0].time,value:lev.resist1},{time:candleData[candleData.length-1].time,value:lev.resist1}]);
-    }
-    chart.timeScale().fitContent();
-    _modalChartK = chart;
-  }
-
-  // KD 計算
-  const k_s=[], d_s=[]; let k=50,dv=50;
-  for(let i=0;i<closes.length;i++){
-    const n=Math.min(9,i+1);
-    const rh=Math.max(...candles.slice(Math.max(0,i-n+1),i+1).map(c=>c.high||closes[i]));
-    const rl=Math.min(...candles.slice(Math.max(0,i-n+1),i+1).map(c=>c.low||closes[i]));
-    const rsv=rh===rl?0:(closes[i]-rl)/(rh-rl)*100;
-    k=k*2/3+rsv/3; dv=dv*2/3+k/3;
-    k_s.push(Math.round(k*10)/10); d_s.push(Math.round(dv*10)/10);
-  }
-
-  _modalChartKD = new Chart(ctxKD.getContext('2d'), {
-    type:'line',
-    data:{ labels, datasets:[
-      { label:'K', data:k_s, borderColor:'#f0b429', borderWidth:1.5, pointRadius:0, tension:.1 },
-      { label:'D', data:d_s, borderColor:'#3d8bff', borderWidth:1.5, pointRadius:0, tension:.1 },
-      { data:Array(labels.length).fill(80), borderColor:'rgba(255,77,94,.2)', borderWidth:1, borderDash:[3,3], pointRadius:0 },
-      { data:Array(labels.length).fill(20), borderColor:'rgba(39,217,129,.2)', borderWidth:1, borderDash:[3,3], pointRadius:0 },
-    ]},
-    options:{ responsive:true, maintainAspectRatio:false,
-      plugins:{ legend:{display:false}, tooltip:{backgroundColor:'#1e2330',borderColor:'#252a38',borderWidth:1} },
-      scales:{ x:{ticks:{color:'#6a748f',maxTicksLimit:8,font:{size:9}},grid:{color:'rgba(255,255,255,.03)'}},
-               y:{min:0,max:100,ticks:{color:'#6a748f',font:{size:9}},grid:{color:'rgba(255,255,255,.03)'},position:'right'} } }
+  const chart = LC.createChart(klineEl, {
+    width: klineEl.offsetWidth || 340,
+    height: 290,
+    layout: { background:{color:'#0d1117'}, textColor:'#6a748f', fontSize: 11 },
+    grid: { vertLines:{color:'rgba(255,255,255,.04)'}, horzLines:{color:'rgba(255,255,255,.04)'} },
+    rightPriceScale: { borderColor:'#1e2538', scaleMargins:{ top:0.08, bottom:0.25 } },
+    timeScale: { borderColor:'#1e2538', timeVisible:true, secondsVisible:false },
+    crosshair: { mode: LC.CrosshairMode.Normal,
+      vertLine:{color:'rgba(168,85,247,.4)',width:1,style:LC.LineStyle.Dashed},
+      horzLine:{color:'rgba(168,85,247,.4)',width:1,style:LC.LineStyle.Dashed} },
+    handleScroll: true,
+    handleScale: true,
   });
+
+  const candleData = candles.map(c=>({
+    time:c.date, open:c.open||c.close, high:c.high||c.close, low:c.low||c.close, close:c.close
+  })).sort((a,b)=>a.time.localeCompare(b.time));
+
+  // 計算均量（判斷爆量）
+  const vols = candles.map(c=>c.vol||0);
+  const avgVol20 = vols.slice(-20).reduce((a,b)=>a+b,0)/Math.min(20,vols.length);
+
+  // 蠟燭
+  const cs = chart.addCandlestickSeries({
+    upColor:'#f03e4d', downColor:'#19c97d',
+    borderUpColor:'#f03e4d', borderDownColor:'#19c97d',
+    wickUpColor:'rgba(240,62,77,.7)', wickDownColor:'rgba(25,201,125,.7)',
+  });
+  cs.setData(candleData);
+
+  // MA5
+  const sortedData = c => candles.map(x=>({time:x.date,value:x[c]}))
+    .filter(x=>x.value).sort((a,b)=>a.time.localeCompare(b.time));
+  chart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(sortedData('ma5'));
+  chart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(sortedData('ma20'));
+
+  // 支撐/壓力/進場/停損線
+  const addHLine = (val, color, label) => {
+    if (!val || !candleData.length) return;
+    const s = chart.addLineSeries({color, lineWidth:1, lineStyle:LC.LineStyle.Dashed,
+      priceLineVisible:false, lastValueVisible:true,
+      title: label });
+    s.setData([{time:candleData[0].time,value:val},{time:candleData[candleData.length-1].time,value:val}]);
+  };
+  if (lev) {
+    addHLine(lev.support1, 'rgba(25,201,125,.45)', '支撐');
+    addHLine(lev.resist1,  'rgba(240,62,77,.45)',  '壓力');
+  }
+  if (adv) {
+    addHLine(adv.buy_suggest,    'rgba(168,85,247,.7)', '進場');
+    addHLine(adv.stop_loss_price,'rgba(255,140,0,.6)',  '停損');
+    addHLine(adv.target2,        'rgba(61,139,255,.6)', '目標');
+  }
+
+  // 成交量（底部 25%）
+  const volSeries = chart.addHistogramSeries({
+    priceFormat:{type:'volume'},
+    priceScaleId:'vol',
+    scaleMargins:{ top:0.78, bottom:0 },
+  });
+  chart.priceScale('vol').applyOptions({ scaleMargins:{top:0.78,bottom:0}, drawTicks:false, borderVisible:false });
+  volSeries.setData(candles.map(c=>({
+    time:c.date,
+    value:c.vol||0,
+    color: c.vol > avgVol20*1.8
+      ? (c.close >= (c.open||c.close) ? 'rgba(240,62,77,.9)' : 'rgba(25,201,125,.9)')  // 爆量
+      : (c.close >= (c.open||c.close) ? 'rgba(240,62,77,.35)' : 'rgba(25,201,125,.35)')
+  })).sort((a,b)=>a.time.localeCompare(b.time)));
+
+  chart.timeScale().fitContent();
+  _modalChartK = chart;
+
+  // ── KD 圖（LightweightCharts）────────────────────
+  const kdEl = document.getElementById('modalKDChart');
+  if (!kdEl) return;
+  kdEl.innerHTML = '';
+
+  const kdChart = LC.createChart(kdEl, {
+    width: kdEl.offsetWidth || 340,
+    height: 80,
+    layout: { background:{color:'#0d1117'}, textColor:'#6a748f', fontSize:10 },
+    grid: { vertLines:{color:'rgba(255,255,255,.03)'}, horzLines:{color:'rgba(255,255,255,.03)'} },
+    rightPriceScale: { borderColor:'#1e2538', scaleMargins:{top:0.05,bottom:0.05} },
+    timeScale: { borderColor:'#1e2538', visible:false },
+    crosshair: { mode: LC.CrosshairMode.Normal,
+      vertLine:{color:'rgba(168,85,247,.3)',width:1,style:LC.LineStyle.Dashed},
+      horzLine:{visible:false} },
+    handleScroll: false, handleScale: false,
+  });
+
+  // 計算 KD
+  const k_s=[], d_s=[]; let kv=50, dv=50;
+  const closes = candles.map(c=>c.close);
+  for(let i=0;i<candles.length;i++){
+    const n=Math.min(9,i+1);
+    const sl=candles.slice(Math.max(0,i-n+1),i+1);
+    const rh=Math.max(...sl.map(c=>c.high||closes[i]));
+    const rl=Math.min(...sl.map(c=>c.low||closes[i]));
+    const rsv=rh===rl?0:(closes[i]-rl)/(rh-rl)*100;
+    kv=kv*2/3+rsv/3; dv=dv*2/3+kv/3;
+    k_s.push({time:candles[i].date, value:Math.round(kv*10)/10});
+    d_s.push({time:candles[i].date, value:Math.round(dv*10)/10});
+  }
+
+  kdChart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(k_s);
+  kdChart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(d_s);
+  // 超買超賣線
+  const kdDates=[{time:candles[0].date,value:80},{time:candles[candles.length-1].date,value:80}];
+  kdChart.addLineSeries({color:'rgba(240,62,77,.25)',lineWidth:1,lineStyle:LC.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false}).setData(kdDates);
+  kdChart.addLineSeries({color:'rgba(25,201,125,.25)',lineWidth:1,lineStyle:LC.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false})
+    .setData(kdDates.map(x=>({...x,value:20})));
+
+  kdChart.timeScale().fitContent();
+  // 同步時間軸縮放
+  chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
+    if (r) kdChart.timeScale().setVisibleLogicalRange(r);
+  });
+  _modalChartKD = kdChart;
 }
 
 function showToast(msg) {
@@ -1062,12 +1294,8 @@ function showToast(msg) {
 }
 
 function setProgress(pct, msg) {
-  if (pct !== null && pct !== undefined) {
-    document.getElementById('progBar').style.width = pct + '%';
-    document.getElementById('progMsg').textContent = `${pct}%  ${msg}`;
-  } else {
-    document.getElementById('progMsg').textContent = msg;
-  }
+  document.getElementById('progBar').style.width = pct + '%';
+  document.getElementById('progMsg').textContent = `${pct}%  ${msg}`;
 }
 
 function resetBtn() {

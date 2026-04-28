@@ -4523,6 +4523,105 @@ def stock_analysis(code):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/broker/<code>")
+def broker_analysis(code):
+    """
+    券商分點買賣超分析（近一週）
+    dataset: TaiwanStockTradingDailyReport
+    回傳: 淨買超排行、淨賣超排行、每日買賣超彙總
+    """
+    try:
+        from datetime import datetime, timedelta
+        end_dt   = datetime.today().strftime("%Y-%m-%d")
+        start_dt = (datetime.today() - timedelta(days=10)).strftime("%Y-%m-%d")  # 抓10天確保有5個交易日
+
+        rows = fetch_finmind("TaiwanStockTradingDailyReport", code, start_dt, end_dt)
+        if not rows:
+            return jsonify({"error": "查無分點資料，請確認 FinMind Token 已設定且有分點資料權限"}), 404
+
+        # ── 彙總各分點近一週買賣 ─────────────────────
+        broker_map = {}   # broker_id -> {name, buy, sell, net, days:[]}
+        daily_map  = {}   # date -> {total_buy, total_sell, net}
+
+        for row in rows:
+            date      = row.get("date","")[:10]
+            broker_id = str(row.get("broker_id", row.get("stock_id","")))
+            # FinMind 分點欄位：broker_id, broker_name, buy, sell
+            name = row.get("broker_name", row.get("name", broker_id))
+            buy  = int(str(row.get("buy",0)).replace(",","") or 0)
+            sell = int(str(row.get("sell",0)).replace(",","") or 0)
+            net  = buy - sell
+
+            # 分點彙總
+            if broker_id not in broker_map:
+                broker_map[broker_id] = {"id": broker_id, "name": name, "buy": 0, "sell": 0, "net": 0, "days": {}}
+            broker_map[broker_id]["buy"]  += buy
+            broker_map[broker_id]["sell"] += sell
+            broker_map[broker_id]["net"]  += net
+            broker_map[broker_id]["days"][date] = broker_map[broker_id]["days"].get(date, 0) + net
+
+            # 每日彙總
+            if date not in daily_map:
+                daily_map[date] = {"date": date, "buy": 0, "sell": 0, "net": 0}
+            daily_map[date]["buy"]  += buy
+            daily_map[date]["sell"] += sell
+            daily_map[date]["net"]  += net
+
+        brokers = list(broker_map.values())
+
+        # 淨買超前 15 名
+        top_buy = sorted([b for b in brokers if b["net"] > 0],
+                         key=lambda x: x["net"], reverse=True)[:15]
+        # 淨賣超前 15 名
+        top_sell = sorted([b for b in brokers if b["net"] < 0],
+                          key=lambda x: x["net"])[:15]
+
+        # 計算集中度：前5大買超佔全部買量的比例
+        total_buy_vol = sum(b["buy"] for b in brokers)
+        top5_buy_vol  = sum(b["buy"] for b in top_buy[:5])
+        concentration = round(top5_buy_vol / total_buy_vol * 100, 1) if total_buy_vol > 0 else 0
+
+        # 每日排序
+        daily = sorted(daily_map.values(), key=lambda x: x["date"])
+
+        # 整理分點資料（把 days dict 轉成排序 list）
+        for b in top_buy + top_sell:
+            b["day_list"] = sorted(b["days"].items())
+            del b["days"]
+
+        # 主力動向判斷
+        net_total = sum(b["net"] for b in brokers)
+        if net_total > 500:
+            signal = "主力積極買超 🔥"
+            signal_color = "red"
+        elif net_total > 0:
+            signal = "主力小幅買超 📈"
+            signal_color = "red"
+        elif net_total > -500:
+            signal = "主力小幅賣超 📉"
+            signal_color = "green"
+        else:
+            signal = "主力積極出貨 ⚠️"
+            signal_color = "green"
+
+        return jsonify({
+            "code":          code,
+            "start_date":    start_dt,
+            "end_date":      end_dt,
+            "top_buy":       top_buy,
+            "top_sell":      top_sell,
+            "daily":         daily,
+            "net_total":     net_total,
+            "concentration": concentration,
+            "signal":        signal,
+            "signal_color":  signal_color,
+            "total_brokers": len(brokers),
+        })
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/sector/rotation")
 def sector_rotation_api():
     """取得當日產業輪動熱度排行"""
