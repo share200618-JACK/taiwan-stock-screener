@@ -698,17 +698,32 @@ async function startAnalysis() {
 function pollProgress(taskId, onDone) {
   if (pollTimer) clearInterval(pollTimer);
   let errorCount = 0;
-  pollTimer = setInterval(async () => {
+  let retryDelay = 2000;
+  const MAX_ERRORS = 15;        // 從 3 次提高到 15 次（約 30 秒）才放棄
+  const MAX_RETRY_DELAY = 8000; // 最長重試間隔 8 秒
+
+  function scheduleNext() {
+    pollTimer = setTimeout(doPoll, retryDelay);
+  }
+
+  async function doPoll() {
     try {
-      const r    = await fetch(`${API}/api/analyze/progress/${taskId}`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 25000); // 25秒 timeout
+      const r = await fetch(`${API}/api/analyze/progress/${taskId}`, {
+        signal: controller.signal
+      });
+      clearTimeout(timeout);
       const prog = await r.json();
+
+      // 連線成功，重置錯誤計數與延遲
+      errorCount = 0;
+      retryDelay = 2000;
 
       // 找不到任務 → 伺服器可能重啟，嘗試載入最新結果
       if (prog.error && (prog.error.includes('找不到') || r.status === 404)) {
-        clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
         if(onDone) onDone(); else resetBtn();
-        // 自動嘗試載入最新結果
         const latest = await fetch(`${API}/api/analyze/latest`);
         const latestData = await latest.json();
         if (!latestData.error) {
@@ -722,28 +737,38 @@ function pollProgress(taskId, onDone) {
       }
 
       if (prog.error) {
-        clearInterval(pollTimer);
         showError(prog.error);
         if(onDone) onDone(); else resetBtn();
         return;
       }
+
       setProgress(prog.pct, prog.msg);
+
       if (prog.done && prog.result) {
-        clearInterval(pollTimer);
         document.getElementById('progressWrap').style.display = 'none';
         renderResults(prog.result);
         if(onDone) onDone(); else resetBtn();
+        return; // 完成，不再 scheduleNext
       }
+
+      scheduleNext(); // 繼續輪詢
+
     } catch(e) {
       errorCount++;
-      if (errorCount >= 3) {
-        clearInterval(pollTimer);
+      if (errorCount >= MAX_ERRORS) {
         document.getElementById('progressWrap').style.display = 'none';
         if(onDone) onDone(); else resetBtn();
         showError('連線中斷，請重新整理頁面或點「📂 最新結果」查看');
+        return;
       }
+      // 指數退避：每次失敗拉長等待時間，最多 8 秒
+      retryDelay = Math.min(retryDelay * 1.5, MAX_RETRY_DELAY);
+      setProgress(null, `⚠️ 連線不穩，${Math.round(retryDelay/1000)}秒後重試 (${errorCount}/${MAX_ERRORS})...`);
+      scheduleNext();
     }
-  }, 2000);
+  }
+
+  doPoll(); // 立即執行第一次
 }
 
 // ══════════════════════════════════════════════════════
@@ -1037,8 +1062,12 @@ function showToast(msg) {
 }
 
 function setProgress(pct, msg) {
-  document.getElementById('progBar').style.width = pct + '%';
-  document.getElementById('progMsg').textContent = `${pct}%  ${msg}`;
+  if (pct !== null && pct !== undefined) {
+    document.getElementById('progBar').style.width = pct + '%';
+    document.getElementById('progMsg').textContent = `${pct}%  ${msg}`;
+  } else {
+    document.getElementById('progMsg').textContent = msg;
+  }
 }
 
 function resetBtn() {
