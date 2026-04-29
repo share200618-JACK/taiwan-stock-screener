@@ -850,28 +850,49 @@ function renderModalContent(tab) {
     document.getElementById('modalContent').innerHTML = `
       <!-- K 線圖 -->
       <div class="chart-wrap">
-        <div class="chart-label">
-          <span>K 線 + 成交量</span>
-          <div style="display:flex;gap:4px;">
-            <button onclick="setChartRange(30)"  id="rangeBtn30"  class="range-btn">1M</button>
-            <button onclick="setChartRange(60)"  id="rangeBtn60"  class="range-btn">3M</button>
-            <button onclick="setChartRange(120)" id="rangeBtn120" class="range-btn active">6M</button>
-            <button onclick="setChartRange(250)" id="rangeBtn250" class="range-btn">1Y</button>
+        <div class="chart-label" style="flex-direction:column;gap:4px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;width:100%;">
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span style="font-size:.68rem;color:#6a748f;">K 線 + 成交量</span>
+              <span style="font-size:.62rem;color:#f0b429;">MA5</span>
+              <span style="font-size:.62rem;color:#2196f3;">MA20</span>
+            </div>
+            <div style="display:flex;gap:4px;">
+              <button onclick="setChartRange(30)"  id="rangeBtn30"  class="range-btn">1M</button>
+              <button onclick="setChartRange(60)"  id="rangeBtn60"  class="range-btn">3M</button>
+              <button onclick="setChartRange(120)" id="rangeBtn120" class="range-btn active">6M</button>
+              <button onclick="setChartRange(250)" id="rangeBtn250" class="range-btn">1Y</button>
+            </div>
+          </div>
+          <div id="ohlcBar" style="font-size:.65rem;font-family:'JetBrains Mono',monospace;color:#6a748f;min-height:14px;">
+            滑鼠移到K線上查看 OHLC
           </div>
         </div>
-        <div id="modalKlineChart" style="height:290px;"></div>
+        <div id="modalKlineChart" style="height:300px;"></div>
       </div>
-      <!-- KD 圖 -->
+      <!-- KD -->
       <div class="chart-wrap">
         <div class="chart-label">
-          <span>KD 隨機指標</span>
-          <div class="chart-legend">
-            <span><i style="background:#f0b429;"></i>K=${ind.k}</span>
-            <span><i style="background:#3d8bff;"></i>D=${ind.d}</span>
-            <span style="color:${ind.kd_signal.includes('黃金')?'var(--red)':ind.kd_signal.includes('死亡')?'var(--grn)':'#6a748f'};">${ind.kd_signal}</span>
+          <span style="font-size:.65rem;color:#6a748f;">KD 隨機指標（9日）</span>
+          <div style="display:flex;gap:8px;">
+            <span style="font-size:.62rem;color:#f0b429;">K=${ind.k}</span>
+            <span style="font-size:.62rem;color:#2196f3;">D=${ind.d}</span>
+            <span style="font-size:.62rem;color:${ind.kd_signal.includes('黃金')?'#ef5350':ind.kd_signal.includes('死亡')?'#26a69a':'#6a748f'};">${ind.kd_signal}</span>
           </div>
         </div>
         <div id="modalKDChart" style="height:80px;"></div>
+      </div>
+      <!-- MACD -->
+      <div class="chart-wrap">
+        <div class="chart-label">
+          <span style="font-size:.65rem;color:#6a748f;">MACD（12,26,9）</span>
+          <div style="display:flex;gap:8px;">
+            <span style="font-size:.62rem;color:#2196f3;">MACD</span>
+            <span style="font-size:.62rem;color:#ff9800;">Signal</span>
+            <span style="font-size:.62rem;color:${ind.macd_hist>0?'#ef5350':'#26a69a'};">柱 ${ind.macd_hist>0?'+':''}${ind.macd_hist}</span>
+          </div>
+        </div>
+        <div id="modalMACDChart" style="height:80px;"></div>
       </div>
       <!-- 指標儀表板 -->
       <div style="margin-bottom:8px;">
@@ -1153,168 +1174,262 @@ function renderBrokerTab(d) {
 }
 
 function drawModalCharts(d) {
-  if (_modalChartK) { try { _modalChartK.remove(); } catch(e) {} _modalChartK = null; }
-  if (_modalChartKD) { try { _modalChartKD.destroy(); } catch(e) {} _modalChartKD = null; }
+  // 清除舊圖
+  if (_modalChartK)  { try { _modalChartK.remove();    } catch(e){} _modalChartK  = null; }
+  if (_modalChartKD) { try { _modalChartKD.remove();   } catch(e){} _modalChartKD = null; }
+  if (window._modalChartMACD) { try { window._modalChartMACD.remove(); } catch(e){} window._modalChartMACD = null; }
 
   const candles = d.candles || [];
   if (!candles.length) return;
+  if (!window.LightweightCharts) return;
+  const LC = LightweightCharts;
+
   const lev = d.levels;
   const adv = d.advice;
   const ind = d.indicators;
 
-  if (!window.LightweightCharts) return;
-  const LC = LightweightCharts;
+  // TradingView 配色常數
+  const TV = {
+    bg:        '#131722',
+    grid:      'rgba(255,255,255,0.04)',
+    border:    '#2a2e39',
+    text:      '#b2b5be',
+    cross:     '#9b9ea3',
+    upColor:   '#ef5350',   // 紅漲
+    downColor: '#26a69a',   // 綠跌
+    ma5:       '#f0b429',
+    ma20:      '#2196f3',
+    volUp:     'rgba(239,83,80,.5)',
+    volDn:     'rgba(38,166,154,.5)',
+    volUpHot:  'rgba(239,83,80,.9)',
+    volDnHot:  'rgba(38,166,154,.9)',
+    kdK:       '#f0b429',
+    kdD:       '#2196f3',
+    macdLine:  '#2196f3',
+    signal:    '#ff9800',
+    macdUp:    'rgba(239,83,80,.8)',
+    macdDn:    'rgba(38,166,154,.8)',
+  };
 
-  // ── 主 K 線圖（含成交量）────────────────────────
-  const klineEl = document.getElementById('modalKlineChart');
-  if (!klineEl) return;
-  klineEl.innerHTML = '';
-
-  const chart = LC.createChart(klineEl, {
-    width: klineEl.offsetWidth || 340,
-    height: 290,
-    layout: { background:{color:'#0d1117'}, textColor:'#6a748f', fontSize: 11 },
-    grid: { vertLines:{color:'rgba(255,255,255,.04)'}, horzLines:{color:'rgba(255,255,255,.04)'} },
-    rightPriceScale: { borderColor:'#1e2538', scaleMargins:{ top:0.08, bottom:0.25 } },
-    timeScale: { borderColor:'#1e2538', timeVisible:true, secondsVisible:false },
+  const chartOpts = (height, scaleMargins={top:0.1,bottom:0.1}, timeVisible=false) => ({
+    width:  document.getElementById('modalKlineChart')?.offsetWidth || 360,
+    height,
+    layout: { background:{color:TV.bg}, textColor:TV.text, fontSize:11,
+              fontFamily:"'JetBrains Mono', monospace" },
+    grid:   { vertLines:{color:TV.grid}, horzLines:{color:TV.grid} },
+    rightPriceScale: { borderColor:TV.border, scaleMargins, minimumWidth:60 },
+    timeScale: { borderColor:TV.border, timeVisible, secondsVisible:false,
+                 fixLeftEdge:false, fixRightEdge:false },
     crosshair: { mode: LC.CrosshairMode.Normal,
-      vertLine:{color:'rgba(168,85,247,.4)',width:1,style:LC.LineStyle.Dashed},
-      horzLine:{color:'rgba(168,85,247,.4)',width:1,style:LC.LineStyle.Dashed} },
+      vertLine: {color:TV.cross, width:1, style:LC.LineStyle.Solid, labelBackgroundColor:'#2a2e39'},
+      horzLine: {color:TV.cross, width:1, style:LC.LineStyle.Solid, labelBackgroundColor:'#2a2e39'} },
     handleScroll: true,
-    handleScale: true,
+    handleScale:  true,
   });
 
+  // ── 資料準備 ───────────────────────────────────────
   const candleData = candles.map(c=>({
-    time:c.date, open:c.open||c.close, high:c.high||c.close, low:c.low||c.close, close:c.close
+    time:  c.date,
+    open:  c.open  || c.close,
+    high:  c.high  || c.close,
+    low:   c.low   || c.close,
+    close: c.close,
   })).sort((a,b)=>a.time.localeCompare(b.time));
 
-  // 計算均量（判斷爆量）
+  const closes = candleData.map(c=>c.close);
+  const n = candleData.length;
+
+  // 計算均線（正確從足夠歷史開始，確保線條平滑）
+  const sma = (arr, period) => arr.map((_, i) => {
+    if (i < period - 1) return null;
+    return arr.slice(i-period+1, i+1).reduce((a,b)=>a+b,0) / period;
+  });
+  const ma5Data  = sma(closes, 5);
+  const ma20Data = sma(closes, 20);
+
+  // 均量（判斷爆量）
   const vols = candles.map(c=>c.vol||0);
-  const avgVol20 = vols.slice(-20).reduce((a,b)=>a+b,0)/Math.min(20,vols.length);
+  const avgVol20 = vols.slice(-20).reduce((a,b)=>a+b,0) / Math.min(20,vols.length);
 
-  // 蠟燭
-  const cs = chart.addCandlestickSeries({
-    upColor:'#f03e4d', downColor:'#19c97d',
-    borderUpColor:'#f03e4d', borderDownColor:'#19c97d',
-    wickUpColor:'rgba(240,62,77,.7)', wickDownColor:'rgba(25,201,125,.7)',
-  });
-  cs.setData(candleData);
+  // 計算 KD（9日）
+  const k_s=[], d_s=[];
+  let kv=50, dv_=50;
+  for(let i=0;i<n;i++){
+    const sl = candleData.slice(Math.max(0,i-8), i+1);
+    const rh = Math.max(...sl.map(c=>c.high));
+    const rl = Math.min(...sl.map(c=>c.low));
+    const rsv = rh===rl ? 50 : (candleData[i].close-rl)/(rh-rl)*100;
+    kv  = kv*2/3  + rsv/3;
+    dv_ = dv_*2/3 + kv/3;
+    k_s.push({time:candleData[i].time, value:+kv.toFixed(2)});
+    d_s.push({time:candleData[i].time, value:+dv_.toFixed(2)});
+  }
 
-  // MA5
-  const sortedData = c => candles.map(x=>({time:x.date,value:x[c]}))
-    .filter(x=>x.value).sort((a,b)=>a.time.localeCompare(b.time));
-  chart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(sortedData('ma5'));
-  chart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(sortedData('ma20'));
-
-  // 支撐/壓力/進場/停損線
-  const addHLine = (val, color, label) => {
-    if (!val || !candleData.length) return;
-    const s = chart.addLineSeries({color, lineWidth:1, lineStyle:LC.LineStyle.Dashed,
-      priceLineVisible:false, lastValueVisible:true,
-      title: label });
-    s.setData([{time:candleData[0].time,value:val},{time:candleData[candleData.length-1].time,value:val}]);
+  // 計算 MACD（12,26,9）
+  const ema = (arr, p) => {
+    const k = 2/(p+1), out=[];
+    let e = arr[0];
+    for(let i=0;i<arr.length;i++){
+      if(i===0){out.push(e);continue;}
+      e = arr[i]*k + e*(1-k); out.push(+e.toFixed(4));
+    }
+    return out;
   };
-  if (lev) {
-    addHLine(lev.support1, 'rgba(25,201,125,.45)', '支撐');
-    addHLine(lev.resist1,  'rgba(240,62,77,.45)',  '壓力');
-  }
-  if (adv) {
-    addHLine(adv.buy_suggest,    'rgba(168,85,247,.7)', '進場');
-    addHLine(adv.stop_loss_price,'rgba(255,140,0,.6)',  '停損');
-    addHLine(adv.target2,        'rgba(61,139,255,.6)', '目標');
-  }
+  const ema12 = ema(closes,12);
+  const ema26 = ema(closes,26);
+  const macdLine  = ema12.map((v,i)=>+(v-ema26[i]).toFixed(4));
+  const signalLine= ema(macdLine,9);
+  const macdHist  = macdLine.map((v,i)=>+(v-signalLine[i]).toFixed(4));
 
-  // 成交量（底部 25%）
-  const volSeries = chart.addHistogramSeries({
-    priceFormat:{type:'volume'},
-    priceScaleId:'vol',
-    scaleMargins:{ top:0.78, bottom:0 },
+  // ── OHLC 懸停標籤 HTML ─────────────────────────────
+  const ohlcBar = document.getElementById('ohlcBar');
+
+  // ════════════════════════════════════════════════════
+  // 主圖：K線 + MA + 成交量
+  // ════════════════════════════════════════════════════
+  const klineEl = document.getElementById('modalKlineChart');
+  klineEl.innerHTML = '';
+
+  const mainOpts = chartOpts(300, {top:0.06, bottom:0.24}, false);
+  const chart = LC.createChart(klineEl, mainOpts);
+
+  // K 線（台灣習慣：紅漲綠跌）
+  const csSeries = chart.addCandlestickSeries({
+    upColor:        TV.upColor,
+    downColor:      TV.downColor,
+    borderUpColor:  TV.upColor,
+    borderDownColor:TV.downColor,
+    wickUpColor:    TV.upColor,
+    wickDownColor:  TV.downColor,
   });
-  chart.priceScale('vol').applyOptions({ scaleMargins:{top:0.78,bottom:0}, drawTicks:false, borderVisible:false });
+  csSeries.setData(candleData);
+
+  // MA5 & MA20（跳過 null，避免從圖左拉一條怪線）
+  const ma5Series = chart.addLineSeries({color:TV.ma5, lineWidth:1.5,
+    priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false});
+  ma5Series.setData(candleData.filter((_,i)=>ma5Data[i]!==null)
+    .map((c,_,arr)=>({time:c.time, value:ma5Data[candles.findIndex(x=>x.date===c.time)]}))
+    .filter(x=>x.value!==null));
+
+  const ma20Series = chart.addLineSeries({color:TV.ma20, lineWidth:1.5,
+    priceLineVisible:false, lastValueVisible:false, crosshairMarkerVisible:false});
+  ma20Series.setData(candleData.filter((_,i)=>ma20Data[i]!==null)
+    .map((c,i)=>({time:c.time, value:ma20Data[i]}))
+    .filter(x=>x.value!==null));
+
+  // 水平標記線（進場/停損/支撐/壓力）
+  const addHLine = (val, color, title) => {
+    if(!val || !candleData.length) return;
+    chart.addLineSeries({color, lineWidth:1, lineStyle:LC.LineStyle.Dashed,
+      priceLineVisible:false, lastValueVisible:true, title})
+      .setData([{time:candleData[0].time,value:val},{time:candleData[n-1].time,value:val}]);
+  };
+  if(lev){ addHLine(lev.support1,'rgba(38,166,154,.5)','支撐'); addHLine(lev.resist1,'rgba(239,83,80,.5)','壓力'); }
+  if(adv){ addHLine(adv.buy_suggest,'rgba(168,85,247,.8)','進場'); addHLine(adv.stop_loss_price,'rgba(255,152,0,.7)','停損'); addHLine(adv.target2,'rgba(33,150,243,.7)','目標'); }
+
+  // 成交量（底部 24%）
+  const volSeries = chart.addHistogramSeries({
+    priceFormat:{type:'volume'}, priceScaleId:'vol',
+    scaleMargins:{top:0.78, bottom:0},
+  });
+  chart.priceScale('vol').applyOptions({scaleMargins:{top:0.78,bottom:0},drawTicks:false,borderVisible:false});
   volSeries.setData(candles.map(c=>({
-    time:c.date,
-    value:c.vol||0,
-    color: c.vol > avgVol20*1.8
-      ? (c.close >= (c.open||c.close) ? 'rgba(240,62,77,.9)' : 'rgba(25,201,125,.9)')  // 爆量
-      : (c.close >= (c.open||c.close) ? 'rgba(240,62,77,.35)' : 'rgba(25,201,125,.35)')
+    time:  c.date,
+    value: c.vol||0,
+    color: (c.vol||0) > avgVol20*1.8
+      ? (c.close>=(c.open||c.close) ? TV.volUpHot : TV.volDnHot)
+      : (c.close>=(c.open||c.close) ? TV.volUp    : TV.volDn),
   })).sort((a,b)=>a.time.localeCompare(b.time)));
 
-  chart.timeScale().fitContent();
-  // 預設顯示近 120 日（6個月）
-  if (candleData.length > 120) {
-    chart.timeScale().setVisibleLogicalRange({
-      from: candleData.length - 120,
-      to:   candleData.length - 1,
-    });
-  }
-  _modalChartK = chart;
-  window._modalCandleCount = candleData.length; // 供 setChartRange 用
+  // 十字游標懸停 → 更新 OHLC 列
+  chart.subscribeCrosshairMove(param => {
+    if (!ohlcBar || !param.time) return;
+    const bar = param.seriesData?.get(csSeries);
+    if (!bar) return;
+    const chg   = bar.close - bar.open;
+    const chgPct= (chg/bar.open*100).toFixed(2);
+    const color = chg>=0 ? TV.upColor : TV.downColor;
+    ohlcBar.innerHTML =
+      `<span style="color:${TV.text};">O</span><span style="color:${color};margin-right:8px;">${bar.open}</span>` +
+      `<span style="color:${TV.text};">H</span><span style="color:${color};margin-right:8px;">${bar.high}</span>` +
+      `<span style="color:${TV.text};">L</span><span style="color:${color};margin-right:8px;">${bar.low}</span>` +
+      `<span style="color:${TV.text};">C</span><span style="color:${color};margin-right:8px;">${bar.close}</span>` +
+      `<span style="color:${color};font-weight:700;">${chg>=0?'+':''}${chg.toFixed(2)} (${chgPct}%)</span>`;
+  });
 
-  // ── KD 圖（LightweightCharts）────────────────────
+  // 預設顯示 120 日
+  chart.timeScale().fitContent();
+  if (n > 120) chart.timeScale().setVisibleLogicalRange({from:n-120, to:n-1});
+  _modalChartK = chart;
+  window._modalCandleCount = n;
+
+  // ════════════════════════════════════════════════════
+  // 副圖1：KD
+  // ════════════════════════════════════════════════════
   const kdEl = document.getElementById('modalKDChart');
   if (!kdEl) return;
   kdEl.innerHTML = '';
+  const kdChart = LC.createChart(kdEl, chartOpts(80, {top:0.05,bottom:0.05}, false));
 
-  const kdChart = LC.createChart(kdEl, {
-    width: kdEl.offsetWidth || 340,
-    height: 80,
-    layout: { background:{color:'#0d1117'}, textColor:'#6a748f', fontSize:10 },
-    grid: { vertLines:{color:'rgba(255,255,255,.03)'}, horzLines:{color:'rgba(255,255,255,.03)'} },
-    rightPriceScale: { borderColor:'#1e2538', scaleMargins:{top:0.05,bottom:0.05} },
-    timeScale: { borderColor:'#1e2538', visible:false },
-    crosshair: { mode: LC.CrosshairMode.Normal,
-      vertLine:{color:'rgba(168,85,247,.3)',width:1,style:LC.LineStyle.Dashed},
-      horzLine:{visible:false} },
-    handleScroll: false, handleScale: false,
+  kdChart.addLineSeries({color:TV.kdK,lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(k_s);
+  kdChart.addLineSeries({color:TV.kdD,lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(d_s);
+  // 80 / 20 參考線
+  [[80,TV.upColor],[20,TV.downColor]].forEach(([val,col])=>{
+    kdChart.addLineSeries({color:col.replace(')',',0.2)').replace('rgb','rgba'),
+      lineWidth:1,lineStyle:LC.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false})
+      .setData([{time:candleData[0].time,value:val},{time:candleData[n-1].time,value:val}]);
   });
-
-  // 計算 KD
-  const k_s=[], d_s=[]; let kv=50, dv=50;
-  const closes = candles.map(c=>c.close);
-  for(let i=0;i<candles.length;i++){
-    const n=Math.min(9,i+1);
-    const sl=candles.slice(Math.max(0,i-n+1),i+1);
-    const rh=Math.max(...sl.map(c=>c.high||closes[i]));
-    const rl=Math.min(...sl.map(c=>c.low||closes[i]));
-    const rsv=rh===rl?0:(closes[i]-rl)/(rh-rl)*100;
-    kv=kv*2/3+rsv/3; dv=dv*2/3+kv/3;
-    k_s.push({time:candles[i].date, value:Math.round(kv*10)/10});
-    d_s.push({time:candles[i].date, value:Math.round(dv*10)/10});
-  }
-
-  kdChart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(k_s);
-  kdChart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false,lastValueVisible:false}).setData(d_s);
-  // 超買超賣線
-  const kdDates=[{time:candles[0].date,value:80},{time:candles[candles.length-1].date,value:80}];
-  kdChart.addLineSeries({color:'rgba(240,62,77,.25)',lineWidth:1,lineStyle:LC.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false}).setData(kdDates);
-  kdChart.addLineSeries({color:'rgba(25,201,125,.25)',lineWidth:1,lineStyle:LC.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false})
-    .setData(kdDates.map(x=>({...x,value:20})));
-
-  kdChart.timeScale().fitContent();
-  // 同步 KD 圖的初始範圍
-  if (candleData.length > 120) {
-    kdChart.timeScale().setVisibleLogicalRange({
-      from: candleData.length - 120,
-      to:   candleData.length - 1,
-    });
-  }
-  // 同步時間軸縮放
-  chart.timeScale().subscribeVisibleLogicalRangeChange(r => {
-    if (r) kdChart.timeScale().setVisibleLogicalRange(r);
-  });
+  if (n>120) kdChart.timeScale().setVisibleLogicalRange({from:n-120,to:n-1});
+  else kdChart.timeScale().fitContent();
   _modalChartKD = kdChart;
+
+  // ════════════════════════════════════════════════════
+  // 副圖2：MACD
+  // ════════════════════════════════════════════════════
+  const macdEl = document.getElementById('modalMACDChart');
+  if (!macdEl) return;
+  macdEl.innerHTML = '';
+  const macdChart = LC.createChart(macdEl, chartOpts(80, {top:0.05,bottom:0.05}, true));
+
+  // 柱狀圖
+  macdChart.addHistogramSeries({
+    priceFormat:{type:'price',precision:3}, priceLineVisible:false,
+    lastValueVisible:false,
+  }).setData(candleData.map((c,i)=>({
+    time:  c.time,
+    value: macdHist[i],
+    color: macdHist[i]>=0 ? TV.macdUp : TV.macdDn,
+  })));
+
+  macdChart.addLineSeries({color:TV.macdLine,lineWidth:1.5,priceLineVisible:false,lastValueVisible:false})
+    .setData(candleData.map((c,i)=>({time:c.time,value:macdLine[i]})));
+  macdChart.addLineSeries({color:TV.signal,lineWidth:1.5,priceLineVisible:false,lastValueVisible:false})
+    .setData(candleData.map((c,i)=>({time:c.time,value:signalLine[i]})));
+
+  if (n>120) macdChart.timeScale().setVisibleLogicalRange({from:n-120,to:n-1});
+  else macdChart.timeScale().fitContent();
+  window._modalChartMACD = macdChart;
+
+  // ── 三圖時間軸同步 ─────────────────────────────────
+  const syncCharts = [chart, kdChart, macdChart];
+  syncCharts.forEach((src, si) => {
+    src.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      if (!r) return;
+      syncCharts.forEach((tgt, ti) => { if (ti!==si) tgt.timeScale().setVisibleLogicalRange(r); });
+    });
+  });
 }
 
 function setChartRange(days) {
-  // 切換時間區間按鈕狀態
   [30, 60, 120, 250].forEach(d => {
     const btn = document.getElementById(`rangeBtn${d}`);
     if (btn) btn.classList.toggle('active', d === days);
   });
-  if (!_modalChartK) return;
   const total = window._modalCandleCount || 250;
-  const from  = Math.max(0, total - days);
-  _modalChartK.timeScale().setVisibleLogicalRange({ from, to: total - 1 });
+  const range = { from: Math.max(0, total - days), to: total - 1 };
+  if (_modalChartK)              _modalChartK.timeScale().setVisibleLogicalRange(range);
+  if (_modalChartKD)             _modalChartKD.timeScale().setVisibleLogicalRange(range);
+  if (window._modalChartMACD)    window._modalChartMACD.timeScale().setVisibleLogicalRange(range);
 }
 
 function showToast(msg) {
