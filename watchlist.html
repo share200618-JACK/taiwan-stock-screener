@@ -216,28 +216,32 @@ let _userName   = '';
 
 
 async function initAuth() {
-  // 先從 localStorage 取得 token（即使還沒驗證也先用）
+  // 先從 localStorage 取得 token
   _userToken = getToken() || 'default';
-  _userName  = getUsername() || '';
+  _userName  = getUsername() || 'Guest';
 
-  if (!_userToken || _userToken === 'default') {
-    // 沒有 token，跳轉登入
-    location.href = '/login?redirect=/watchlist';
-    return;
+  // 有真實登入 token → 正常驗證流程
+  // token 是 'default'（未登入）→ 也允許使用，以 Guest 身份查 default 資料
+  const isGuest = (!_userToken || _userToken === 'default');
+  if (isGuest) {
+    _userToken = 'default';
+    _userName  = 'Guest';
   }
 
-  // 先顯示 user bar，再背景驗證
+  // 顯示 user bar
   document.getElementById('userBar').style.display  = 'flex';
   document.getElementById('userName').textContent   = _userName;
-  document.getElementById('userAvatar').textContent = _userName ? _userName.charAt(0).toUpperCase() : '?';
+  document.getElementById('userAvatar').textContent = _userName.charAt(0).toUpperCase();
   const ol = document.getElementById('loginOverlay');
   if (ol) ol.style.display = 'none';
 
   // 載入追蹤清單
   render();
 
-  // 背景驗證 token（不阻塞）
-  requireAuth().catch(() => {});
+  // 有真實 token 才做背景驗證
+  if (!isGuest) {
+    requireAuth().catch(() => {});
+  }
 }
 
 // ── Supabase API 操作 ─────────────────────────────

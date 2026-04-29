@@ -43,22 +43,31 @@ def _sb_headers():
     }
 
 def supabase_save_analysis(data):
-    """把每日分析結果存到 Supabase analysis_results 資料表"""
+    """把每日分析結果存到 Supabase analysis_results 資料表（同日期 upsert）"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         print("[Supabase] 未設定，跳過儲存")
         return False
     try:
-        url = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        url     = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        today   = datetime.now().strftime("%Y-%m-%d")
+
+        # ① 先刪除同日期舊資料（避免重複，確保每天只有一筆）
+        del_r = requests.delete(url,
+                                params={"date": f"eq.{today}"},
+                                headers=_sb_headers(), timeout=10)
+        if del_r.status_code in (200, 204):
+            print(f"[Supabase] 已清除 {today} 舊資料，重新儲存")
+
         payload = {
-            "date":         datetime.now().strftime("%Y-%m-%d"),
-            "time":         data.get("time", ""),
-            "model_ver":    data.get("model_ver", "v2"),
-            "total_scanned":data.get("total_scanned", 0),
+            "date":          today,
+            "time":          data.get("time", ""),
+            "model_ver":     data.get("model_ver", "v2"),
+            "total_scanned": data.get("total_scanned", 0),
             "total_analyzed":data.get("total_analyzed", 0),
-            "avg_accuracy": data.get("avg_accuracy", 0),
-            "bullish":      data.get("bullish", 0),
-            "bearish":      data.get("bearish", 0),
-            "stocks":       json.dumps(data.get("stocks", []), ensure_ascii=False),
+            "avg_accuracy":  data.get("avg_accuracy", 0),
+            "bullish":       data.get("bullish", 0),
+            "bearish":       data.get("bearish", 0),
+            "stocks":        json.dumps(data.get("stocks", []), ensure_ascii=False),
         }
         r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
         if r.status_code in (200, 201):
@@ -103,15 +112,16 @@ def supabase_load_latest(date=None):
         return None
 
 def supabase_load_history(limit=30):
-    """讀取最近 N 筆分析紀錄（用於顯示歷史頁面）"""
+    """讀取最近 N 天的分析紀錄（每天只顯示最新一筆）"""
     if not SUPABASE_URL or not SUPABASE_KEY:
         return []
     try:
         url = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        # 多抓一些以防同日多筆，再去重
         params = {
             "select": "date,time,model_ver,total_scanned,total_analyzed,avg_accuracy,bullish,bearish,stocks",
             "order":  "created_at.desc",
-            "limit":  str(limit),
+            "limit":  str(limit * 3),  # 多抓3倍，去重後再取 limit 筆
         }
         r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
         if r.status_code == 200:
@@ -119,7 +129,18 @@ def supabase_load_history(limit=30):
             for row in rows:
                 if isinstance(row.get("stocks"), str):
                     row["stocks"] = json.loads(row["stocks"])
-            return rows
+
+            # 依 date 去重（同日期只保留 created_at 最新那筆，即第一個出現的）
+            seen_dates = set()
+            deduped    = []
+            for row in rows:
+                d = row.get("date", "")
+                if d not in seen_dates:
+                    seen_dates.add(d)
+                    deduped.append(row)
+                if len(deduped) >= limit:
+                    break
+            return deduped
         return []
     except Exception as e:
         print(f"[Supabase] 歷史讀取失敗: {e}")
@@ -567,108 +588,77 @@ def fetch_history_range(code, start_date, end_date):
     # ── 上櫃（OTC / TPEX）───────────────────────────
     otc_records = []
     if use_otc:
-        # ① 優先用 FinMind（穩定，不會被 TPEX block）
-        token = _get_finmind_token()
-        if token:
+        tmp_cur = cur
+        while tmp_cur <= end_dt:
+            roc_year = tmp_cur.year - 1911
+            ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
+            fetched  = False
+
+            # 方法一：TPEX 舊版 API（最穩定）
             try:
-                fm_start = (datetime.strptime(start_date, "%Y-%m-%d") - timedelta(days=90)).strftime("%Y-%m-%d")
-                r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                                params={"dataset":"TaiwanStockPrice","data_id":code,
-                                        "start_date":fm_start,"end_date":end_date},
-                                headers={"Authorization": f"Bearer {token}"},
-                                timeout=15)
+                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                r    = SESSION.get(url, timeout=12)
                 data = r.json()
-                if data.get("status") == 200:
-                    for row in data.get("data", []):
-                        c = safe_float(row.get("close", 0))
-                        if c > 0:
-                            otc_records.append({
-                                "date":   row.get("date","")[:10],
-                                "open":   safe_float(row.get("open", 0)),
-                                "high":   safe_float(row.get("max", 0)),
-                                "low":    safe_float(row.get("min", 0)),
-                                "close":  c,
-                                "vol":    round(safe_float(row.get("Trading_Volume", 0)) / 1000),
-                                "change": safe_float(row.get("spread", 0)),
-                            })
-                    if otc_records:
-                        print(f"  [OTC FinMind] {code}: {len(otc_records)} 筆")
+                rows = data.get("aaData", [])
+                if rows:
+                    for row in rows:
+                        try:
+                            date_parts = str(row[0]).strip().split("/")
+                            if len(date_parts) != 3: continue
+                            dt = datetime(int(date_parts[0])+1911,
+                                          int(date_parts[1]), int(date_parts[2]))
+                            c = safe_float(str(row[6]).replace(",",""))
+                            if c > 0:
+                                otc_records.append({
+                                    "date":   dt.strftime("%Y-%m-%d"),
+                                    "open":   safe_float(str(row[3]).replace(",","")),
+                                    "high":   safe_float(str(row[4]).replace(",","")),
+                                    "low":    safe_float(str(row[5]).replace(",","")),
+                                    "close":  c,
+                                    "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
+                                    "change": safe_float(str(row[7]).replace(",","")),
+                                })
+                            fetched = True
+                        except: continue
             except Exception as e:
-                print(f"  [OTC FinMind] {code}: {e}")
+                print(f"  [OTC方法1] {code} {ym_otc}: {e}")
 
-        # ② FinMind 沒資料才 fallback 到 TPEX
-        if not otc_records:
-            tmp_cur = cur
-            while tmp_cur <= end_dt:
-                roc_year = tmp_cur.year - 1911
-                ym_otc   = f"{roc_year}/{tmp_cur.month:02d}"
-                fetched  = False
-
-                # 方法一：TPEX 舊版 API
+            # 方法二：備用 API
+            if not fetched:
                 try:
-                    url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                            f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-                    r    = SESSION.get(url, timeout=12)
-                    data = r.json()
-                    rows = data.get("aaData", [])
-                    if rows:
-                        for row in rows:
+                    _time.sleep(1)
+                    url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+                            f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
+                    r2   = SESSION.get(url2, timeout=12)
+                    rows2 = r2.json()
+                    if isinstance(rows2, list):
+                        for row in rows2:
                             try:
-                                date_parts = str(row[0]).strip().split("/")
-                                if len(date_parts) != 3: continue
-                                dt = datetime(int(date_parts[0])+1911,
-                                              int(date_parts[1]), int(date_parts[2]))
-                                c = safe_float(str(row[6]).replace(",",""))
-                                if c > 0:
-                                    otc_records.append({
-                                        "date":   dt.strftime("%Y-%m-%d"),
-                                        "open":   safe_float(str(row[3]).replace(",","")),
-                                        "high":   safe_float(str(row[4]).replace(",","")),
-                                        "low":    safe_float(str(row[5]).replace(",","")),
-                                        "close":  c,
-                                        "vol":    round(safe_float(str(row[1]).replace(",","")) / 1000),
-                                        "change": safe_float(str(row[7]).replace(",","")),
-                                    })
-                                fetched = True
+                                d_str = row.get("Date","") or row.get("date","")
+                                c2    = safe_float(row.get("Close","") or row.get("close",""))
+                                if not d_str or c2 <= 0: continue
+                                if "/" in d_str:
+                                    pts = d_str.split("/")
+                                    dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
+                                else:
+                                    dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
+                                otc_records.append({
+                                    "date":   dt.strftime("%Y-%m-%d"),
+                                    "open":   safe_float(row.get("Open","") or row.get("open","")),
+                                    "high":   safe_float(row.get("High","") or row.get("high","")),
+                                    "low":    safe_float(row.get("Low","")  or row.get("low","")),
+                                    "close":  c2,
+                                    "vol":    round(safe_float(row.get("TradingShares","") or
+                                                   row.get("volume","")) / 1000),
+                                    "change": safe_float(row.get("Change","") or row.get("change","")),
+                                })
                             except: continue
                 except Exception as e:
-                    print(f"  [OTC方法1] {code} {ym_otc}: {e}")
+                    print(f"  [OTC方法2] {code} {ym_otc}: {e}")
 
-                # 方法二：備用 API
-                if not fetched:
-                    try:
-                        _time.sleep(1)
-                        url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
-                                f"?date={tmp_cur.year}-{tmp_cur.month:02d}-01&stockNo={code}")
-                        r2   = SESSION.get(url2, timeout=12)
-                        rows2 = r2.json()
-                        if isinstance(rows2, list):
-                            for row in rows2:
-                                try:
-                                    d_str = row.get("Date","") or row.get("date","")
-                                    c2    = safe_float(row.get("Close","") or row.get("close",""))
-                                    if not d_str or c2 <= 0: continue
-                                    if "/" in d_str:
-                                        pts = d_str.split("/")
-                                        dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
-                                    else:
-                                        dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
-                                    otc_records.append({
-                                        "date":   dt.strftime("%Y-%m-%d"),
-                                        "open":   safe_float(row.get("Open","") or row.get("open","")),
-                                        "high":   safe_float(row.get("High","") or row.get("high","")),
-                                        "low":    safe_float(row.get("Low","")  or row.get("low","")),
-                                        "close":  c2,
-                                        "vol":    round(safe_float(row.get("TradingShares","") or
-                                                       row.get("volume","")) / 1000),
-                                        "change": safe_float(row.get("Change","") or row.get("change","")),
-                                    })
-                                except: continue
-                    except Exception as e:
-                        print(f"  [OTC方法2] {code} {ym_otc}: {e}")
-
-                tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
-                _time.sleep(2.0)  # 加長等待避免 TPEX block
+            tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
+            _time.sleep(0.5)
 
     if otc_records:
         _market_map[code] = "otc"  # 確認是上櫃
@@ -764,56 +754,29 @@ def fetch_history_recent(code):
 
     # ── 上櫃（OTC）──────────────────────────────────
     if use_otc:
-        # ① 優先用 FinMind（穩定，不會被 block）
-        token = _get_finmind_token()
-        if token:
+        for delta in [1, 0]:
+            d      = today - timedelta(days=delta * 32)
+            roc_y  = d.year - 1911
+            ym_otc = f"{roc_y}/{d.month:02d}"
             try:
-                start_fm = (today - timedelta(days=65)).strftime("%Y-%m-%d")
-                r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                                params={"dataset":"TaiwanStockPrice","data_id":code,
-                                        "start_date":start_fm},
-                                headers={"Authorization": f"Bearer {token}"},
-                                timeout=12)
+                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                r    = SESSION.get(url, timeout=10)
                 data = r.json()
-                if data.get("status") == 200:
-                    for row in data.get("data", []):
-                        c = safe_float(row.get("close", 0))
+                rows = data.get("aaData", [])
+                for row in rows:
+                    try:
+                        c = safe_float(str(row[6]).replace(",",""))
                         if c > 0:
                             records.append({
                                 "close": c,
-                                "high":  safe_float(row.get("max", 0)),
-                                "low":   safe_float(row.get("min", 0)),
-                                "vol":   round(safe_float(row.get("Trading_Volume", 0)) / 1000),
+                                "high":  safe_float(str(row[4]).replace(",","")),
+                                "low":   safe_float(str(row[5]).replace(",","")),
+                                "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
                             })
-            except Exception as e:
-                print(f"  [OTC FinMind recent] {code}: {e}")
-
-        # ② FinMind 沒資料才 fallback 到 TPEX（加長 sleep 避免 block）
-        if not records:
-            for delta in [1, 0]:
-                d      = today - timedelta(days=delta * 32)
-                roc_y  = d.year - 1911
-                ym_otc = f"{roc_y}/{d.month:02d}"
-                try:
-                    url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                            f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-                    r    = SESSION.get(url, timeout=10)
-                    data = r.json()
-                    rows = data.get("aaData", [])
-                    for row in rows:
-                        try:
-                            c = safe_float(str(row[6]).replace(",",""))
-                            if c > 0:
-                                records.append({
-                                    "close": c,
-                                    "high":  safe_float(str(row[4]).replace(",","")),
-                                    "low":   safe_float(str(row[5]).replace(",","")),
-                                    "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
-                                })
-                        except: continue
-                except Exception as e:
-                    print(f"  [OTC TPEX fallback] {code} {ym_otc}: {e}")
-                _time.sleep(2.0)  # 加長等待避免 TPEX block
+                    except: continue
+            except: pass
+            _time.sleep(0.5)
 
     if records:
         _market_map[code] = "otc"
@@ -3875,6 +3838,24 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             except Exception as e:
                 print(f"  大盤抓取失敗: {e}")
 
+        # ── ① 大盤狀態分類（多頭/空頭/盤整）────────────
+        # 用來選擇對應模型，提升不同市場環境下的準確率
+        market_state = "bull"  # 預設多頭
+        if market_closes and len(market_closes) >= 60:
+            mc = market_closes
+            def _sma_mc(n): return sum(mc[-n:])/n if len(mc)>=n else sum(mc)/len(mc)
+            ma20_m = _sma_mc(20); ma60_m = _sma_mc(60)
+            cur_m  = mc[-1]
+            # 多頭：股價 > MA20 > MA60，且近20日漲幅 > 0
+            ret20_m = (cur_m / mc[-21] - 1) * 100 if len(mc) >= 21 else 0
+            if cur_m > ma20_m and ma20_m > ma60_m and ret20_m > 0:
+                market_state = "bull"
+            elif cur_m < ma20_m and ma20_m < ma60_m and ret20_m < 0:
+                market_state = "bear"
+            else:
+                market_state = "range"
+            print(f"  大盤狀態：{market_state}（指數={cur_m:.0f}, MA20={ma20_m:.0f}, MA60={ma60_m:.0f}, 近20日{ret20_m:+.1f}%）")
+
         # ── 產業輪動計算（分析前先算好，不用每支股票重算）──
         sector_rotation = {}
         if is_v2:
@@ -3919,17 +3900,35 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             try:
                 if is_v2:
                     r = _analyze_one_v2(s["code"], s["name"], market_closes, history_months,
-                                        sector_rotation=sector_rotation)
+                                        sector_rotation=sector_rotation,
+                                        market_state=market_state)
                 else:
                     r = _analyze_one(s["code"], s["name"])
-                if r and r["confidence"] > 5:   # 放寬門檻，讓更多股票進入排序
+                if r and r["confidence"] > 5:
                     r["vol"]=s["vol"]; r["chg_pct"]=s["pct"]
+                    # ── ② 法人籌碼硬過濾（空頭市場加嚴）──────
+                    # 空頭市場：外資或投信至少一個近10日買超天數 > 50%
+                    if is_v2 and market_state == "bear":
+                        f_ratio = r.get("_f_buy_ratio", 0)
+                        t_ratio = r.get("_t_buy_ratio", 0)
+                        if f_ratio < 0.4 and t_ratio < 0.4:
+                            continue  # 空頭市場無法人支撐，跳過
                     results.append(r)
             except Exception as e:
                 print(f"  [{s['code']}] 錯誤: {e}")
 
         cb("排序結果...", 95)
-        results.sort(key=lambda x: x["rise_prob"]*0.6+x["confidence"]*0.4, reverse=True)
+        # ── ③ 大盤狀態動態排序權重 ─────────────────────
+        # 多頭：偏重漲幅動能（rise_prob）
+        # 空頭：偏重籌碼確定性（confidence），動能反而危險
+        # 盤整：均衡
+        if market_state == "bull":
+            sort_key = lambda x: x["rise_prob"]*0.65 + x["confidence"]*0.35
+        elif market_state == "bear":
+            sort_key = lambda x: x["rise_prob"]*0.45 + x["confidence"]*0.55
+        else:  # range
+            sort_key = lambda x: x["rise_prob"]*0.55 + x["confidence"]*0.45
+        results.sort(key=sort_key, reverse=True)
         top=results[:top_n]
 
         # 組合結果
@@ -3943,6 +3942,7 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
             "bullish":        sum(1 for r in results if r.get("rise_prob",0)>=50),
             "bearish":        sum(1 for r in results if r.get("rise_prob",0)<50),
             "predict_days":   15,
+            "market_state":   market_state,   # ① 大盤狀態
         }
         prog.update({"pct":100,"msg":"完成！","done":True,"error":None,
                      "result": analysis_out})
@@ -3958,7 +3958,7 @@ def _run_analyze_task(task_id, max_stocks, top_n, model_ver='v2'):
         import traceback; traceback.print_exc()
         _analyze_tasks[task_id].update({"done":True,"error":str(e)})
 
-def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotation=None):
+def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotation=None, market_state="bull"):
     """v2.0 強化版：42個特徵 + 產業輪動 + 大盤相對強弱 + FinMind籌碼 + 基本面"""
     start_dt = (datetime.today()-timedelta(days=history_months*31)).strftime("%Y-%m-%d")
     end_dt   = datetime.today().strftime("%Y-%m-%d")
@@ -4155,27 +4155,39 @@ def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotatio
         label = 1 if (closes[i+15]-closes[i])/closes[i]*100 >= 3.0 else 0
         X.append(f); y.append(label)
 
-    if len(X)<25 or sum(y)<4 or sum(1-v for v in y)<4: return None
+    if len(X)<30 or sum(y)<5 or sum(1-v for v in y)<5: return None
 
-    # 時間序列 5 折交叉驗證
-    n=len(X); fold=n//5; accs=[]; precs=[]
-    for k in range(5):
-        vs=k*fold; ve=min((k+1)*fold,n)
-        if vs<15: continue
-        rf=_RF(n=30,md=6,ms=4,nf=8)
-        rf.fit(X[:vs],y[:vs])
-        probs=rf.predict_proba(X[vs:ve])
-        preds=[1 if p>=0.5 else 0 for p in probs]
-        vy=y[vs:ve]
-        acc=sum(preds[i]==vy[i] for i in range(len(preds)))/max(len(preds),1)
-        tp=sum(1 for i in range(len(preds)) if preds[i]==1 and vy[i]==1)
-        fp=sum(1 for i in range(len(preds)) if preds[i]==1 and vy[i]==0)
-        prec=tp/(tp+fp) if (tp+fp)>0 else 0
-        accs.append(acc); precs.append(prec)
+    # ── ⑤ Walk-forward 時間序列驗證（Expanding Window）────
+    # 正確做法：訓練集只能用「過去」，驗證集用「未來」
+    # 至少需要 30 筆訓練、10 筆驗證，滑動 4 個窗口
+    n = len(X)
+    min_train = max(30, n // 4)
+    fold_size = max(10, (n - min_train) // 4)
+    accs  = []
+    precs = []
+    for fold_i in range(4):
+        train_end = min_train + fold_i * fold_size
+        val_end   = min(train_end + fold_size, n)
+        if train_end >= n or val_end <= train_end: break
+        # 確保訓練集中正負樣本都夠
+        y_tr = y[:train_end]
+        if sum(y_tr) < 3 or sum(1-v for v in y_tr) < 3: continue
+        rf = _RF(n=30, md=6, ms=4, nf=8)
+        rf.fit(X[:train_end], y_tr)
+        probs = rf.predict_proba(X[train_end:val_end])
+        preds = [1 if p >= 0.5 else 0 for p in probs]
+        vy    = y[train_end:val_end]
+        if not vy: continue
+        acc  = sum(preds[i] == vy[i] for i in range(len(preds))) / len(preds)
+        tp   = sum(1 for i in range(len(preds)) if preds[i]==1 and vy[i]==1)
+        fp   = sum(1 for i in range(len(preds)) if preds[i]==1 and vy[i]==0)
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0
+        accs.append(acc)
+        precs.append(prec)
 
     if not accs: return None
-    accuracy  = sum(accs)/len(accs)
-    precision = sum(precs)/len(precs)
+    accuracy  = sum(accs) / len(accs)
+    precision = sum(precs) / len(precs)
 
     rf_final=_RF(n=50,md=7,ms=4,nf=10)
     rf_final.fit(X,y)
@@ -4183,7 +4195,30 @@ def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotatio
     if cf is None: return None
 
     rise_prob  = rf_final.predict_proba([cf])[0]
-    confidence = accuracy*abs(rise_prob-0.5)*2
+
+    # ── ④ 產業輪動動態加權 ─────────────────────────────
+    # 強勢產業給 rise_prob 加分，弱勢產業扣分
+    sec_feat_cur = get_sector_feature(code, sector_rotation or {})
+    sector_bonus = 0.0
+    if sec_feat_cur["sector_rank_pct"] > 0.7:   # 前30%強勢產業
+        sector_bonus = +0.04
+    elif sec_feat_cur["sector_rank_pct"] < 0.3:  # 後30%弱勢產業
+        sector_bonus = -0.04
+    # 近5日同產業平均漲幅加分
+    if sec_feat_cur["sector_avg_chg"] > 2.0:
+        sector_bonus += 0.02
+    elif sec_feat_cur["sector_avg_chg"] < -2.0:
+        sector_bonus -= 0.02
+    rise_prob = max(0.01, min(0.99, rise_prob + sector_bonus))
+
+    # ── ① 大盤狀態調整 rise_prob ───────────────────────
+    # 空頭市場整體下移，盤整市場小幅下移
+    if market_state == "bear":
+        rise_prob = max(0.01, rise_prob - 0.05)
+    elif market_state == "range":
+        rise_prob = max(0.01, rise_prob - 0.02)
+
+    confidence = accuracy * abs(rise_prob - 0.5) * 2
 
     # 計算大盤相對強弱
     rel_strength = 0.0
@@ -4354,6 +4389,10 @@ def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotatio
     else:
         avg_up=avg_down=target_up=target_dn=est_return=0
 
+    # 取得最新的法人買超比例（供外層過濾用）
+    latest_f_buy_ratio = cf[28] if cf and len(cf) > 28 else 0  # f_buy_ratio 在特徵第28位
+    latest_t_buy_ratio = cf[29] if cf and len(cf) > 29 else 0  # t_buy_ratio 在特徵第29位
+
     return {
         "code":          code,
         "name":          name,
@@ -4366,14 +4405,18 @@ def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotatio
         "data_years":    round(len(records)/250,1),
         "rel_strength":  rel_strength,
         "model_ver":     "v2",
-        # 新增：原因 + 預估
-        "reasons_bull":  reasons_bull[:4],   # 最多顯示4條
+        "market_state":  market_state,           # ① 大盤狀態
+        "sector_bonus":  round(sector_bonus*100,1), # ④ 產業加分
+        "reasons_bull":  reasons_bull[:4],
         "reasons_bear":  reasons_bear[:4],
-        "est_return":    est_return,          # 預估平均報酬%
-        "target_up":     target_up,           # 樂觀目標價
-        "target_dn":     target_dn,           # 悲觀目標價
+        "est_return":    est_return,
+        "target_up":     target_up,
+        "target_dn":     target_dn,
         "avg_up_pct":    round(avg_up,   1),
         "avg_down_pct":  round(avg_down, 1),
+        # 內部用（過濾用，不顯示在前端）
+        "_f_buy_ratio":  latest_f_buy_ratio,
+        "_t_buy_ratio":  latest_t_buy_ratio,
     }
 
 @app.route("/api/analyze/start", methods=["POST"])
@@ -4524,8 +4567,8 @@ def stock_analysis(code):
                     win_count += 1
         hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
 
-        # ── 近30日 K線資料（前端繪圖用）─────────────
-        recent_n = min(60, len(records))
+        # ── 近250日 K線資料（前端繪圖用，支援1年視角）──
+        recent_n = min(250, len(records))
         candles  = [{
             "date":  records[-recent_n+i]["date"],
             "open":  records[-recent_n+i].get("open", closes[-recent_n+i]),
