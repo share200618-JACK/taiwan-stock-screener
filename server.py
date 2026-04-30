@@ -529,7 +529,7 @@ def calc_rsi_series(closes, period=14):
 _history_cache = {}
 
 def fetch_history_range(code, start_date, end_date):
-    """抓指定期間的歷史資料（根據市場別直接查詢，含快取）"""
+    """抓指定期間的歷史資料（優先 FinMind，備用 TWSE/TPEX）"""
     import time as _time
 
     cache_key = f"{code}_{start_date[:7]}_{end_date[:7]}"
@@ -543,8 +543,41 @@ def fetch_history_range(code, start_date, end_date):
 
     # 查市場別（防呆：若查不到就兩個都試）
     market = get_market(code)
-    use_twse = market != "otc"   # 預設先試上市
-    use_otc  = market != "twse"  # 若確定是上市就不試上櫃
+    use_twse = market != "otc"
+    use_otc  = market != "twse"
+
+    # ── ① 優先：FinMind 一次拿完（最穩定，不逐月打 API）──
+    token = _get_finmind_token()
+    if token:
+        try:
+            fm_start = fetch_start.strftime("%Y-%m-%d")
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                            params={"dataset":"TaiwanStockPrice","data_id":code,
+                                    "start_date":fm_start,"end_date":end_date},
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=20)
+            data = r.json()
+            if data.get("status") == 200 and data.get("data"):
+                fm_records = []
+                for row in data["data"]:
+                    c = safe_float(row.get("close", 0))
+                    if c > 0:
+                        fm_records.append({
+                            "date":   row.get("date","")[:10],
+                            "open":   safe_float(row.get("open",  0)),
+                            "high":   safe_float(row.get("max",   0)),
+                            "low":    safe_float(row.get("min",   0)),
+                            "close":  c,
+                            "vol":    round(safe_float(row.get("Trading_Volume", 0)) / 1000),
+                            "change": safe_float(row.get("spread", 0)),
+                        })
+                if len(fm_records) >= 30:
+                    fm_records.sort(key=lambda x: x["date"])
+                    _history_cache[cache_key] = fm_records
+                    return fm_records
+        except Exception as e:
+            print(f"  [FinMind range] {code}: {e}")
+            # FinMind 失敗 → 繼續走 TWSE/TPEX 備用
 
     # ── 上市（TWSE）─────────────────────────────────
     twse_records = []
