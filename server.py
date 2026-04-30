@@ -552,32 +552,42 @@ def fetch_history_range(code, start_date, end_date):
         tmp_cur = cur
         while tmp_cur <= end_dt:
             ym = f"{tmp_cur.year}{tmp_cur.month:02d}01"
-            try:
-                url  = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-                        f"?response=json&date={ym}&stockNo={code}")
-                r    = SESSION.get(url, timeout=10)
-                data = r.json()
-                if data.get("stat") == "OK" and data.get("data"):
-                    for row in data["data"]:
-                        parts = row[0].split("/")
-                        if len(parts) != 3: continue
-                        try:
-                            dt = datetime(int(parts[0])+1911, int(parts[1]), int(parts[2]))
-                        except: continue
-                        c = safe_float(row[6])
-                        if c > 0:
-                            twse_records.append({
-                                "date":   dt.strftime("%Y-%m-%d"),
-                                "open":   safe_float(row[3]),
-                                "high":   safe_float(row[4]),
-                                "low":    safe_float(row[5]),
-                                "close":  c,
-                                "vol":    round(safe_float(row[1]) / 1000),
-                                "change": safe_float(row[7]),
-                            })
-            except: pass
+            for attempt in range(3):
+                try:
+                    url  = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+                            f"?response=json&date={ym}&stockNo={code}")
+                    r    = SESSION.get(url, timeout=12)
+                    data = r.json()
+                    if data.get("stat") == "OK" and data.get("data"):
+                        for row in data["data"]:
+                            parts = row[0].split("/")
+                            if len(parts) != 3: continue
+                            try:
+                                dt = datetime(int(parts[0])+1911, int(parts[1]), int(parts[2]))
+                            except: continue
+                            c = safe_float(row[6])
+                            if c > 0:
+                                twse_records.append({
+                                    "date":   dt.strftime("%Y-%m-%d"),
+                                    "open":   safe_float(row[3]),
+                                    "high":   safe_float(row[4]),
+                                    "low":    safe_float(row[5]),
+                                    "close":  c,
+                                    "vol":    round(safe_float(row[1]) / 1000),
+                                    "change": safe_float(row[7]),
+                                })
+                        break  # 成功跳出重試
+                    elif "沒有符合" in str(data.get("stat","")):
+                        break  # 無資料不重試
+                    else:
+                        _time.sleep(1.0 * (attempt + 1))
+                except Exception as e:
+                    if attempt < 2:
+                        _time.sleep(1.5 * (attempt + 1))
+                    else:
+                        print(f"  [TWSE range] {code} {ym}: {e}")
             tmp_cur = (tmp_cur + timedelta(days=32)).replace(day=1)
-            _time.sleep(0.2)
+            _time.sleep(0.4)  # 避免 TWSE 限速
 
     if twse_records:
         twse_records.sort(key=lambda x: x["date"])
@@ -729,23 +739,34 @@ def fetch_history_recent(code):
         for delta in [1, 0]:
             d  = today - timedelta(days=delta * 32)
             ym = f"{d.year}{d.month:02d}01"
-            try:
-                url  = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-                        f"?response=json&date={ym}&stockNo={code}")
-                r    = SESSION.get(url, timeout=8)
-                data = r.json()
-                if data.get("stat") != "OK" or not data.get("data"): continue
-                for row in data["data"]:
-                    c = safe_float(row[6])
-                    if c > 0:
-                        records.append({
-                            "close": c,
-                            "high":  safe_float(row[4]),
-                            "low":   safe_float(row[5]),
-                            "vol":   round(safe_float(row[1]) / 1000),
-                        })
-            except: pass
-            _time.sleep(0.1)
+            # 最多重試 3 次
+            for attempt in range(3):
+                try:
+                    url  = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
+                            f"?response=json&date={ym}&stockNo={code}")
+                    r    = SESSION.get(url, timeout=12)
+                    data = r.json()
+                    if data.get("stat") == "OK" and data.get("data"):
+                        for row in data["data"]:
+                            c = safe_float(row[6])
+                            if c > 0:
+                                records.append({
+                                    "close": c,
+                                    "high":  safe_float(row[4]),
+                                    "low":   safe_float(row[5]),
+                                    "vol":   round(safe_float(row[1]) / 1000),
+                                })
+                        break  # 成功就跳出重試
+                    elif data.get("stat") == "很抱歉，沒有符合條件的資料":
+                        break  # 無資料就不重試
+                    else:
+                        _time.sleep(1.0 * (attempt + 1))  # 指數退避
+                except Exception as e:
+                    if attempt < 2:
+                        _time.sleep(1.5 * (attempt + 1))
+                    else:
+                        print(f"  [TWSE recent] {code} {ym}: {e}")
+            _time.sleep(0.4)  # 每月資料之間等待 0.4 秒（避免被限速）
 
     if records:
         _market_map[code] = "twse"
@@ -754,56 +775,29 @@ def fetch_history_recent(code):
 
     # ── 上櫃（OTC）──────────────────────────────────
     if use_otc:
-        # ① 優先用 FinMind（不會被 TPEX block）
-        token = _get_finmind_token()
-        if token:
+        for delta in [1, 0]:
+            d      = today - timedelta(days=delta * 32)
+            roc_y  = d.year - 1911
+            ym_otc = f"{roc_y}/{d.month:02d}"
             try:
-                start_fm = (today - timedelta(days=65)).strftime("%Y-%m-%d")
-                r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                                params={"dataset":"TaiwanStockPrice","data_id":code,
-                                        "start_date":start_fm},
-                                headers={"Authorization": f"Bearer {token}"},
-                                timeout=12)
+                url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                        f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
+                r    = SESSION.get(url, timeout=10)
                 data = r.json()
-                if data.get("status") == 200:
-                    for row in data.get("data", []):
-                        c = safe_float(row.get("close", 0))
+                rows = data.get("aaData", [])
+                for row in rows:
+                    try:
+                        c = safe_float(str(row[6]).replace(",",""))
                         if c > 0:
                             records.append({
                                 "close": c,
-                                "high":  safe_float(row.get("max", 0)),
-                                "low":   safe_float(row.get("min", 0)),
-                                "vol":   round(safe_float(row.get("Trading_Volume", 0)) / 1000),
+                                "high":  safe_float(str(row[4]).replace(",","")),
+                                "low":   safe_float(str(row[5]).replace(",","")),
+                                "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
                             })
-            except Exception as e:
-                print(f"  [OTC FinMind recent] {code}: {e}")
-
-        # ② FinMind 沒資料才 fallback 到 TPEX
-        if not records:
-            for delta in [1, 0]:
-                d      = today - timedelta(days=delta * 32)
-                roc_y  = d.year - 1911
-                ym_otc = f"{roc_y}/{d.month:02d}"
-                try:
-                    url  = (f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                            f"?l=zh-tw&d={ym_otc}&stkno={code}&s=0,asc,0&o=json")
-                    r    = SESSION.get(url, timeout=10)
-                    data = r.json()
-                    rows = data.get("aaData", [])
-                    for row in rows:
-                        try:
-                            c = safe_float(str(row[6]).replace(",",""))
-                            if c > 0:
-                                records.append({
-                                    "close": c,
-                                    "high":  safe_float(str(row[4]).replace(",","")),
-                                    "low":   safe_float(str(row[5]).replace(",","")),
-                                    "vol":   round(safe_float(str(row[1]).replace(",","")) / 1000),
-                                })
-                        except: continue
-                except Exception as e:
-                    print(f"  [OTC TPEX fallback] {code} {ym_otc}: {e}")
-                _time.sleep(2.0)
+                    except: continue
+            except: pass
+            _time.sleep(0.5)
 
     if records:
         _market_map[code] = "otc"
@@ -4779,77 +4773,6 @@ def trigger_auto_analysis():
     threading.Thread(target=run_bg, daemon=True).start()
     return jsonify({"ok": True, "msg": "已啟動 v2.0 分析，約 10~15 分鐘完成，請稍後重新整理"})
 
-@app.route("/api/analyze/schedule_status")
-def schedule_status():
-    """查詢排程狀態"""
-    tw_dt     = datetime.utcnow() + timedelta(hours=8)
-    last_date = _get_last_analysis_date()
-    yesterday = (tw_dt - timedelta(days=1)).strftime("%Y-%m-%d")
-    tw_date   = tw_dt.strftime("%Y-%m-%d")
-    missed    = last_date < yesterday if last_date else True
-    next_run  = f"今晚 22:00（{tw_date}）" if tw_dt.hour < 22 else f"明晚 22:00"
-    return jsonify({
-        "tw_now":         tw_dt.strftime("%Y-%m-%d %H:%M:%S"),
-        "last_analysis":  last_date or "無",
-        "missed":         missed,
-        "status":         "⚠️ 昨天分析遺漏，將自動補跑" if missed else "✅ 正常",
-        "next_scheduled": next_run,
-    })
-
-@app.route("/api/broker/<code>")
-def broker_analysis(code):
-    """券商分點買賣超分析（近一週）"""
-    try:
-        end_dt   = datetime.today().strftime("%Y-%m-%d")
-        start_dt = (datetime.today() - timedelta(days=10)).strftime("%Y-%m-%d")
-        rows = fetch_finmind("TaiwanStockTradingDailyReport", code, start_dt, end_dt)
-        if not rows:
-            return jsonify({"error": "查無分點資料，請確認 FinMind Token 已設定且有分點資料權限"}), 404
-
-        broker_map = {}
-        daily_map  = {}
-        for row in rows:
-            date      = row.get("date","")[:10]
-            broker_id = str(row.get("broker_id", ""))
-            name      = row.get("broker_name", broker_id)
-            buy       = int(str(row.get("buy",0)).replace(",","") or 0)
-            sell      = int(str(row.get("sell",0)).replace(",","") or 0)
-            net       = buy - sell
-            if broker_id not in broker_map:
-                broker_map[broker_id] = {"id":broker_id,"name":name,"buy":0,"sell":0,"net":0,"days":{}}
-            broker_map[broker_id]["buy"]  += buy
-            broker_map[broker_id]["sell"] += sell
-            broker_map[broker_id]["net"]  += net
-            broker_map[broker_id]["days"][date] = broker_map[broker_id]["days"].get(date,0) + net
-            if date not in daily_map:
-                daily_map[date] = {"date":date,"buy":0,"sell":0,"net":0}
-            daily_map[date]["buy"]  += buy
-            daily_map[date]["sell"] += sell
-            daily_map[date]["net"]  += net
-
-        brokers   = list(broker_map.values())
-        top_buy   = sorted([b for b in brokers if b["net"]>0], key=lambda x:x["net"], reverse=True)[:15]
-        top_sell  = sorted([b for b in brokers if b["net"]<0], key=lambda x:x["net"])[:15]
-        total_buy_vol = sum(b["buy"] for b in brokers)
-        top5_buy_vol  = sum(b["buy"] for b in top_buy[:5])
-        concentration = round(top5_buy_vol/total_buy_vol*100,1) if total_buy_vol>0 else 0
-        daily     = sorted(daily_map.values(), key=lambda x:x["date"])
-        for b in top_buy + top_sell:
-            b["day_list"] = sorted(b["days"].items())
-            del b["days"]
-        net_total = sum(b["net"] for b in brokers)
-        if net_total>500:   signal,sc = "主力積極買超 🔥","red"
-        elif net_total>0:   signal,sc = "主力小幅買超 📈","red"
-        elif net_total>-500:signal,sc = "主力小幅賣超 📉","green"
-        else:               signal,sc = "主力積極出貨 ⚠️","green"
-        return jsonify({"code":code,"start_date":start_dt,"end_date":end_dt,
-                        "top_buy":top_buy,"top_sell":top_sell,"daily":daily,
-                        "net_total":net_total,"concentration":concentration,
-                        "signal":signal,"signal_color":sc,"total_brokers":len(brokers)})
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
 @app.route("/api/analyze/custom", methods=["POST"])
 def start_custom_analyze():
     """自訂個股分析"""
@@ -5056,40 +4979,45 @@ def _start_daily_schedule():
     """
     import time as _time
 
-    def _should_run(tw_dt, last_ran_date):
-        tw_date   = tw_dt.strftime("%Y-%m-%d")
-        tw_hour   = tw_dt.hour
+    def _should_run_now(tw_dt, last_db_date):
+        """判斷現在是否需要跑分析"""
+        tw_date = tw_dt.strftime("%Y-%m-%d")
+        tw_hour = tw_dt.hour
+        # 今天 22:00 後且今天還沒跑
+        if tw_hour >= 22 and last_db_date != tw_date:
+            return True, f"例行排程 {tw_date} 22:00"
+        # 啟動補跑：昨天的資料不存在（Render 重啟錯過了）
         yesterday = (tw_dt - timedelta(days=1)).strftime("%Y-%m-%d")
-        if last_ran_date >= tw_date:
-            return False, ""
-        if tw_hour >= 22:
-            return True, f"例行排程 {tw_date} {tw_hour:02d}:xx"
-        if last_ran_date < yesterday:
-            return True, f"補跑遺漏分析（上次：{last_ran_date or '無'}，今天：{tw_date}）"
+        if last_db_date < yesterday and tw_hour < 22:
+            return True, f"補跑昨日遺漏分析（上次：{last_db_date}）"
         return False, ""
 
     def _scheduler():
-        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00，含補跑機制）")
-        _time.sleep(45)
-        last_ran_date = _get_last_analysis_date()
-        print(f"[排程] 資料庫最後分析日期：{last_ran_date or '無'}")
+        print("[排程] 每日自動分析排程已啟動（台灣時間 22:00）")
+        _time.sleep(30)  # 等伺服器完全啟動
+
+        # 啟動時先從 DB 查最後執行日期
+        last_db_date = _get_last_analysis_date()
+        print(f"[排程] 資料庫最後分析日期：{last_db_date or '無'}")
 
         while True:
             try:
-                tw_dt = datetime.utcnow() + timedelta(hours=8)
-                should_run, reason = _should_run(tw_dt, last_ran_date)
+                now_utc = datetime.utcnow()
+                tw_dt   = now_utc + timedelta(hours=8)
+                tw_date = tw_dt.strftime("%Y-%m-%d")
+
+                should_run, reason = _should_run_now(tw_dt, last_db_date)
                 if should_run:
                     print(f"[排程] ⏰ {reason}")
                     _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
-                    last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
-                    print(f"[排程] ✅ 分析完成，last_ran_date={last_ran_date}")
-                    _time.sleep(3600)
+                    last_db_date = tw_date  # 更新記錄
+                    print(f"[排程] ✅ 分析完成，下次：明天 22:00")
+                    _time.sleep(120)
                 else:
                     _time.sleep(60)
             except Exception as e:
                 print(f"[排程] ❌ 錯誤: {e}")
-                import traceback; traceback.print_exc()
-                _time.sleep(120)
+                _time.sleep(60)
 
     t = threading.Thread(target=_scheduler, daemon=True)
     t.start()
