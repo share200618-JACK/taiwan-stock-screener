@@ -5130,10 +5130,44 @@ def _run_reversal_screen(max_stocks=200, top_n=20):
     import time as _time
     print("[底部反轉] 開始掃描...")
 
-    # 取得股票清單
-    stocks = _fetch_all_stocks(max_stocks)
+    # ── 取得股票清單（上市+上櫃）───────────────────────
+    stocks = []
+    try:
+        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        resp = SESSION.get(url, timeout=15)
+        for r in resp.json():
+            code=r.get("Code",""); price=safe_float(r.get("ClosingPrice"))
+            vol=round(safe_float(r.get("TradeVolume"))/1000)
+            chg=safe_float(r.get("Change")); prev=price-chg
+            pct_=round(chg/prev*100,2) if prev>0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price<10 or vol<100: continue
+            stocks.append({"code":code,"name":r.get("Name",""),
+                           "price":price,"pct":pct_,"vol":vol,"sector":""})
+        print(f"  [底部反轉] 上市：{len(stocks)} 支")
+    except Exception as e:
+        print(f"  [底部反轉] 上市取得失敗: {e}")
+
+    try:
+        otc_url = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+        r2 = SESSION.get(otc_url, timeout=15)
+        for r in r2.json():
+            code=r.get("SecuritiesCompanyCode","") or r.get("code","")
+            price=safe_float(r.get("Close","") or r.get("close",""))
+            vol=round(safe_float(r.get("TradingShares","") or r.get("volume",""))/1000)
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price<10 or vol<100: continue
+            stocks.append({"code":code,"name":r.get("CompanyName","") or r.get("name",""),
+                           "price":price,"pct":0,"vol":vol,"sector":""})
+        print(f"  [底部反轉] 上市+上櫃：{len(stocks)} 支")
+    except Exception as e:
+        print(f"  [底部反轉] 上櫃取得失敗: {e}")
+
     if not stocks:
         print("[底部反轉] 無法取得股票清單"); return None
+
+    if max_stocks and max_stocks < len(stocks):
+        stocks = stocks[:max_stocks]
 
     today    = datetime.today().strftime("%Y-%m-%d")
     start_dt = (datetime.today() - timedelta(days=30)).strftime("%Y-%m-%d")
