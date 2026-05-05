@@ -352,7 +352,7 @@ async function fetchPrices(codes) {
 }
 
 function updatePriceDisplay() {
-  const list = loadList();
+  const list = _watchCache;  // 直接用快取，不重新呼叫 async loadList
   list.forEach(s => {
     const p = priceCache[s.code];
     if (!p) return;
