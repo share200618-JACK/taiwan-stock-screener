@@ -248,15 +248,37 @@ async function initAuth() {
 // ── Supabase API 操作 ─────────────────────────────
 async function loadList() {
   try {
-    const token = _userToken || 'default';
-    console.log('[追蹤清單] 查詢 token:', token);
-    const r = await fetch(`${API}/api/watchlist?token=${token}`);
-    const d = await r.json();
-    console.log('[追蹤清單] 回傳資料:', d);
-    _watchCache = d.stocks || [];
-    // debug: 顯示在頁面上
+    const realToken = getToken() || '';
+    const queries   = ['default'];
+    if (realToken && realToken !== 'default') queries.push(realToken);
+
+    // 同時查詢所有可能的 token，合併結果
+    const allResults = await Promise.all(
+      queries.map(t => fetch(`${API}/api/watchlist?token=${t}`)
+        .then(r => r.json())
+        .then(d => d.stocks || [])
+        .catch(() => []))
+    );
+
+    // 合併去重（同 code 只保留一筆）
+    const merged = [];
+    const seen   = new Set();
+    for (const list of allResults) {
+      for (const s of list) {
+        if (!seen.has(s.code)) {
+          seen.add(s.code);
+          merged.push(s);
+        }
+      }
+    }
+
+    _watchCache = merged;
+    _userToken  = realToken || 'default';
+
+    // debug
     const dbg = document.getElementById('debugInfo');
-    if (dbg) dbg.textContent = `token: ${token} | 筆數: ${_watchCache.length}`;
+    if (dbg) dbg.textContent = `tokens: [${queries.join(', ')}] | 筆數: ${merged.length}`;
+
     return _watchCache;
   } catch(e) {
     console.error('讀取追蹤清單失敗:', e);
@@ -266,10 +288,11 @@ async function loadList() {
 
 async function addToList(stock) {
   try {
+    const token = getToken() || 'default';
     const r = await fetch(`${API}/api/watchlist`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({...stock, user_token: _userToken||'default'})
+      body: JSON.stringify({...stock, user_token: token})
     });
     const d = await r.json();
     return d.ok;
@@ -278,10 +301,11 @@ async function addToList(stock) {
 
 async function removeFromList(code) {
   try {
-    const r = await fetch(`${API}/api/watchlist/${code}?token=${_userToken||'default'}`, {
+    const token = getToken() || 'default';
+    const r = await fetch(`${API}/api/watchlist/${code}?token=${token}`, {
       method:'DELETE',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({user_token: _userToken||'default'})
+      body: JSON.stringify({user_token: token})
     });
     const d = await r.json();
     return d.ok;
