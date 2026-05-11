@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>動能突破選股 v4.0</title>
+<title>智慧選股系統 v4.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -161,6 +161,17 @@
   }
   .cb-pass{background:rgba(38,166,154,.12);color:var(--grn);border:1px solid rgba(38,166,154,.25);}
   .cb-fail{background:rgba(100,100,100,.08);color:#4a5568;border:1px solid rgba(100,100,100,.15);}
+  .sys-tab{
+    padding:8px 20px;border:1px solid var(--bdr);border-radius:8px;
+    font-size:.78rem;font-weight:700;cursor:pointer;
+    background:var(--bg2);color:var(--muted);
+    font-family:'Noto Sans TC',sans-serif;transition:all .15s;
+  }
+  .sys-tab.active{
+    background:linear-gradient(135deg,#f0b429,#a855f7);
+    color:#fff;border-color:transparent;
+    box-shadow:0 2px 12px rgba(168,85,247,.3);
+  }
 
   /* 指標格 */
   .ind-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
@@ -195,24 +206,35 @@
 
 <div class="header">
   <div class="header-left">
-    <div class="logo-icon" style="background:linear-gradient(135deg,#f0b429,#ef5350);">⚡</div>
+    <div class="logo-icon" style="background:linear-gradient(135deg,#f0b429,#a855f7);">🎯</div>
     <div>
-      <div class="title">動能突破選股</div>
-      <div class="subtitle">v4.0 · 五條件硬過濾 · 每日 22:00 自動執行</div>
+      <div class="title">智慧選股系統</div>
+      <div class="subtitle">v4.0 · 雙系統每日 22:00 自動執行</div>
     </div>
   </div>
   <div class="header-right">
     <a href="/analyze" class="nav-btn">🤖 AI分析</a>
     <a href="/" class="nav-btn">📊 選股</a>
-    <button class="btn btn-primary" id="runBtn" onclick="triggerRun()">▶ 立即執行</button>
+    <button class="btn btn-primary" id="runBtn" onclick="triggerRun()">⚡ 執行動能突破</button>
   </div>
 </div>
 
 <div class="container">
 
   <!-- 選股條件說明 -->
-  <div class="conditions">
-    <div class="cond-title">選股條件（符合 4 個以上才入選）</div>
+  <!-- 系統切換 tab -->
+  <div style="display:flex;gap:8px;margin-bottom:14px;">
+    <button class="sys-tab active" id="tabA" onclick="switchSys('momentum')">
+      ⚡ 動能突破
+    </button>
+    <button class="sys-tab" id="tabB" onclick="switchSys('reversal')">
+      🔄 低基期爆量反轉
+    </button>
+  </div>
+
+  <!-- 系統A 條件說明 -->
+  <div class="conditions" id="condsA">
+    <div class="cond-title">系統A：動能突破（符合 4 個以上才入選）</div>
     <div class="cond-grid">
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(239,83,80,.15);color:var(--red);">①</div>
@@ -228,11 +250,38 @@
       </div>
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(168,85,247,.15);color:var(--pur);">④</div>
-        <div class="cond-desc">法人近5日<br>買超≥3天</div>
+        <div class="cond-desc">法人近5日<br>買超≥2天</div>
       </div>
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(38,166,154,.15);color:var(--grn);">⑤</div>
         <div class="cond-desc">MACD柱<br>擴張/轉正</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 系統B 條件說明 -->
+  <div class="conditions" id="condsB" style="display:none;">
+    <div class="cond-title">系統B：低基期爆量反轉 — 東元型態（符合 4 個以上才入選）</div>
+    <div class="cond-grid">
+      <div class="cond-item">
+        <div class="cond-num" style="background:rgba(239,83,80,.15);color:var(--red);">①</div>
+        <div class="cond-desc">股價在季線<br>以下 5~20%</div>
+      </div>
+      <div class="cond-item">
+        <div class="cond-num" style="background:rgba(240,180,41,.15);color:var(--gold);">②</div>
+        <div class="cond-desc">KD 40以下<br>黃金交叉</div>
+      </div>
+      <div class="cond-item">
+        <div class="cond-num" style="background:rgba(33,150,243,.15);color:var(--blue);">③</div>
+        <div class="cond-desc">爆量<br>&gt;前10日×2倍</div>
+      </div>
+      <div class="cond-item">
+        <div class="cond-num" style="background:rgba(168,85,247,.15);color:var(--pur);">④</div>
+        <div class="cond-desc">法人近5日<br>買超≥2天</div>
+      </div>
+      <div class="cond-item">
+        <div class="cond-num" style="background:rgba(38,166,154,.15);color:var(--grn);">⑤</div>
+        <div class="cond-desc">MACD柱<br>由負轉正</div>
       </div>
     </div>
   </div>
@@ -281,8 +330,20 @@
 const API = location.hostname === 'localhost' ? 'http://localhost:5000' : '';
 let _pollTimer = null;
 let _isRunning = false;
+let _curSys    = 'momentum';
 
-// ── 初始化 ──────────────────────────────────────────
+function switchSys(sys) {
+  _curSys = sys;
+  document.getElementById('tabA').classList.toggle('active', sys==='momentum');
+  document.getElementById('tabB').classList.toggle('active', sys==='reversal');
+  document.getElementById('condsA').style.display = sys==='momentum' ? '' : 'none';
+  document.getElementById('condsB').style.display = sys==='reversal' ? '' : 'none';
+  document.getElementById('runBtn').textContent =
+    sys==='momentum' ? '⚡ 執行動能突破' : '🔄 執行低基期反轉';
+  loadHistory();
+  loadLatest();
+}
+
 async function init() {
   await loadHistory();
   await loadLatest();
@@ -291,7 +352,8 @@ async function init() {
 // ── 歷史清單 ────────────────────────────────────────
 async function loadHistory() {
   try {
-    const r = await fetch(`${API}/api/reversal/history`);
+    const api = _curSys==='momentum' ? 'momentum' : 'reversal';
+    const r = await fetch(`${API}/api/${api}/history`);
     const d = await r.json();
     const hist = d.history || [];
     const pills = document.getElementById('historyPills');
@@ -307,7 +369,8 @@ async function loadHistory() {
 // ── 載入最新結果 ─────────────────────────────────────
 async function loadLatest(date) {
   try {
-    const url = date ? `${API}/api/reversal/latest?date=${date}` : `${API}/api/reversal/latest`;
+    const api = _curSys==='momentum' ? 'momentum' : 'reversal';
+    const url = date ? `${API}/api/${api}/latest?date=${date}` : `${API}/api/${api}/latest`;
     const r = await fetch(url);
     if (!r.ok) { showEmpty(); return; }
     const d = await r.json();
@@ -325,29 +388,30 @@ async function loadDate(date, el) {
 // ── 渲染結果 ─────────────────────────────────────────
 function renderResult(d) {
   const stocks = d.stocks || [];
+  const isMomentum = _curSys === 'momentum';
+  const sysLabel = isMomentum ? '⚡ 動能突破' : '🔄 低基期爆量反轉';
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('resultSection').style.display = 'block';
-  document.getElementById('resultTitle').textContent =
-    `動能突破選股 · ${d.date || ''}`;
+  document.getElementById('resultTitle').textContent = `${sysLabel} · ${d.date || ''}`;
   document.getElementById('resultMeta').textContent =
-    `掃描 ${d.total_scanned} 支 · ${d.total_passed} 支通過五條件 · ${d.time || ''}`;
-
-  // 狀態列
-  document.getElementById('statusText').textContent =
-    `上次執行：${d.time || '—'}`;
+    `掃描 ${d.total_scanned} 支 · ${d.total_passed} 支通過條件 · ${d.time || ''}`;
+  document.getElementById('statusText').textContent = `上次執行：${d.time || '—'}`;
   document.getElementById('statusMeta').textContent =
     `${d.total_scanned} 支掃描 → ${d.total_passed} 支通過`;
 
   if (!stocks.length) {
     document.getElementById('stockList').innerHTML =
       `<div class="empty"><div class="empty-icon">😶</div>
-       <div class="empty-text">今日無股票符合動能突破條件</div></div>`;
+       <div class="empty-text">今日無股票符合${sysLabel}條件</div></div>`;
     return;
   }
 
   document.getElementById('stockList').innerHTML = stocks.map((s, i) => {
     const chgUp = s.chg_pct >= 0;
-    const ma60Cls = s.ma60_pct >= 0 ? 'up' : 'dn';
+    const cond1ok = isMomentum ? Math.abs(s.ma60_pct)<=15 : (s.ma60_pct>=-20 && s.ma60_pct<=-5);
+    const cond2ok = isMomentum ? (s.k<50 && s.cond2) : (s.k<40 && s.cond2);
+    const cond3ok = isMomentum ? s.vol_ratio>=1.5 : s.vol_ratio>=2.0;
+    const cond5ok = s.cond5;
     return `
     <div class="stock-card" onclick="goAnalyze('${s.code}','${s.name}')">
       <div class="card-top">
@@ -362,11 +426,11 @@ function renderResult(d) {
         </div>
       </div>
       <div class="cond-badges">
-        <span class="cb ${Math.abs(s.ma60_pct)<=10?'cb-pass':'cb-fail'}">① MA60${s.ma60_pct>0?'+':''}${s.ma60_pct}%</span>
-        <span class="cb ${s.k<50&&s.k>s.d?'cb-pass':'cb-fail'}">② KD=${s.k}/${s.d}</span>
-        <span class="cb ${s.vol_ratio>=1.5?'cb-pass':'cb-fail'}">③ 量比${s.vol_ratio}x</span>
-        <span class="cb ${s.inst_days>=3?'cb-pass':'cb-fail'}">④ 法人${s.inst_days}天</span>
-        <span class="cb ${s.macd_hist>0?'cb-pass':'cb-fail'}">⑤ MACD ${s.macd_hist>0?'+':''}${s.macd_hist}</span>
+        <span class="cb ${cond1ok?'cb-pass':'cb-fail'}">① MA60 ${s.ma60_pct>0?'+':''}${s.ma60_pct}%</span>
+        <span class="cb ${cond2ok?'cb-pass':'cb-fail'}">② KD=${s.k}/${s.d}</span>
+        <span class="cb ${cond3ok?'cb-pass':'cb-fail'}">③ 量比${s.vol_ratio}x</span>
+        <span class="cb ${s.inst_days>=2?'cb-pass':'cb-fail'}">④ 法人${s.inst_days}天</span>
+        <span class="cb ${cond5ok?'cb-pass':'cb-fail'}">⑤ MACD ${s.macd_hist>0?'+':''}${s.macd_hist}</span>
         <span class="cb" style="background:rgba(168,85,247,.12);color:#a855f7;border:1px solid rgba(168,85,247,.25);">符合 ${s.conds_met}/5</span>
       </div>
       <div class="ind-row">
@@ -409,16 +473,16 @@ function showEmpty() {
 async function triggerRun() {
   if (_isRunning) return;
   _isRunning = true;
+  const api  = _curSys === 'momentum' ? 'momentum' : 'reversal';
+  const label = _curSys === 'momentum' ? '動能突破' : '低基期爆量反轉';
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = '執行中...';
   document.getElementById('runningWrap').classList.add('show');
   document.getElementById('progBar').style.width = '5%';
   document.getElementById('progMsg').textContent = '啟動中...';
-  showToast('動能突破選股已啟動，約 15~20 分鐘完成');
-
+  showToast(`${label}選股已啟動，約 60~90 分鐘完成`);
   try {
-    await fetch(`${API}/api/reversal/run`, {method:'POST'});
-    // 開始輪詢（假進度）
+    await fetch(`${API}/api/${api}/run`, {method:'POST'});
     startFakePoll();
   } catch(e) {
     showToast('❌ 啟動失敗，請重試');

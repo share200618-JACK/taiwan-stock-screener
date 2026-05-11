@@ -4986,17 +4986,23 @@ def _start_daily_schedule():
                     print(f"[排程] ⏰ {reason}")
                     # v2.0 AI 分析
                     _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
-                    # 從 DB 確認最新日期
                     last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
                     print(f"[排程] ✅ v2.0 完成，last_ran_date={last_ran_date}")
-                    # 底部反轉選股
+                    # ⚡ 系統A：動能突破選股
                     try:
-                        print("[排程] 🔍 啟動底部反轉選股...")
+                        print("[排程] ⚡ 啟動動能突破選股...")
+                        _run_momentum_screen(max_stocks=0, top_n=30)
+                        print("[排程] ✅ 動能突破完成")
+                    except Exception as e1:
+                        print(f"[排程] ❌ 動能突破錯誤: {e1}")
+                    # 🔄 系統B：低基期爆量反轉
+                    try:
+                        print("[排程] 🔄 啟動低基期爆量反轉選股...")
                         _run_reversal_screen(max_stocks=0, top_n=30)
-                        print("[排程] ✅ 底部反轉完成")
-                    except Exception as re:
-                        print(f"[排程] ❌ 底部反轉錯誤: {re}")
-                    _time.sleep(3600)  # 跑完休息 1 小時，防止重複觸發
+                        print("[排程] ✅ 低基期反轉完成")
+                    except Exception as e2:
+                        print(f"[排程] ❌ 低基期反轉錯誤: {e2}")
+                    _time.sleep(3600)
                 else:
                     _time.sleep(60)
             except Exception as e:
@@ -5022,8 +5028,8 @@ import os as _os
 #   ⑤ MACD 柱狀由負轉正或持續擴張
 # ══════════════════════════════════════════════════════
 
-def _calc_reversal_indicators(records):
-    """計算動能突破所需指標"""
+def _calc_indicators_base(records):
+    """計算共用指標（兩個系統共用）"""
     if len(records) < 60: return None
     closes = [r["close"] for r in records]
     vols   = [r["vol"]   for r in records]
@@ -5033,12 +5039,9 @@ def _calc_reversal_indicators(records):
     ma20 = sum(closes[-20:]) / 20
     ma60 = sum(closes[-60:]) / 60
     cur  = closes[-1]
-
-    # ① 股價在 MA60 ±15%
     ma60_pct = (cur - ma60) / ma60 * 100
-    cond1 = -15.0 <= ma60_pct <= 15.0
 
-    # KD 計算（9日）
+    # KD（9日）
     highs = [r.get("high", r["close"]) for r in records]
     lows  = [r.get("low",  r["close"]) for r in records]
     k, d = 50.0, 50.0
@@ -5051,20 +5054,16 @@ def _calc_reversal_indicators(records):
         k = k*2/3 + rsv/3
         d = d*2/3 + k/3
         ks.append(k); ds.append(d)
-
     k_cur, d_cur = ks[-1], ds[-1]
     k_prv, d_prv = ks[-2], ds[-2]
+    kd_cross = (k_prv < d_prv) and (k_cur > d_cur)
 
-    # ② KD 黃金交叉（K<50 才交叉，避免追高）
-    cond2 = (k_prv < d_prv) and (k_cur > d_cur) and k_cur < 50
-
-    # ③ 近5日均量 > 前10日均量 × 1.5
+    # 量比
     vol5  = sum(vols[-5:]) / 5
     vol10 = sum(vols[-15:-5]) / 10 if len(vols) >= 15 else sum(vols[-10:]) / 10
     vol_ratio = vol5 / vol10 if vol10 > 0 else 0
-    cond3 = vol_ratio >= 1.5
 
-    # MACD 計算（12,26,9）
+    # MACD
     def ema(arr, p):
         k2 = 2/(p+1); e = arr[0]; out = []
         for x in arr:
@@ -5075,26 +5074,227 @@ def _calc_reversal_indicators(records):
     macd_line   = [ema12[i]-ema26[i] for i in range(n)]
     signal_line = ema(macd_line, 9)
     hist = [macd_line[i]-signal_line[i] for i in range(n)]
-
     hist_cur = hist[-1]; hist_prv = hist[-2]
     hist_p2  = hist[-3] if len(hist) >= 3 else hist[-2]
-
-    # ⑤ MACD 柱由負轉正 或 連續擴張（正值）
     macd_turn   = hist_prv < 0 and hist_cur > 0
     macd_expand = hist_cur > hist_prv > hist_p2 and hist_cur > 0
-    cond5 = macd_turn or macd_expand
 
     return {
-        "cur": cur, "ma60": round(ma60,2),
-        "ma60_pct": round(ma60_pct,1),
+        "cur": cur, "ma60": round(ma60,2), "ma60_pct": round(ma60_pct,1),
         "k": round(k_cur,1), "d": round(d_cur,1),
+        "kd_cross": kd_cross,
         "vol_ratio": round(vol_ratio,2),
-        "macd_hist": round(hist_cur,3),
-        "macd_prev": round(hist_prv,3),
-        "cond1": cond1, "cond2": cond2,
-        "cond3": cond3, "cond5": cond5,
-        "conds_tech": sum([cond1,cond2,cond3,cond5]),
+        "macd_hist": round(hist_cur,3), "macd_prev": round(hist_prv,3),
+        "macd_turn": macd_turn, "macd_expand": macd_expand,
     }
+
+def _calc_momentum_indicators(records):
+    """系統A：動能突破條件"""
+    ind = _calc_indicators_base(records)
+    if not ind: return None
+    ind["cond1"] = -15.0 <= ind["ma60_pct"] <= 15.0          # MA60 ±15%
+    ind["cond2"] = ind["kd_cross"] and ind["k"] < 50          # KD<50 黃金交叉
+    ind["cond3"] = ind["vol_ratio"] >= 1.5                    # 量比 1.5x
+    ind["cond5"] = ind["macd_turn"] or ind["macd_expand"]     # MACD 擴張
+    return ind
+
+def _calc_reversal_indicators(records):
+    """系統B：低基期爆量反轉（東元型態）"""
+    ind = _calc_indicators_base(records)
+    if not ind: return None
+    ind["cond1"] = -20.0 <= ind["ma60_pct"] <= -5.0          # 在季線以下 5~20%
+    ind["cond2"] = ind["kd_cross"] and ind["k"] < 40          # KD<40 黃金交叉
+    ind["cond3"] = ind["vol_ratio"] >= 2.0                    # 爆量 2x
+    ind["cond5"] = ind["macd_turn"]                            # MACD 必須由負轉正
+    return ind
+
+# ── 系統A：動能突破 ─────────────────────────────────
+
+def _run_momentum_screen(max_stocks=0, top_n=30):
+    """系統A：動能突破選股（MA60 ±15%、KD<50、量比1.5x、法人2天）"""
+    return _run_screen_base("momentum", _calc_momentum_indicators,
+                            inst_days_min=2, conds_min=4,
+                            max_stocks=max_stocks, top_n=top_n)
+
+def _save_momentum_result(data):
+    _save_screen_result("momentum_results", data)
+
+def _load_momentum_result(date=None):
+    return _load_screen_result("momentum_results", date)
+
+def _load_momentum_history(limit=30):
+    return _load_screen_history("momentum_results", limit)
+
+# ── 系統B：低基期爆量反轉 ────────────────────────────
+
+def _run_reversal_screen(max_stocks=0, top_n=30):
+    """系統B：低基期爆量反轉（東元型態：季線以下、KD<40、爆量2x、法人2天）"""
+    return _run_screen_base("reversal", _calc_reversal_indicators,
+                            inst_days_min=2, conds_min=4,
+                            max_stocks=max_stocks, top_n=top_n)
+
+def _save_reversal_result(data):
+    _save_screen_result("reversal_results", data)
+
+def _load_reversal_result(date=None):
+    return _load_screen_result("reversal_results", date)
+
+def _load_reversal_history(limit=30):
+    return _load_screen_history("reversal_results", limit)
+
+# ── 共用底層邏輯 ─────────────────────────────────────
+
+def _run_screen_base(screen_type, calc_fn, inst_days_min, conds_min, max_stocks=0, top_n=30):
+    """選股掃描共用邏輯"""
+    import time as _time
+    label = "動能突破" if screen_type=="momentum" else "低基期反轉"
+    print(f"[{label}] 開始掃描...")
+
+    # 取得股票清單
+    stocks = []
+    try:
+        r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        for row in r.json():
+            code=row.get("Code",""); price=safe_float(row.get("ClosingPrice"))
+            vol=round(safe_float(row.get("TradeVolume","0").replace(",",""))/1000)
+            chg=safe_float(row.get("Change","0").replace(",",""))
+            prev=price-chg; pct=round(chg/prev*100,2) if prev>0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price < 10 or vol < 100: continue
+            stocks.append({"code":code,"name":row.get("Name",""),"price":price,
+                           "pct":pct,"vol":vol,"sector":""})
+    except Exception as e:
+        print(f"  [{label}] 上市取得失敗: {e}")
+    try:
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        for row in r2.json():
+            code=row.get("SecuritiesCompanyCode","") or row.get("code","")
+            price=safe_float(row.get("Close","") or row.get("close",""))
+            vol=round(safe_float(row.get("TradingShares","") or row.get("volume","0"))/1000)
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price < 10 or vol < 100: continue
+            stocks.append({"code":code,"name":row.get("CompanyName","") or row.get("name",""),
+                           "price":price,"pct":0,"vol":vol,"sector":""})
+    except Exception as e:
+        print(f"  [{label}] 上櫃取得失敗: {e}")
+
+    if not stocks:
+        print(f"[{label}] 無法取得股票清單"); return None
+    if max_stocks and max_stocks < len(stocks):
+        stocks = stocks[:max_stocks]
+
+    today    = datetime.today().strftime("%Y-%m-%d")
+    start_dt = (datetime.today() - timedelta(days=30)).strftime("%Y-%m-%d")
+    results  = []
+
+    for idx, s in enumerate(stocks):
+        code = s["code"]
+        if idx % 50 == 0:
+            print(f"  [{label}] {idx+1}/{len(stocks)} ({code} {s['name']})")
+        try:
+            start3m = (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
+            records = fetch_history_range(code, start3m, today)
+            if len(records) < 60: continue
+
+            ind = calc_fn(records)
+            if not ind: continue
+
+            inst_days = _get_inst_buy_days(code, start_dt, today)
+            inst_pass = 1 if inst_days >= inst_days_min else 0
+            tech_pass = sum([ind["cond1"], ind["cond2"], ind["cond3"], ind["cond5"]])
+            total_pass = tech_pass + inst_pass
+            if total_pass < conds_min: continue
+
+            results.append({
+                "code":       code,
+                "name":       s["name"],
+                "price":      ind["cur"],
+                "ma60":       ind["ma60"],
+                "ma60_pct":   ind["ma60_pct"],
+                "k":          ind["k"],
+                "d":          ind["d"],
+                "vol_ratio":  ind["vol_ratio"],
+                "macd_hist":  ind["macd_hist"],
+                "inst_days":  inst_days,
+                "conds_met":  total_pass,
+                "cond1":      ind["cond1"],
+                "cond2":      ind["cond2"],
+                "cond3":      ind["cond3"],
+                "cond5":      ind["cond5"],
+                "sector":     s.get("sector",""),
+                "vol":        s.get("vol",0),
+                "chg_pct":    s.get("pct",0),
+            })
+        except Exception as e:
+            pass
+        _time.sleep(0.15)
+
+    results.sort(key=lambda x: x["vol_ratio"], reverse=True)
+    top = results[:top_n]
+    out = {
+        "stocks":        top,
+        "total_scanned": len(stocks),
+        "total_passed":  len(results),
+        "date":          today,
+        "time":          datetime.now().strftime("%Y/%m/%d %H:%M"),
+        "screen_type":   screen_type,
+    }
+    print(f"[{label}] 完成！{len(results)} 支通過，顯示前 {len(top)} 支")
+    if screen_type == "momentum":
+        _save_momentum_result(out)
+    else:
+        _save_reversal_result(out)
+    return out
+
+def _save_screen_result(table, data):
+    """通用存檔函式"""
+    if not SUPABASE_URL or not SUPABASE_KEY: return
+    try:
+        url   = f"{SUPABASE_URL}/rest/v1/{table}"
+        today = data["date"]
+        requests.delete(url, params={"date":f"eq.{today}"}, headers=_sb_headers(), timeout=10)
+        payload = {
+            "date":          today,
+            "time":          data["time"],
+            "total_scanned": data["total_scanned"],
+            "total_passed":  data["total_passed"],
+            "stocks":        json.dumps(data["stocks"], ensure_ascii=False),
+        }
+        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
+        if r.status_code in (200,201):
+            print(f"[{table}] ✅ 已儲存 {len(data['stocks'])} 支")
+    except Exception as e:
+        print(f"[{table}] ❌ 儲存失敗: {e}")
+
+def _load_screen_result(table, date=None):
+    """通用讀取函式"""
+    if not SUPABASE_URL or not SUPABASE_KEY: return None
+    try:
+        url    = f"{SUPABASE_URL}/rest/v1/{table}"
+        params = {"order":"created_at.desc","limit":"1"}
+        if date: params["date"] = f"eq.{date}"
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            rows = r.json()
+            if rows:
+                row = rows[0]
+                if isinstance(row.get("stocks"), str):
+                    row["stocks"] = json.loads(row["stocks"])
+                return row
+        return None
+    except: return None
+
+def _load_screen_history(table, limit=30):
+    """通用歷史清單"""
+    if not SUPABASE_URL or not SUPABASE_KEY: return []
+    try:
+        url    = f"{SUPABASE_URL}/rest/v1/{table}"
+        params = {"select":"date,time,total_scanned,total_passed",
+                  "order":"created_at.desc","limit":str(limit)}
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200: return r.json()
+        return []
+    except: return []
 
 def _get_inst_buy_days(code, start_dt, end_dt):
     """取得法人近5日買超天數（含外資+投信）"""
@@ -5215,90 +5415,38 @@ def _run_reversal_screen(max_stocks=0, top_n=30):
             print(f"  [底部反轉] {code} 錯誤: {e}")
         _time.sleep(0.15)
 
-    # 依量比排序（放量越大越優先）
-    results.sort(key=lambda x: x["vol_ratio"], reverse=True)
-    top = results[:top_n]
-
-    out = {
-        "stocks":        top,
-        "total_scanned": total,
-        "total_passed":  len(results),
-        "date":          today,
-        "time":          datetime.now().strftime("%Y/%m/%d %H:%M"),
-        "screen_type":   "reversal_v4",
-    }
-    print(f"[底部反轉] 完成！共 {len(results)} 支通過，顯示前 {len(top)} 支")
-
-    # 存入 Supabase
-    _save_reversal_result(out)
-    return out
-
-def _save_reversal_result(data):
-    """存底部反轉結果到 Supabase reversal_results 資料表"""
-    if not SUPABASE_URL or not SUPABASE_KEY: return
-    try:
-        url   = f"{SUPABASE_URL}/rest/v1/reversal_results"
-        today = data["date"]
-        # 先刪同日舊資料
-        requests.delete(url, params={"date":f"eq.{today}"}, headers=_sb_headers(), timeout=10)
-        payload = {
-            "date":          today,
-            "time":          data["time"],
-            "total_scanned": data["total_scanned"],
-            "total_passed":  data["total_passed"],
-            "stocks":        json.dumps(data["stocks"], ensure_ascii=False),
-        }
-        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
-        if r.status_code in (200, 201):
-            print(f"[底部反轉] ✅ 已存入 Supabase（{len(data['stocks'])} 支）")
-        else:
-            print(f"[底部反轉] ❌ 存入失敗 {r.status_code}: {r.text[:100]}")
-    except Exception as e:
-        print(f"[底部反轉] ❌ 存入例外: {e}")
-
-def _load_reversal_result(date=None):
-    """從 Supabase 讀底部反轉結果"""
-    if not SUPABASE_URL or not SUPABASE_KEY: return None
-    try:
-        url    = f"{SUPABASE_URL}/rest/v1/reversal_results"
-        params = {"order":"created_at.desc","limit":"1"}
-        if date: params["date"] = f"eq.{date}"
-        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
-        if r.status_code == 200:
-            rows = r.json()
-            if rows:
-                row = rows[0]
-                if isinstance(row.get("stocks"), str):
-                    row["stocks"] = json.loads(row["stocks"])
-                return row
-        return None
-    except: return None
-
-def _load_reversal_history(limit=30):
-    """從 Supabase 讀底部反轉歷史清單"""
-    if not SUPABASE_URL or not SUPABASE_KEY: return []
-    try:
-        url    = f"{SUPABASE_URL}/rest/v1/reversal_results"
-        params = {"select":"date,time,total_scanned,total_passed",
-                  "order":"created_at.desc","limit":str(limit)}
-        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
-        if r.status_code == 200: return r.json()
-        return []
-    except: return []
-
 # ── API 路由 ──────────────────────────────────────────
+@app.route("/api/momentum/run", methods=["POST"])
+def momentum_run():
+    """手動觸發動能突破選股"""
+    def _bg():
+        try: _run_momentum_screen(max_stocks=0, top_n=30)
+        except Exception as e: print(f"[動能突破] 背景錯誤: {e}")
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({"ok":True, "msg":"動能突破選股已啟動，約 60~90 分鐘完成"})
+
+@app.route("/api/momentum/latest")
+def momentum_latest():
+    date = request.args.get("date")
+    data = _load_momentum_result(date)
+    if not data: return jsonify({"error":"尚無資料"}), 404
+    return jsonify(data)
+
+@app.route("/api/momentum/history")
+def momentum_history():
+    return jsonify({"history": _load_momentum_history()})
+
 @app.route("/api/reversal/run", methods=["POST"])
 def reversal_run():
-    """手動觸發底部反轉選股"""
+    """手動觸發低基期爆量反轉選股"""
     def _bg():
         try: _run_reversal_screen(max_stocks=0, top_n=30)
-        except Exception as e: print(f"[底部反轉] 背景錯誤: {e}")
+        except Exception as e: print(f"[低基期反轉] 背景錯誤: {e}")
     threading.Thread(target=_bg, daemon=True).start()
-    return jsonify({"ok":True, "msg":"底部反轉選股已啟動，約 15~20 分鐘完成"})
+    return jsonify({"ok":True, "msg":"低基期爆量反轉選股已啟動，約 60~90 分鐘完成"})
 
 @app.route("/api/reversal/latest")
 def reversal_latest():
-    """取得最新底部反轉結果"""
     date = request.args.get("date")
     data = _load_reversal_result(date)
     if not data: return jsonify({"error":"尚無資料"}), 404
@@ -5306,13 +5454,10 @@ def reversal_latest():
 
 @app.route("/api/reversal/history")
 def reversal_history():
-    """取得底部反轉歷史清單"""
-    rows = _load_reversal_history()
-    return jsonify({"history": rows})
+    return jsonify({"history": _load_reversal_history()})
 
 @app.route("/reversal")
 def reversal_page():
-    """底部反轉選股頁面"""
     return send_from_directory(".", "reversal.html")
 
 # ══════════════════════════════════════════════════════
