@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>底部反轉選股 v4.0</title>
+<title>動能突破選股 v4.0</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
   :root {
@@ -195,9 +195,9 @@
 
 <div class="header">
   <div class="header-left">
-    <div class="logo">🔄</div>
+    <div class="logo-icon" style="background:linear-gradient(135deg,#f0b429,#ef5350);">⚡</div>
     <div>
-      <div class="title">底部反轉選股</div>
+      <div class="title">動能突破選股</div>
       <div class="subtitle">v4.0 · 五條件硬過濾 · 每日 22:00 自動執行</div>
     </div>
   </div>
@@ -212,15 +212,15 @@
 
   <!-- 選股條件說明 -->
   <div class="conditions">
-    <div class="cond-title">選股條件（五個全部符合才入選）</div>
+    <div class="cond-title">選股條件（符合 4 個以上才入選）</div>
     <div class="cond-grid">
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(239,83,80,.15);color:var(--red);">①</div>
-        <div class="cond-desc">股價在<br>MA60 ±5%</div>
+        <div class="cond-desc">股價在<br>MA60 ±15%</div>
       </div>
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(240,180,41,.15);color:var(--gold);">②</div>
-        <div class="cond-desc">KD 30以下<br>黃金交叉</div>
+        <div class="cond-desc">KD 50以下<br>黃金交叉</div>
       </div>
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(33,150,243,.15);color:var(--blue);">③</div>
@@ -232,7 +232,7 @@
       </div>
       <div class="cond-item">
         <div class="cond-num" style="background:rgba(38,166,154,.15);color:var(--grn);">⑤</div>
-        <div class="cond-desc">MACD柱<br>由負轉正</div>
+        <div class="cond-desc">MACD柱<br>擴張/轉正</div>
       </div>
     </div>
   </div>
@@ -251,7 +251,7 @@
 
   <!-- 進行中 -->
   <div class="running-wrap" id="runningWrap">
-    <div class="running-title"><span class="spin">⏳</span> 底部反轉選股執行中...</div>
+    <div class="running-title"><span class="spin">⏳</span> 動能突破選股執行中...</div>
     <div class="prog-bar-bg"><div class="prog-bar" id="progBar"></div></div>
     <div class="prog-msg" id="progMsg">準備中...</div>
   </div>
@@ -260,7 +260,7 @@
   <div id="resultSection" style="display:none;">
     <div class="result-header">
       <div>
-        <div class="result-title" id="resultTitle">底部反轉選股結果</div>
+        <div class="result-title" id="resultTitle">動能突破選股結果</div>
         <div class="result-meta" id="resultMeta"></div>
       </div>
     </div>
@@ -328,7 +328,7 @@ function renderResult(d) {
   document.getElementById('emptyState').style.display = 'none';
   document.getElementById('resultSection').style.display = 'block';
   document.getElementById('resultTitle').textContent =
-    `底部反轉選股 · ${d.date || ''}`;
+    `動能突破選股 · ${d.date || ''}`;
   document.getElementById('resultMeta').textContent =
     `掃描 ${d.total_scanned} 支 · ${d.total_passed} 支通過五條件 · ${d.time || ''}`;
 
@@ -341,7 +341,7 @@ function renderResult(d) {
   if (!stocks.length) {
     document.getElementById('stockList').innerHTML =
       `<div class="empty"><div class="empty-icon">😶</div>
-       <div class="empty-text">今日無股票符合全部五個條件</div></div>`;
+       <div class="empty-text">今日無股票符合動能突破條件</div></div>`;
     return;
   }
 
@@ -414,7 +414,7 @@ async function triggerRun() {
   document.getElementById('runningWrap').classList.add('show');
   document.getElementById('progBar').style.width = '5%';
   document.getElementById('progMsg').textContent = '啟動中...';
-  showToast('底部反轉選股已啟動，約 15~20 分鐘完成');
+  showToast('動能突破選股已啟動，約 15~20 分鐘完成');
 
   try {
     await fetch(`${API}/api/reversal/run`, {method:'POST'});

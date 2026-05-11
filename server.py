@@ -5023,53 +5023,50 @@ import os as _os
 # ══════════════════════════════════════════════════════
 
 def _calc_reversal_indicators(records):
-    """計算底部反轉所需的所有指標"""
+    """計算動能突破所需指標"""
     if len(records) < 60: return None
     closes = [r["close"] for r in records]
     vols   = [r["vol"]   for r in records]
     n = len(closes)
 
-    # MA60
+    ma5  = sum(closes[-5:])  / 5
+    ma20 = sum(closes[-20:]) / 20
     ma60 = sum(closes[-60:]) / 60
     cur  = closes[-1]
 
-    # ① MA60 ± 5%
+    # ① 股價在 MA60 ±15%
     ma60_pct = (cur - ma60) / ma60 * 100
-    cond1 = -5.0 <= ma60_pct <= 5.0
+    cond1 = -15.0 <= ma60_pct <= 15.0
 
     # KD 計算（9日）
-    def calc_kd(closes_arr, highs_arr, lows_arr):
-        k, d = 50.0, 50.0
-        ks, ds = [], []
-        for i in range(len(closes_arr)):
-            sl_h = highs_arr[max(0,i-8):i+1]
-            sl_l = lows_arr[max(0,i-8):i+1]
-            rh = max(sl_h); rl = min(sl_l)
-            rsv = 50 if rh==rl else (closes_arr[i]-rl)/(rh-rl)*100
-            k = k*2/3 + rsv/3
-            d = d*2/3 + k/3
-            ks.append(k); ds.append(d)
-        return ks, ds
-
     highs = [r.get("high", r["close"]) for r in records]
     lows  = [r.get("low",  r["close"]) for r in records]
-    ks, ds = calc_kd(closes, highs, lows)
+    k, d = 50.0, 50.0
+    ks, ds = [], []
+    for i in range(n):
+        sl_h = highs[max(0,i-8):i+1]
+        sl_l = lows[max(0,i-8):i+1]
+        rh = max(sl_h); rl = min(sl_l)
+        rsv = 50 if rh==rl else (closes[i]-rl)/(rh-rl)*100
+        k = k*2/3 + rsv/3
+        d = d*2/3 + k/3
+        ks.append(k); ds.append(d)
 
-    # ② KD 低檔黃金交叉（前一日K<D，今日K>D，且今日K<30）
     k_cur, d_cur = ks[-1], ds[-1]
     k_prv, d_prv = ks[-2], ds[-2]
-    cond2 = (k_prv < d_prv) and (k_cur > d_cur) and k_cur < 30
 
-    # ③ 近5日均量 vs 前10日均量
-    vol5  = sum(vols[-5:])  / 5
+    # ② KD 黃金交叉（K<50 才交叉，避免追高）
+    cond2 = (k_prv < d_prv) and (k_cur > d_cur) and k_cur < 50
+
+    # ③ 近5日均量 > 前10日均量 × 1.5
+    vol5  = sum(vols[-5:]) / 5
     vol10 = sum(vols[-15:-5]) / 10 if len(vols) >= 15 else sum(vols[-10:]) / 10
     vol_ratio = vol5 / vol10 if vol10 > 0 else 0
     cond3 = vol_ratio >= 1.5
 
     # MACD 計算（12,26,9）
     def ema(arr, p):
-        k2 = 2/(p+1); e = arr[0]
-        out = []
+        k2 = 2/(p+1); e = arr[0]; out = []
         for x in arr:
             e = x*k2 + e*(1-k2); out.append(e)
         return out
@@ -5079,10 +5076,12 @@ def _calc_reversal_indicators(records):
     signal_line = ema(macd_line, 9)
     hist = [macd_line[i]-signal_line[i] for i in range(n)]
 
-    # ⑤ MACD 柱由負轉正，或連續 2 日擴張
-    hist_cur = hist[-1]; hist_prv = hist[-2]; hist_p2 = hist[-3] if len(hist)>=3 else hist[-2]
-    macd_turn    = hist_prv < 0 and hist_cur > 0
-    macd_expand  = hist_cur > hist_prv > hist_p2 and hist_cur > 0
+    hist_cur = hist[-1]; hist_prv = hist[-2]
+    hist_p2  = hist[-3] if len(hist) >= 3 else hist[-2]
+
+    # ⑤ MACD 柱由負轉正 或 連續擴張（正值）
+    macd_turn   = hist_prv < 0 and hist_cur > 0
+    macd_expand = hist_cur > hist_prv > hist_p2 and hist_cur > 0
     cond5 = macd_turn or macd_expand
 
     return {
