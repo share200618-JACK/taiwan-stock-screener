@@ -4992,7 +4992,7 @@ def _start_daily_schedule():
                     # 底部反轉選股
                     try:
                         print("[排程] 🔍 啟動底部反轉選股...")
-                        _run_reversal_screen(max_stocks=200, top_n=20)
+                        _run_reversal_screen(max_stocks=0, top_n=30)
                         print("[排程] ✅ 底部反轉完成")
                     except Exception as re:
                         print(f"[排程] ❌ 底部反轉錯誤: {re}")
@@ -5121,7 +5121,7 @@ def _get_inst_buy_days(code, start_dt, end_dt):
         return buy_days
     except: return 0
 
-def _run_reversal_screen(max_stocks=200, top_n=20):
+def _run_reversal_screen(max_stocks=0, top_n=30):
     """
     底部反轉選股主程式
     全市場掃描，五個條件全中才入選
@@ -5186,13 +5186,14 @@ def _run_reversal_screen(max_stocks=200, top_n=20):
             ind = _calc_reversal_indicators(records)
             if not ind: continue
 
-            # 技術面三個條件必須全中
-            if not (ind["cond1"] and ind["cond2"] and ind["cond3"] and ind["cond5"]):
-                continue
-
-            # ④ 法人近5日買超天數 ≥ 3
+            # ④ 法人近5日買超天數
             inst_days = _get_inst_buy_days(code, start_dt, today)
-            if inst_days < 3: continue
+
+            # 技術面 + 法人：5個條件符合 4 個以上才入選
+            tech_pass = sum([ind["cond1"], ind["cond2"], ind["cond3"], ind["cond5"]])
+            inst_pass = 1 if inst_days >= 3 else 0
+            total_pass = tech_pass + inst_pass
+            if total_pass < 4: continue
 
             results.append({
                 "code":       code,
@@ -5205,6 +5206,7 @@ def _run_reversal_screen(max_stocks=200, top_n=20):
                 "vol_ratio":  ind["vol_ratio"],
                 "macd_hist":  ind["macd_hist"],
                 "inst_days":  inst_days,
+                "conds_met":  total_pass,   # 符合幾個條件
                 "sector":     s.get("sector",""),
                 "vol":        s.get("vol", 0),
                 "chg_pct":    s.get("pct", 0),
@@ -5290,7 +5292,7 @@ def _load_reversal_history(limit=30):
 def reversal_run():
     """手動觸發底部反轉選股"""
     def _bg():
-        try: _run_reversal_screen(max_stocks=200, top_n=20)
+        try: _run_reversal_screen(max_stocks=0, top_n=30)
         except Exception as e: print(f"[底部反轉] 背景錯誤: {e}")
     threading.Thread(target=_bg, daemon=True).start()
     return jsonify({"ok":True, "msg":"底部反轉選股已啟動，約 15~20 分鐘完成"})
@@ -5313,6 +5315,123 @@ def reversal_history():
 def reversal_page():
     """底部反轉選股頁面"""
     return send_from_directory(".", "reversal.html")
+
+# ══════════════════════════════════════════════════════
+# 儀表板 API
+# ══════════════════════════════════════════════════════
+
+@app.route("/api/dashboard/indices")
+def dashboard_indices():
+    """大盤指數：台加權、上櫃、台灣50、電子、半導體、金融"""
+    import time as _time
+    result = {}
+
+    # Yahoo Finance 台股指數列表
+    tw_indices = [
+        ("twii",  "^TWII",   "台灣加權"),
+        ("tpex",  "^TPEX",   "上櫃指數"),
+        ("tw50",  "0050.TW", "台灣50"),
+        ("elec",  "^TWII",   "電子類股"),   # 先用加權，下面用 TWSE API 覆蓋
+        ("semi",  "^TWII",   "半導體"),
+        ("fin",   "^TWII",   "金融類股"),
+    ]
+
+    # 先抓 Yahoo Finance 前三個
+    for key, symbol, name in tw_indices[:3]:
+        try:
+            r = SESSION.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d",
+                headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
+            d = r.json()["chart"]["result"][0]
+            closes = [c for c in d["indicators"]["quote"][0]["close"] if c]
+            if len(closes) < 2: raise ValueError("資料不足")
+            cur = closes[-1]; prev = closes[-2]
+            result[key] = {"name":name,"value":round(cur,2),
+                           "chg":round(cur-prev,2),"pct":round((cur-prev)/prev*100,2)}
+        except:
+            result[key] = {"name":name,"value":0,"chg":0,"pct":0}
+        _time.sleep(0.2)
+
+    # 抓 TWSE 類股指數（電子、半導體、金融）
+    try:
+        today = datetime.today().strftime("%Y%m%d")
+        r = SESSION.get(
+            f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={today}&type=IND",
+            timeout=10)
+        data = r.json()
+        # 找電子、半導體、金融
+        target_map = {
+            "電子類": "elec",
+            "半導體類": "semi",
+            "金融保險類": "fin",
+        }
+        name_map = {
+            "電子類": "電子類股",
+            "半導體類": "半導體",
+            "金融保險類": "金融類股",
+        }
+        for row in data.get("data", []):
+            ind_name = row[0] if row else ""
+            for k, v in target_map.items():
+                if k in ind_name:
+                    try:
+                        cur  = safe_float(str(row[1]).replace(",",""))
+                        chg  = safe_float(str(row[2]).replace(",","").replace("+",""))
+                        prev = cur - chg
+                        pct  = round(chg/prev*100,2) if prev > 0 else 0
+                        result[v] = {"name":name_map[k],"value":round(cur,2),
+                                     "chg":round(chg,2),"pct":pct}
+                    except:
+                        result[v] = {"name":name_map[k],"value":0,"chg":0,"pct":0}
+    except:
+        for k, n in [("elec","電子類股"),("semi","半導體"),("fin","金融類股")]:
+            if k not in result:
+                result[k] = {"name":n,"value":0,"chg":0,"pct":0}
+
+    return jsonify(result)
+
+@app.route("/api/dashboard/news")
+def dashboard_news():
+    """財經新聞（Yahoo 財經 RSS）"""
+    try:
+        r = SESSION.get(
+            "https://tw.news.yahoo.com/rss/finance",
+            headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(r.content)
+        items = []
+        for item in root.findall(".//item")[:12]:
+            title = item.findtext("title","")
+            link  = item.findtext("link","")
+            pub   = item.findtext("pubDate","")
+            items.append({"title":title,"link":link,"pub":pub})
+        return jsonify({"news": items})
+    except Exception as e:
+        return jsonify({"news":[], "error":str(e)})
+
+@app.route("/api/dashboard/summary")
+def dashboard_summary():
+    """儀表板摘要：最新AI分析結果 + 大盤狀態"""
+    try:
+        latest = supabase_load_latest()
+        if not latest:
+            return jsonify({"error":"尚無分析資料"})
+        stocks  = latest.get("stocks",[])[:8]  # 只取前8支
+        return jsonify({
+            "date":          latest.get("date",""),
+            "time":          latest.get("time",""),
+            "total_scanned": latest.get("total_scanned",0),
+            "total_analyzed":latest.get("total_analyzed",0),
+            "bullish":       latest.get("bullish",0),
+            "bearish":       latest.get("bearish",0),
+            "avg_accuracy":  latest.get("avg_accuracy",0),
+            "market_state":  latest.get("market_state","bull"),
+            "stocks":        stocks,
+        })
+    except Exception as e:
+        return jsonify({"error":str(e)})
+
+
 
 
 

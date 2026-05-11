@@ -160,6 +160,7 @@
     display:flex;align-items:center;gap:3px;
   }
   .cb-pass{background:rgba(38,166,154,.12);color:var(--grn);border:1px solid rgba(38,166,154,.25);}
+  .cb-fail{background:rgba(100,100,100,.08);color:#4a5568;border:1px solid rgba(100,100,100,.15);}
 
   /* 指標格 */
   .ind-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
@@ -361,11 +362,12 @@ function renderResult(d) {
         </div>
       </div>
       <div class="cond-badges">
-        <span class="cb cb-pass">① MA60${s.ma60_pct>0?'+':''}${s.ma60_pct}%</span>
-        <span class="cb cb-pass">② KD=${s.k}/${s.d}</span>
-        <span class="cb cb-pass">③ 量比${s.vol_ratio}x</span>
-        <span class="cb cb-pass">④ 法人${s.inst_days}天</span>
-        <span class="cb cb-pass">⑤ MACD+${s.macd_hist>0?s.macd_hist:''}</span>
+        <span class="cb ${Math.abs(s.ma60_pct)<=10?'cb-pass':'cb-fail'}">① MA60${s.ma60_pct>0?'+':''}${s.ma60_pct}%</span>
+        <span class="cb ${s.k<50&&s.k>s.d?'cb-pass':'cb-fail'}">② KD=${s.k}/${s.d}</span>
+        <span class="cb ${s.vol_ratio>=1.5?'cb-pass':'cb-fail'}">③ 量比${s.vol_ratio}x</span>
+        <span class="cb ${s.inst_days>=3?'cb-pass':'cb-fail'}">④ 法人${s.inst_days}天</span>
+        <span class="cb ${s.macd_hist>0?'cb-pass':'cb-fail'}">⑤ MACD ${s.macd_hist>0?'+':''}${s.macd_hist}</span>
+        <span class="cb" style="background:rgba(168,85,247,.12);color:#a855f7;border:1px solid rgba(168,85,247,.25);">符合 ${s.conds_met}/5</span>
       </div>
       <div class="ind-row">
         <div class="ind-box">
