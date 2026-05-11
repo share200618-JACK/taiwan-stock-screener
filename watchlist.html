@@ -153,7 +153,6 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     </div>
     <button class="logout-btn" onclick="doLogout()">登出</button>
   </div>
-  <div id="debugInfo" style="font-size:.6rem;color:#4a5568;padding:2px 16px;font-family:monospace;background:#0a0d14;"></div>
 
   <!-- 統計列 -->
   <div class="stats-row">
@@ -248,37 +247,31 @@ async function initAuth() {
 // ── Supabase API 操作 ─────────────────────────────
 async function loadList() {
   try {
-    const realToken = getToken() || '';
-    const queries   = ['default'];
-    if (realToken && realToken !== 'default') queries.push(realToken);
+    // 同時查詢真實 token 和 default，合併去重
+    const tokens = new Set(['default']);
+    const realToken = getToken();
+    if (realToken && realToken !== 'default') tokens.add(realToken);
 
-    // 同時查詢所有可能的 token，合併結果
-    const allResults = await Promise.all(
-      queries.map(t => fetch(`${API}/api/watchlist?token=${t}`)
-        .then(r => r.json())
-        .then(d => d.stocks || [])
-        .catch(() => []))
+    const results = await Promise.all(
+      [...tokens].map(t =>
+        fetch(`${API}/api/watchlist?token=${t}`)
+          .then(r => r.json())
+          .then(d => d.stocks || [])
+          .catch(() => [])
+      )
     );
 
     // 合併去重（同 code 只保留一筆）
-    const merged = [];
-    const seen   = new Set();
-    for (const list of allResults) {
+    const seen = new Set();
+    _watchCache = [];
+    for (const list of results) {
       for (const s of list) {
         if (!seen.has(s.code)) {
           seen.add(s.code);
-          merged.push(s);
+          _watchCache.push(s);
         }
       }
     }
-
-    _watchCache = merged;
-    _userToken  = realToken || 'default';
-
-    // debug
-    const dbg = document.getElementById('debugInfo');
-    if (dbg) dbg.textContent = `tokens: [${queries.join(', ')}] | 筆數: ${merged.length}`;
-
     return _watchCache;
   } catch(e) {
     console.error('讀取追蹤清單失敗:', e);
@@ -383,7 +376,7 @@ async function fetchPrices(codes) {
 }
 
 function updatePriceDisplay() {
-  const list = _watchCache;  // 直接用快取，不呼叫 async loadList
+  const list = loadList();
   list.forEach(s => {
     const p = priceCache[s.code];
     if (!p) return;
