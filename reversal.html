@@ -3,314 +3,224 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>智慧選股系統 v4.0</title>
+<title>三合一選股系統</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg:    #0a0d14;
-    --bg2:   #111520;
-    --bg3:   #161c2d;
-    --bdr:   #1e2538;
-    --red:   #ef5350;
-    --grn:   #26a69a;
-    --gold:  #f0b429;
-    --pur:   #a855f7;
-    --blue:  #2196f3;
-    --dim:   #4a5568;
-    --muted: #6a748f;
-    --txt:   #c8d0e0;
-    --white: #e8eaf0;
-  }
-  *{box-sizing:border-box;margin:0;padding:0;}
-  body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif;min-height:100vh;}
+:root{
+  --bg:#080b12;--bg2:#0d1120;--bg3:#121828;--bdr:#1a2235;--bdr2:#232d42;
+  --red:#ef5350;--grn:#1bc47d;--gold:#f0b429;--blue:#3d8bff;--pur:#a855f7;
+  --dim:#3a4560;--muted:#5a6888;--txt:#b8c4dc;--white:#e4eaf5;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif;min-height:100vh;}
 
-  /* ── Header ── */
-  .header{
-    background:linear-gradient(135deg,#0d1321 0%,#141929 50%,#0d1321 100%);
-    border-bottom:1px solid var(--bdr);
-    padding:16px 20px;
-    display:flex;align-items:center;justify-content:space-between;
-    position:sticky;top:0;z-index:100;
-  }
-  .header-left{display:flex;align-items:center;gap:12px;}
-  .logo{
-    width:36px;height:36px;border-radius:10px;
-    background:linear-gradient(135deg,#ef5350,#b71c1c);
-    display:flex;align-items:center;justify-content:center;
-    font-size:1.1rem;box-shadow:0 0 12px rgba(239,83,80,.4);
-  }
-  .title{font-size:1rem;font-weight:700;color:var(--white);}
-  .subtitle{font-size:.68rem;color:var(--muted);}
-  .header-right{display:flex;gap:8px;align-items:center;}
-  .btn{
-    padding:7px 14px;border:none;border-radius:8px;cursor:pointer;
-    font-size:.75rem;font-weight:700;font-family:'Noto Sans TC',sans-serif;
-    transition:all .15s;
-  }
-  .btn-primary{background:linear-gradient(135deg,#ef5350,#b71c1c);color:#fff;box-shadow:0 2px 10px rgba(239,83,80,.3);}
-  .btn-primary:hover{box-shadow:0 4px 16px rgba(239,83,80,.5);transform:translateY(-1px);}
-  .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none;}
-  .btn-ghost{background:var(--bg3);color:var(--muted);border:1px solid var(--bdr);}
-  .btn-ghost:hover{color:var(--txt);border-color:var(--muted);}
-  .nav-btn{
-    padding:6px 12px;border:1px solid var(--bdr);border-radius:7px;
-    background:var(--bg3);color:var(--muted);font-size:.72rem;
-    cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;
-    font-family:'Noto Sans TC',sans-serif;transition:all .15s;
-  }
-  .nav-btn:hover{color:var(--txt);border-color:var(--muted);}
+.topbar{
+  position:sticky;top:0;z-index:100;
+  background:rgba(8,11,18,.9);backdrop-filter:blur(20px);
+  border-bottom:1px solid var(--bdr);
+  padding:0 16px;display:flex;align-items:center;justify-content:space-between;height:52px;
+}
+.logo{display:flex;align-items:center;gap:8px;text-decoration:none;}
+.logo-icon{width:30px;height:30px;border-radius:8px;
+  background:linear-gradient(135deg,#f0b429,#ef5350,#a855f7);
+  display:flex;align-items:center;justify-content:center;font-size:.9rem;}
+.logo-text{font-size:.85rem;font-weight:700;color:var(--white);}
+.nav-links{display:flex;gap:4px;}
+.nav-link{padding:5px 10px;border-radius:6px;font-size:.7rem;font-weight:600;
+  color:var(--muted);text-decoration:none;transition:all .15s;}
+.nav-link:hover{color:var(--txt);background:var(--bg3);}
+.nav-link.active{color:var(--gold);background:rgba(240,180,41,.1);}
+.btn-run{
+  padding:7px 16px;border:none;border-radius:8px;cursor:pointer;
+  font-size:.75rem;font-weight:700;font-family:'Noto Sans TC',sans-serif;
+  background:linear-gradient(135deg,#f0b429,#a855f7);color:#fff;
+  box-shadow:0 2px 12px rgba(168,85,247,.3);transition:all .15s;
+}
+.btn-run:hover{box-shadow:0 4px 20px rgba(168,85,247,.5);transform:translateY(-1px);}
+.btn-run:disabled{opacity:.5;cursor:not-allowed;transform:none;}
 
-  /* ── Layout ── */
-  .container{max-width:900px;margin:0 auto;padding:16px;}
+.container{max-width:900px;margin:0 auto;padding:14px 16px 40px;}
 
-  /* ── 條件說明 ── */
-  .conditions{
-    background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;
-    padding:14px 16px;margin-bottom:16px;
-  }
-  .cond-title{font-size:.7rem;color:var(--muted);margin-bottom:10px;
-    text-transform:uppercase;letter-spacing:.5px;}
-  .cond-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;}
-  .cond-item{
-    background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;
-    padding:8px 10px;text-align:center;
-  }
-  .cond-num{
-    width:22px;height:22px;border-radius:50%;margin:0 auto 5px;
-    display:flex;align-items:center;justify-content:center;
-    font-size:.68rem;font-weight:700;font-family:'JetBrains Mono',monospace;
-  }
-  .cond-desc{font-size:.62rem;color:var(--muted);line-height:1.4;}
+/* 評分說明 */
+.score-legend{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px;
+}
+.score-card{
+  background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;
+  padding:10px 12px;
+}
+.sc-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.sc-title{font-size:.72rem;font-weight:700;}
+.sc-max{font-size:.65rem;color:var(--muted);font-family:'JetBrains Mono',monospace;}
+.sc-items{display:flex;flex-direction:column;gap:3px;}
+.sc-item{font-size:.62rem;color:var(--muted);display:flex;justify-content:space-between;}
+.sc-item span{color:var(--txt);font-family:'JetBrains Mono',monospace;}
 
-  /* ── 狀態列 ── */
-  .status-bar{
-    background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;
-    padding:12px 16px;margin-bottom:16px;
-    display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
-  }
-  .status-info{display:flex;align-items:center;gap:12px;flex-wrap:wrap;}
-  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--grn);
-    box-shadow:0 0 6px var(--grn);animation:pulse 2s infinite;}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  .status-text{font-size:.75rem;color:var(--txt);}
-  .status-meta{font-size:.68rem;color:var(--muted);}
-  .badge{
-    padding:2px 8px;border-radius:5px;font-size:.65rem;font-weight:700;
-    font-family:'JetBrains Mono',monospace;
-  }
-  .badge-red{background:rgba(239,83,80,.15);color:var(--red);border:1px solid rgba(239,83,80,.3);}
-  .badge-grn{background:rgba(38,166,154,.15);color:var(--grn);border:1px solid rgba(38,166,154,.3);}
-  .badge-gold{background:rgba(240,180,41,.15);color:var(--gold);border:1px solid rgba(240,180,41,.3);}
+/* 狀態列 */
+.status-bar{
+  background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;
+  padding:10px 14px;margin-bottom:12px;
+  display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
+}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--grn);
+  box-shadow:0 0 6px var(--grn);animation:pulse 2s infinite;flex-shrink:0;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.hist-pills{display:flex;gap:5px;flex-wrap:wrap;}
+.hist-pill{padding:3px 9px;border:1px solid var(--bdr);border-radius:5px;
+  background:var(--bg3);color:var(--muted);font-size:.65rem;cursor:pointer;transition:all .15s;}
+.hist-pill.active{background:rgba(240,180,41,.12);color:var(--gold);border-color:rgba(240,180,41,.3);}
 
-  /* ── 進行中 ── */
-  .running-wrap{
-    background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;
-    padding:20px;margin-bottom:16px;display:none;
-  }
-  .running-wrap.show{display:block;}
-  .running-title{font-size:.85rem;font-weight:700;margin-bottom:10px;
-    display:flex;align-items:center;gap:8px;}
-  .spin{animation:spin 1s linear infinite;display:inline-block;}
-  @keyframes spin{to{transform:rotate(360deg)}}
-  .prog-bar-bg{background:var(--bg3);border-radius:4px;height:6px;overflow:hidden;margin-bottom:8px;}
-  .prog-bar{background:linear-gradient(90deg,#ef5350,#ff8f00);height:100%;width:0%;
-    border-radius:4px;transition:width .5s;box-shadow:0 0 8px rgba(239,83,80,.5);}
-  .prog-msg{font-size:.72rem;color:var(--muted);}
+/* 進行中 */
+.running-wrap{
+  background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;
+  padding:16px;margin-bottom:12px;display:none;
+}
+.running-wrap.show{display:block;}
+.prog-bg{background:var(--bg3);border-radius:4px;height:5px;overflow:hidden;margin:8px 0;}
+.prog-bar{height:100%;width:0%;border-radius:4px;
+  background:linear-gradient(90deg,#f0b429,#ef5350,#a855f7);
+  box-shadow:0 0 8px rgba(168,85,247,.4);transition:width .5s;}
+.spin{animation:spin 1s linear infinite;display:inline-block;}
+@keyframes spin{to{transform:rotate(360deg)}}
 
-  /* ── 結果 ── */
-  .result-header{
-    display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;
-  }
-  .result-title{font-size:.95rem;font-weight:700;color:var(--white);}
-  .result-meta{font-size:.68rem;color:var(--muted);}
-  .history-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;}
-  .hist-pill{
-    padding:4px 10px;border:1px solid var(--bdr);border-radius:6px;
-    background:var(--bg3);color:var(--muted);font-size:.68rem;cursor:pointer;
-    transition:all .15s;
-  }
-  .hist-pill.active{background:rgba(239,83,80,.15);color:var(--red);border-color:rgba(239,83,80,.4);}
+/* 個股卡片 */
+.stock-list{display:flex;flex-direction:column;gap:8px;}
+.stock-card{
+  background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;
+  padding:12px 14px;cursor:pointer;transition:border-color .15s;
+}
+.stock-card:hover{border-color:var(--bdr2);}
+.card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;}
+.card-left .rank{font-size:.62rem;color:var(--muted);margin-bottom:2px;}
+.card-left .name{font-size:.9rem;font-weight:700;color:var(--white);}
+.card-left .code{font-size:.68rem;color:var(--muted);}
+.card-right{text-align:right;}
+.total-score{
+  font-size:1.1rem;font-weight:700;font-family:'JetBrains Mono',monospace;
+  background:linear-gradient(135deg,#f0b429,#a855f7);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+}
+.score-label{font-size:.6rem;color:var(--muted);}
+.price-row{font-size:.75rem;margin-top:3px;}
 
-  /* ── 個股卡片 ── */
-  .stock-list{display:flex;flex-direction:column;gap:8px;}
-  .stock-card{
-    background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;
-    padding:14px 16px;transition:border-color .15s;
-    cursor:pointer;
-  }
-  .stock-card:hover{border-color:rgba(239,83,80,.3);}
-  .card-top{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;}
-  .card-info{}
-  .card-rank{
-    font-size:.62rem;color:var(--muted);font-family:'JetBrains Mono',monospace;
-    margin-bottom:2px;
-  }
-  .card-name{font-size:.92rem;font-weight:700;color:var(--white);}
-  .card-code{font-size:.72rem;color:var(--muted);margin-top:2px;}
-  .card-price{text-align:right;}
-  .price-val{font-size:1rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
-  .price-chg{font-size:.72rem;margin-top:2px;}
-  .up{color:var(--red);}
-  .dn{color:var(--grn);}
+/* 三維評分條 */
+.score-bars{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px;}
+.score-bar-item{background:var(--bg3);border-radius:6px;padding:6px 8px;}
+.sbi-label{font-size:.6rem;color:var(--muted);margin-bottom:3px;display:flex;justify-content:space-between;}
+.sbi-label span{font-family:'JetBrains Mono',monospace;font-weight:700;}
+.sbi-track{background:var(--bg);border-radius:3px;height:5px;overflow:hidden;}
+.sbi-fill{height:100%;border-radius:3px;transition:width .4s;}
 
-  /* 條件徽章 */
-  .cond-badges{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px;}
-  .cb{
-    padding:3px 8px;border-radius:5px;font-size:.62rem;font-weight:700;
-    display:flex;align-items:center;gap:3px;
-  }
-  .cb-pass{background:rgba(38,166,154,.12);color:var(--grn);border:1px solid rgba(38,166,154,.25);}
-  .cb-fail{background:rgba(100,100,100,.08);color:#4a5568;border:1px solid rgba(100,100,100,.15);}
-  .sys-tab{
-    padding:8px 20px;border:1px solid var(--bdr);border-radius:8px;
-    font-size:.78rem;font-weight:700;cursor:pointer;
-    background:var(--bg2);color:var(--muted);
-    font-family:'Noto Sans TC',sans-serif;transition:all .15s;
-  }
-  .sys-tab.active{
-    background:linear-gradient(135deg,#f0b429,#a855f7);
-    color:#fff;border-color:transparent;
-    box-shadow:0 2px 12px rgba(168,85,247,.3);
-  }
+/* 指標徽章 */
+.detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;}
+.detail-box{background:var(--bg3);border-radius:6px;padding:5px 8px;}
+.db-label{font-size:.58rem;color:var(--dim);margin-bottom:2px;}
+.db-val{font-size:.72rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
 
-  /* 指標格 */
-  .ind-row{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;}
-  .ind-box{background:var(--bg3);border:1px solid var(--bdr);border-radius:7px;padding:7px 9px;}
-  .ind-label{font-size:.58rem;color:var(--dim);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;}
-  .ind-val{font-size:.82rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
-  .ind-sub{font-size:.6rem;color:var(--muted);margin-top:1px;}
+/* 空狀態 */
+.empty{text-align:center;padding:48px;color:var(--muted);}
+.empty-icon{font-size:2.5rem;margin-bottom:10px;}
 
-  /* ── 空狀態 ── */
-  .empty{text-align:center;padding:48px 20px;color:var(--muted);}
-  .empty-icon{font-size:2.5rem;margin-bottom:12px;}
-  .empty-text{font-size:.82rem;line-height:1.6;}
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(60px);
+  background:#1e2538;border:1px solid var(--bdr);border-radius:10px;
+  padding:10px 20px;font-size:.75rem;color:var(--txt);transition:transform .25s;
+  z-index:999;white-space:nowrap;}
+.toast.show{transform:translateX(-50%) translateY(0);}
 
-  /* ── Toast ── */
-  .toast{
-    position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(60px);
-    background:#1e2538;border:1px solid var(--bdr);border-radius:10px;
-    padding:10px 20px;font-size:.78rem;color:var(--txt);
-    transition:transform .25s;z-index:999;white-space:nowrap;
-  }
-  .toast.show{transform:translateX(-50%) translateY(0);}
-
-  @media(max-width:600px){
-    .cond-grid{grid-template-columns:repeat(3,1fr);}
-    .ind-row{grid-template-columns:repeat(2,1fr);}
-    .header{padding:12px 14px;}
-    .container{padding:12px;}
-  }
+@media(max-width:600px){
+  .score-legend{grid-template-columns:1fr;}
+  .score-bars{grid-template-columns:1fr;}
+  .detail-grid{grid-template-columns:repeat(2,1fr);}
+}
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="header-left">
-    <div class="logo-icon" style="background:linear-gradient(135deg,#f0b429,#a855f7);">🎯</div>
-    <div>
-      <div class="title">智慧選股系統</div>
-      <div class="subtitle">v4.0 · 雙系統每日 22:00 自動執行</div>
-    </div>
-  </div>
-  <div class="header-right">
-    <a href="/analyze" class="nav-btn">🤖 AI分析</a>
-    <a href="/" class="nav-btn">📊 選股</a>
-    <button class="btn btn-primary" id="runBtn" onclick="triggerRun()">⚡ 執行動能突破</button>
-  </div>
+<div class="topbar">
+  <a href="/" class="logo">
+    <div class="logo-icon">🎯</div>
+    <span class="logo-text">三合一選股</span>
+  </a>
+  <nav class="nav-links">
+    <a href="/" class="nav-link">🏠 儀表板</a>
+    <a href="/analyze" class="nav-link">🤖 AI分析</a>
+    <a href="/reversal" class="nav-link active">🎯 三合一</a>
+    <a href="/watchlist" class="nav-link">👁️ 追蹤</a>
+  </nav>
+  <button class="btn-run" id="runBtn" onclick="triggerRun()">▶ 立即執行</button>
 </div>
 
 <div class="container">
 
-  <!-- 選股條件說明 -->
-  <!-- 系統切換 tab -->
-  <div style="display:flex;gap:8px;margin-bottom:14px;">
-    <button class="sys-tab active" id="tabA" onclick="switchSys('momentum')">
-      ⚡ 動能突破
-    </button>
-    <button class="sys-tab" id="tabB" onclick="switchSys('reversal')">
-      🔄 低基期爆量反轉
-    </button>
-  </div>
-
-  <!-- 系統A 條件說明 -->
-  <div class="conditions" id="condsA">
-    <div class="cond-title">系統A：動能突破（符合 4 個以上才入選）</div>
-    <div class="cond-grid">
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(239,83,80,.15);color:var(--red);">①</div>
-        <div class="cond-desc">股價在<br>MA60 ±15%</div>
+  <!-- 評分說明 -->
+  <div class="score-legend" style="margin-top:6px;">
+    <div class="score-card">
+      <div class="sc-header">
+        <div class="sc-title" style="color:#f0b429;">📊 基本面</div>
+        <div class="sc-max">50分</div>
       </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(240,180,41,.15);color:var(--gold);">②</div>
-        <div class="cond-desc">KD 50以下<br>黃金交叉</div>
-      </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(33,150,243,.15);color:var(--blue);">③</div>
-        <div class="cond-desc">近5日均量<br>&gt;前10日×1.5</div>
-      </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(168,85,247,.15);color:var(--pur);">④</div>
-        <div class="cond-desc">法人近5日<br>買超≥2天</div>
-      </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(38,166,154,.15);color:var(--grn);">⑤</div>
-        <div class="cond-desc">MACD柱<br>擴張/轉正</div>
+      <div class="sc-items">
+        <div class="sc-item">月營收年增率<span>10分</span></div>
+        <div class="sc-item">EPS 年增率<span>10分</span></div>
+        <div class="sc-item">毛利率水準<span>10分</span></div>
+        <div class="sc-item">現金殖利率<span>10分</span></div>
+        <div class="sc-item">本益比合理<span>10分</span></div>
       </div>
     </div>
-  </div>
-
-  <!-- 系統B 條件說明 -->
-  <div class="conditions" id="condsB" style="display:none;">
-    <div class="cond-title">系統B：低基期爆量反轉 — 東元型態（符合 4 個以上才入選）</div>
-    <div class="cond-grid">
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(239,83,80,.15);color:var(--red);">①</div>
-        <div class="cond-desc">股價在季線<br>以下 5~20%</div>
+    <div class="score-card">
+      <div class="sc-header">
+        <div class="sc-title" style="color:#3d8bff;">📈 技術面</div>
+        <div class="sc-max">30分</div>
       </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(240,180,41,.15);color:var(--gold);">②</div>
-        <div class="cond-desc">KD 40以下<br>黃金交叉</div>
+      <div class="sc-items">
+        <div class="sc-item">站上 MA20<span>10分</span></div>
+        <div class="sc-item">KD 黃金交叉<span>10分</span></div>
+        <div class="sc-item">MACD 翻正<span>10分</span></div>
       </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(33,150,243,.15);color:var(--blue);">③</div>
-        <div class="cond-desc">爆量<br>&gt;前10日×2倍</div>
+    </div>
+    <div class="score-card">
+      <div class="sc-header">
+        <div class="sc-title" style="color:#a855f7;">🏦 籌碼面</div>
+        <div class="sc-max">20分</div>
       </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(168,85,247,.15);color:var(--pur);">④</div>
-        <div class="cond-desc">法人近5日<br>買超≥2天</div>
+      <div class="sc-items">
+        <div class="sc-item">法人連續買超<span>10分</span></div>
+        <div class="sc-item">量能健康放大<span>10分</span></div>
       </div>
-      <div class="cond-item">
-        <div class="cond-num" style="background:rgba(38,166,154,.15);color:var(--grn);">⑤</div>
-        <div class="cond-desc">MACD柱<br>由負轉正</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-top:6px;">
+        ⚡ 三者各需達 60% 才入選
       </div>
     </div>
   </div>
 
   <!-- 狀態列 -->
   <div class="status-bar">
-    <div class="status-info">
+    <div style="display:flex;align-items:center;gap:8px;">
       <div class="status-dot" id="statusDot"></div>
       <div>
-        <div class="status-text" id="statusText">載入中...</div>
-        <div class="status-meta" id="statusMeta"></div>
+        <div style="font-size:.75rem;color:var(--txt);" id="statusText">載入中...</div>
+        <div style="font-size:.65rem;color:var(--muted);" id="statusMeta"></div>
       </div>
     </div>
-    <div style="display:flex;gap:6px;align-items:center;" id="historyPills"></div>
+    <div class="hist-pills" id="histPills"></div>
   </div>
 
   <!-- 進行中 -->
   <div class="running-wrap" id="runningWrap">
-    <div class="running-title"><span class="spin">⏳</span> 動能突破選股執行中...</div>
-    <div class="prog-bar-bg"><div class="prog-bar" id="progBar"></div></div>
-    <div class="prog-msg" id="progMsg">準備中...</div>
+    <div style="font-size:.82rem;font-weight:700;display:flex;align-items:center;gap:8px;">
+      <span class="spin">⏳</span> 三合一選股執行中...
+    </div>
+    <div class="prog-bg"><div class="prog-bar" id="progBar"></div></div>
+    <div style="font-size:.7rem;color:var(--muted);" id="progMsg">準備中...</div>
   </div>
 
   <!-- 結果 -->
   <div id="resultSection" style="display:none;">
-    <div class="result-header">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
       <div>
-        <div class="result-title" id="resultTitle">動能突破選股結果</div>
-        <div class="result-meta" id="resultMeta"></div>
+        <div style="font-size:.9rem;font-weight:700;color:var(--white);" id="resultTitle">三合一選股結果</div>
+        <div style="font-size:.65rem;color:var(--muted);" id="resultMeta"></div>
       </div>
     </div>
     <div class="stock-list" id="stockList"></div>
@@ -318,8 +228,8 @@
 
   <!-- 空狀態 -->
   <div class="empty" id="emptyState">
-    <div class="empty-icon">🔍</div>
-    <div class="empty-text">尚無分析資料<br>點「立即執行」或等待今晚 22:00 自動執行</div>
+    <div class="empty-icon">🎯</div>
+    <div style="font-size:.82rem;line-height:1.6;">尚無分析資料<br>點「立即執行」或等待今晚 22:00</div>
   </div>
 
 </div>
@@ -327,132 +237,160 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const API = location.hostname === 'localhost' ? 'http://localhost:5000' : '';
-let _pollTimer = null;
-let _isRunning = false;
-let _curSys    = 'momentum';
-
-function switchSys(sys) {
-  _curSys = sys;
-  document.getElementById('tabA').classList.toggle('active', sys==='momentum');
-  document.getElementById('tabB').classList.toggle('active', sys==='reversal');
-  document.getElementById('condsA').style.display = sys==='momentum' ? '' : 'none';
-  document.getElementById('condsB').style.display = sys==='reversal' ? '' : 'none';
-  document.getElementById('runBtn').textContent =
-    sys==='momentum' ? '⚡ 執行動能突破' : '🔄 執行低基期反轉';
-  loadHistory();
-  loadLatest();
-}
+const API = location.hostname==='localhost' ? 'http://localhost:5000' : '';
+let _pollTimer=null, _isRunning=false;
 
 async function init() {
   await loadHistory();
   await loadLatest();
 }
 
-// ── 歷史清單 ────────────────────────────────────────
 async function loadHistory() {
   try {
-    const api = _curSys==='momentum' ? 'momentum' : 'reversal';
-    const r = await fetch(`${API}/api/${api}/history`);
+    const r = await fetch(`${API}/api/trinity/history`);
     const d = await r.json();
     const hist = d.history || [];
-    const pills = document.getElementById('historyPills');
-    if (!hist.length) { pills.innerHTML=''; return; }
-    pills.innerHTML = hist.slice(0,7).map((h,i) =>
+    document.getElementById('histPills').innerHTML = hist.slice(0,7).map((h,i)=>
       `<div class="hist-pill ${i===0?'active':''}" onclick="loadDate('${h.date}',this)">
-        ${h.date.slice(5)} <span style="color:var(--red);">${h.total_passed}支</span>
+        ${h.date.slice(5)} <span style="color:var(--gold);">${h.total_passed}支</span>
       </div>`
     ).join('');
-  } catch(e) {}
+  } catch(e){}
 }
 
-// ── 載入最新結果 ─────────────────────────────────────
 async function loadLatest(date) {
   try {
-    const api = _curSys==='momentum' ? 'momentum' : 'reversal';
-    const url = date ? `${API}/api/${api}/latest?date=${date}` : `${API}/api/${api}/latest`;
+    const url = date ? `${API}/api/trinity/latest?date=${date}` : `${API}/api/trinity/latest`;
     const r = await fetch(url);
-    if (!r.ok) { showEmpty(); return; }
+    if (!r.ok){showEmpty();return;}
     const d = await r.json();
-    if (d.error) { showEmpty(); return; }
+    if (d.error){showEmpty();return;}
     renderResult(d);
-  } catch(e) { showEmpty(); }
+  } catch(e){showEmpty();}
 }
 
-async function loadDate(date, el) {
+async function loadDate(date,el) {
   document.querySelectorAll('.hist-pill').forEach(p=>p.classList.remove('active'));
   if(el) el.classList.add('active');
   await loadLatest(date);
 }
 
-// ── 渲染結果 ─────────────────────────────────────────
 function renderResult(d) {
   const stocks = d.stocks || [];
-  const isMomentum = _curSys === 'momentum';
-  const sysLabel = isMomentum ? '⚡ 動能突破' : '🔄 低基期爆量反轉';
-  document.getElementById('emptyState').style.display = 'none';
-  document.getElementById('resultSection').style.display = 'block';
-  document.getElementById('resultTitle').textContent = `${sysLabel} · ${d.date || ''}`;
-  document.getElementById('resultMeta').textContent =
-    `掃描 ${d.total_scanned} 支 · ${d.total_passed} 支通過條件 · ${d.time || ''}`;
-  document.getElementById('statusText').textContent = `上次執行：${d.time || '—'}`;
-  document.getElementById('statusMeta').textContent =
-    `${d.total_scanned} 支掃描 → ${d.total_passed} 支通過`;
+  document.getElementById('emptyState').style.display='none';
+  document.getElementById('resultSection').style.display='block';
+  document.getElementById('resultTitle').textContent=`🎯 三合一選股 · ${d.date||''}`;
+  document.getElementById('resultMeta').textContent=
+    `掃描 ${d.total_scanned} 支 · ${d.total_passed} 支三者達標 · ${d.time||''}`;
+  document.getElementById('statusText').textContent=`上次執行：${d.time||'—'}`;
+  document.getElementById('statusMeta').textContent=
+    `${d.total_scanned} 支掃描 → ${d.total_passed} 支達標`;
 
-  if (!stocks.length) {
-    document.getElementById('stockList').innerHTML =
+  if (!stocks.length){
+    document.getElementById('stockList').innerHTML=
       `<div class="empty"><div class="empty-icon">😶</div>
-       <div class="empty-text">今日無股票符合${sysLabel}條件</div></div>`;
+       <div>今日無股票三者同時達標</div></div>`;
     return;
   }
 
-  document.getElementById('stockList').innerHTML = stocks.map((s, i) => {
-    const chgUp = s.chg_pct >= 0;
-    const cond1ok = isMomentum ? Math.abs(s.ma60_pct)<=15 : (s.ma60_pct>=-20 && s.ma60_pct<=-5);
-    const cond2ok = isMomentum ? (s.k<50 && s.cond2) : (s.k<40 && s.cond2);
-    const cond3ok = isMomentum ? s.vol_ratio>=1.5 : s.vol_ratio>=2.0;
-    const cond5ok = s.cond5;
-    return `
-    <div class="stock-card" onclick="goAnalyze('${s.code}','${s.name}')">
+  document.getElementById('stockList').innerHTML = stocks.map((s,i)=>{
+    const up = s.chg_pct >= 0;
+    const fd = s.fund_detail || {};
+    const td = s.tech_detail || {};
+    const cd = s.chip_detail || {};
+    const fundPct = Math.round(s.fund_score/50*100);
+    const techPct = Math.round(s.tech_score/30*100);
+    const chipPct = Math.round(s.chip_score/20*100);
+
+    return `<div class="stock-card" onclick="location.href='/analyze'">
       <div class="card-top">
-        <div class="card-info">
-          <div class="card-rank">#${i+1} ${s.sector||''}</div>
-          <div class="card-name">${s.name}</div>
-          <div class="card-code">${s.code}</div>
+        <div class="card-left">
+          <div class="rank">#${i+1} ${s.sector||''}</div>
+          <div class="name">${s.name}</div>
+          <div class="code">${s.code}</div>
         </div>
-        <div class="card-price">
-          <div class="price-val ${chgUp?'up':'dn'}">${s.price} 元</div>
-          <div class="price-chg ${chgUp?'up':'dn'}">${chgUp?'+':''}${s.chg_pct}%</div>
+        <div class="card-right">
+          <div class="total-score">${s.total_score}分</div>
+          <div class="score-label">總評分 /100</div>
+          <div class="price-row">
+            <span style="font-weight:700;font-family:'JetBrains Mono',monospace;color:${up?'var(--red)':'var(--grn)'};">
+              ${s.price}元
+            </span>
+            <span style="font-size:.68rem;margin-left:4px;color:${up?'var(--red)':'var(--grn)'};">
+              ${up?'+':''}${s.chg_pct}%
+            </span>
+          </div>
         </div>
       </div>
-      <div class="cond-badges">
-        <span class="cb ${cond1ok?'cb-pass':'cb-fail'}">① MA60 ${s.ma60_pct>0?'+':''}${s.ma60_pct}%</span>
-        <span class="cb ${cond2ok?'cb-pass':'cb-fail'}">② KD=${s.k}/${s.d}</span>
-        <span class="cb ${cond3ok?'cb-pass':'cb-fail'}">③ 量比${s.vol_ratio}x</span>
-        <span class="cb ${s.inst_days>=2?'cb-pass':'cb-fail'}">④ 法人${s.inst_days}天</span>
-        <span class="cb ${cond5ok?'cb-pass':'cb-fail'}">⑤ MACD ${s.macd_hist>0?'+':''}${s.macd_hist}</span>
-        <span class="cb" style="background:rgba(168,85,247,.12);color:#a855f7;border:1px solid rgba(168,85,247,.25);">符合 ${s.conds_met}/5</span>
+
+      <!-- 三維評分條 -->
+      <div class="score-bars">
+        <div class="score-bar-item">
+          <div class="sbi-label">
+            <span style="color:#f0b429;">📊 基本面</span>
+            <span style="color:#f0b429;">${s.fund_score}/50</span>
+          </div>
+          <div class="sbi-track">
+            <div class="sbi-fill" style="width:${fundPct}%;background:linear-gradient(90deg,#f0b429,#ff9800);"></div>
+          </div>
+        </div>
+        <div class="score-bar-item">
+          <div class="sbi-label">
+            <span style="color:#3d8bff;">📈 技術面</span>
+            <span style="color:#3d8bff;">${s.tech_score}/30</span>
+          </div>
+          <div class="sbi-track">
+            <div class="sbi-fill" style="width:${techPct}%;background:linear-gradient(90deg,#3d8bff,#00bcd4);"></div>
+          </div>
+        </div>
+        <div class="score-bar-item">
+          <div class="sbi-label">
+            <span style="color:#a855f7;">🏦 籌碼面</span>
+            <span style="color:#a855f7;">${s.chip_score}/20</span>
+          </div>
+          <div class="sbi-track">
+            <div class="sbi-fill" style="width:${chipPct}%;background:linear-gradient(90deg,#a855f7,#ec4899);"></div>
+          </div>
+        </div>
       </div>
-      <div class="ind-row">
-        <div class="ind-box">
-          <div class="ind-label">MA60</div>
-          <div class="ind-val">${s.ma60}</div>
-          <div class="ind-sub ${ma60Cls}">${s.ma60_pct>0?'+':''}${s.ma60_pct}%</div>
+
+      <!-- 指標細節 -->
+      <div class="detail-grid">
+        <div class="detail-box">
+          <div class="db-label">月營收年增</div>
+          <div class="db-val" style="color:${(fd.rev_yoy||0)>=0?'var(--red)':'var(--grn)'};">
+            ${fd.rev_yoy!=null?(fd.rev_yoy>0?'+':'')+fd.rev_yoy+'%':'—'}
+          </div>
         </div>
-        <div class="ind-box">
-          <div class="ind-label">KD</div>
-          <div class="ind-val" style="color:var(--gold);">${s.k} / ${s.d}</div>
-          <div class="ind-sub" style="color:var(--grn);">低檔黃金交叉</div>
+        <div class="detail-box">
+          <div class="db-label">毛利率</div>
+          <div class="db-val" style="color:${(fd.gross_margin||0)>=25?'var(--red)':'var(--txt)'};">
+            ${fd.gross_margin!=null?fd.gross_margin+'%':'—'}
+          </div>
         </div>
-        <div class="ind-box">
-          <div class="ind-label">量比</div>
-          <div class="ind-val" style="color:var(--blue);">${s.vol_ratio}x</div>
-          <div class="ind-sub">${s.vol} 張</div>
+        <div class="detail-box">
+          <div class="db-label">本益比</div>
+          <div class="db-val" style="color:${(fd.per||0)<=20?'var(--red)':'var(--txt)'};">
+            ${fd.per!=null?fd.per+'x':'—'}
+          </div>
         </div>
-        <div class="ind-box">
-          <div class="ind-label">法人買超</div>
-          <div class="ind-val" style="color:var(--pur);">${s.inst_days} 天</div>
-          <div class="ind-sub">近5日</div>
+        <div class="detail-box">
+          <div class="db-label">KD</div>
+          <div class="db-val" style="color:var(--gold);">
+            ${td.k!=null?td.k+'/'+td.d:'—'}
+          </div>
+        </div>
+        <div class="detail-box">
+          <div class="db-label">MACD柱</div>
+          <div class="db-val" style="color:${(td.macd_hist||0)>=0?'var(--red)':'var(--grn)'};">
+            ${td.macd_hist!=null?(td.macd_hist>0?'+':'')+td.macd_hist:'—'}
+          </div>
+        </div>
+        <div class="detail-box">
+          <div class="db-label">法人買超</div>
+          <div class="db-val" style="color:var(--pur);">
+            ${s.inst_days}天
+          </div>
         </div>
       </div>
     </div>`;
@@ -460,100 +398,78 @@ function renderResult(d) {
 }
 
 function showEmpty() {
-  document.getElementById('emptyState').style.display = 'block';
-  document.getElementById('resultSection').style.display = 'none';
-  document.getElementById('statusText').textContent = '尚無資料';
-  document.getElementById('statusMeta').textContent = '等待首次執行';
-  document.getElementById('statusDot').style.background = 'var(--dim)';
-  document.getElementById('statusDot').style.boxShadow = 'none';
-  document.getElementById('statusDot').style.animation = 'none';
+  document.getElementById('emptyState').style.display='block';
+  document.getElementById('resultSection').style.display='none';
+  document.getElementById('statusText').textContent='尚無資料';
+  document.getElementById('statusMeta').textContent='等待首次執行';
 }
 
-// ── 立即執行 ─────────────────────────────────────────
 async function triggerRun() {
   if (_isRunning) return;
-  _isRunning = true;
-  const api  = _curSys === 'momentum' ? 'momentum' : 'reversal';
-  const label = _curSys === 'momentum' ? '動能突破' : '低基期爆量反轉';
-  const btn = document.getElementById('runBtn');
-  btn.disabled = true; btn.textContent = '執行中...';
+  _isRunning=true;
+  const btn=document.getElementById('runBtn');
+  btn.disabled=true; btn.textContent='執行中...';
   document.getElementById('runningWrap').classList.add('show');
-  document.getElementById('progBar').style.width = '5%';
-  document.getElementById('progMsg').textContent = '啟動中...';
-  showToast(`${label}選股已啟動，約 60~90 分鐘完成`);
+  document.getElementById('progBar').style.width='3%';
+  showToast('三合一選股已啟動，約 90~120 分鐘完成');
   try {
-    await fetch(`${API}/api/${api}/run`, {method:'POST'});
+    await fetch(`${API}/api/trinity/run`,{method:'POST'});
     startFakePoll();
-  } catch(e) {
-    showToast('❌ 啟動失敗，請重試');
+  } catch(e){
+    showToast('❌ 啟動失敗');
     resetRun();
   }
 }
 
 function startFakePoll() {
-  let pct = 5;
-  const msgs = ['掃描股票清單...','計算 MA60 位置...','判斷 KD 黃金交叉...','檢查成交量放大...','查詢法人買超天數...','計算 MACD 轉折...','篩選通過股票...'];
-  let msgIdx = 0;
-
-  _pollTimer = setInterval(async () => {
-    pct = Math.min(pct + (Math.random() * 2), 88);
-    document.getElementById('progBar').style.width = pct + '%';
-    document.getElementById('progMsg').textContent = msgs[msgIdx % msgs.length];
-    msgIdx++;
-
-    // 每 30 秒查一次有沒有新資料
-    if (msgIdx % 10 === 0) {
+  let pct=3;
+  const msgs=['掃描股票清單...','抓取歷史資料...','計算技術指標...','查詢法人籌碼...','分析基本面財報...','三者評分計算...','排序結果...'];
+  let mi=0;
+  _pollTimer=setInterval(async()=>{
+    pct=Math.min(pct+(Math.random()*1.5),88);
+    document.getElementById('progBar').style.width=pct+'%';
+    document.getElementById('progMsg').textContent=msgs[mi%msgs.length];
+    mi++;
+    if (mi%15===0) {
       try {
-        const today = new Date().toLocaleDateString('zh-TW',{year:'numeric',month:'2-digit',day:'2-digit'})
-          .replace(/\//g,'-');
-        const r = await fetch(`${API}/api/reversal/latest`);
-        const d = await r.json();
+        const r=await fetch(`${API}/api/trinity/latest`);
+        const d=await r.json();
         if (!d.error) {
-          const resultDate = d.date || '';
-          const todayFmt   = new Date().toISOString().slice(0,10);
-          if (resultDate === todayFmt) {
-            // 有今天的結果了
+          const today=new Date().toISOString().slice(0,10);
+          if ((d.date||'')===today) {
             clearInterval(_pollTimer);
-            document.getElementById('progBar').style.width = '100%';
-            document.getElementById('progMsg').textContent = '✅ 完成！';
-            setTimeout(() => {
+            document.getElementById('progBar').style.width='100%';
+            document.getElementById('progMsg').textContent='✅ 完成！';
+            setTimeout(()=>{
               document.getElementById('runningWrap').classList.remove('show');
               resetRun();
               renderResult(d);
               loadHistory();
-              showToast(`✅ 完成！${d.total_passed} 支通過五條件`);
-            }, 800);
+              showToast(`✅ 完成！${d.total_passed} 支達標`);
+            },800);
           }
         }
-      } catch(e) {}
+      } catch(e){}
     }
-  }, 3000);
-
-  // 最多等 25 分鐘自動重查
-  setTimeout(async () => {
+  },3000);
+  setTimeout(()=>{
     clearInterval(_pollTimer);
-    await loadLatest();
-    await loadHistory();
+    loadLatest(); loadHistory();
     resetRun();
     document.getElementById('runningWrap').classList.remove('show');
-  }, 25 * 60 * 1000);
+  },130*60*1000);
 }
 
 function resetRun() {
-  _isRunning = false;
-  const btn = document.getElementById('runBtn');
-  btn.disabled = false; btn.textContent = '▶ 立即執行';
-}
-
-function goAnalyze(code, name) {
-  window.location.href = `/analyze?code=${code}`;
+  _isRunning=false;
+  const btn=document.getElementById('runBtn');
+  btn.disabled=false; btn.textContent='▶ 立即執行';
 }
 
 function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 3000);
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),3000);
 }
 
 init();

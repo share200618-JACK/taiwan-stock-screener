@@ -245,6 +245,30 @@ body{
 .loading-row:nth-child(2){animation-delay:.15s;}
 .loading-row:nth-child(3){animation-delay:.3s;}
 
+/* 熱力圖 */
+.heat-cell{
+  border-radius:8px;padding:8px 6px;cursor:pointer;
+  transition:all .15s;text-align:center;
+  border:1px solid transparent;
+}
+.heat-cell:hover{filter:brightness(1.2);transform:scale(1.03);}
+.heat-cell .hc-name{font-size:.62rem;color:rgba(255,255,255,.85);margin-bottom:3px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.heat-cell .hc-chg{font-size:.75rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.heat-cell .hc-ratio{font-size:.58rem;color:rgba(255,255,255,.6);margin-top:1px;}
+
+/* 排行榜行 */
+.rank-row{
+  display:grid;grid-template-columns:22px 1fr 50px;
+  gap:6px;align-items:center;padding:6px 14px;
+  border-bottom:1px solid var(--bdr);
+}
+.rank-row:last-child{border-bottom:none;}
+.rank-num-sm{font-size:.62rem;color:var(--dim);font-family:'JetBrains Mono',monospace;}
+.rank-sector{font-size:.75rem;font-weight:600;color:var(--txt);}
+.rank-sub{font-size:.6rem;color:var(--muted);margin-top:1px;}
+.rank-chg{font-size:.72rem;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:right;}
+
 @media(max-width:768px){
   .indices-grid{grid-template-columns:repeat(3,1fr);}
   .main-grid{grid-template-columns:1fr;}
@@ -270,7 +294,7 @@ body{
   <nav class="nav-links">
     <a href="/" class="nav-link active">🏠 儀表板</a>
     <a href="/analyze" class="nav-link">🤖 AI分析</a>
-    <a href="/reversal" class="nav-link">🔄 動能突破</a>
+    <a href="/reversal" class="nav-link">🔄 三合一選股</a>
     <a href="/watchlist" class="nav-link">👁️ 追蹤清單</a>
   </nav>
   <div class="date-chip" id="datechip">—</div>
@@ -337,6 +361,40 @@ body{
 
   </div>
 
+  <!-- 產業資金熱度 -->
+  <div class="section-hd" style="margin-top:4px;">
+    <div class="section-title">產業資金熱度</div>
+    <button class="refresh-btn" onclick="loadSectorHeatmap()">↻ 刷新</button>
+  </div>
+
+  <!-- 熱力圖 -->
+  <div id="heatmapGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));
+    gap:6px;margin-bottom:10px;">
+    <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--dim);font-size:.72rem;">
+      載入中...
+    </div>
+  </div>
+
+  <!-- 排行榜 -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;">
+    <!-- 強勢類股 -->
+    <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;">
+      <div style="padding:10px 14px;border-bottom:1px solid var(--bdr);
+        display:flex;align-items:center;gap:6px;">
+        <span style="font-size:.72rem;font-weight:700;color:var(--red);">🔥 強勢類股</span>
+      </div>
+      <div id="hotSectors" style="padding:4px 0;"></div>
+    </div>
+    <!-- 弱勢類股 -->
+    <div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;overflow:hidden;">
+      <div style="padding:10px 14px;border-bottom:1px solid var(--bdr);
+        display:flex;align-items:center;gap:6px;">
+        <span style="font-size:.72rem;font-weight:700;color:var(--grn);">❄️ 弱勢類股</span>
+      </div>
+      <div id="coldSectors" style="padding:4px 0;"></div>
+    </div>
+  </div>
+
   <!-- 快捷工具 -->
   <div class="section-hd">
     <div class="section-title">快捷工具</div>
@@ -352,8 +410,8 @@ body{
     <a href="/reversal" class="tool-card">
       <div class="tool-icon" style="background:linear-gradient(135deg,rgba(240,62,77,.2),rgba(183,28,28,.1));border:1px solid rgba(240,62,77,.2);">🔄</div>
       <div class="tool-text">
-        <div class="ttitle">動能突破選股</div>
-        <div class="tdesc">v4.0 · 五條件硬過濾</div>
+        <div class="ttitle">三合一選股選股</div>
+        <div class="tdesc">v4.0 · 基本面＋技術面＋籌碼面</div>
       </div>
     </a>
     <a href="/watchlist" class="tool-card">
@@ -521,15 +579,93 @@ async function loadNews() {
   }
 }
 
+// ── 產業資金熱度圖 ───────────────────────────────────
+async function loadSectorHeatmap() {
+  document.getElementById('heatmapGrid').innerHTML =
+    '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--dim);font-size:.72rem;">載入中...</div>';
+  try {
+    const r = await fetch(`${API}/api/dashboard/sector_heatmap`);
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+
+    const sectors = d.sectors || [];
+
+    // ── 熱力圖 ──────────────────────────────────────
+    const heatColor = (chg) => {
+      if (chg >= 3)   return {bg:'rgba(240,62,77,.85)',   border:'rgba(240,62,77,.4)'};
+      if (chg >= 1.5) return {bg:'rgba(240,62,77,.55)',   border:'rgba(240,62,77,.3)'};
+      if (chg >= 0.5) return {bg:'rgba(240,62,77,.3)',    border:'rgba(240,62,77,.2)'};
+      if (chg >= 0)   return {bg:'rgba(240,62,77,.12)',   border:'rgba(240,62,77,.1)'};
+      if (chg >= -0.5)return {bg:'rgba(27,196,125,.12)',  border:'rgba(27,196,125,.1)'};
+      if (chg >= -1.5)return {bg:'rgba(27,196,125,.3)',   border:'rgba(27,196,125,.2)'};
+      if (chg >= -3)  return {bg:'rgba(27,196,125,.55)',  border:'rgba(27,196,125,.3)'};
+      return              {bg:'rgba(27,196,125,.85)',   border:'rgba(27,196,125,.4)'};
+    };
+
+    document.getElementById('heatmapGrid').innerHTML = sectors.map(s => {
+      const col = heatColor(s.avg_chg);
+      const up  = s.avg_chg >= 0;
+      // 格子大小依成交量（億元）決定，最小 80px 最大 140px
+      const size = Math.min(140, Math.max(80, 80 + s.total_vol * 2));
+      return `<div class="heat-cell" title="${s.sector}&#13;平均 ${s.avg_chg>0?'+':''}${s.avg_chg}%&#13;上漲 ${s.up_ratio}% (${s.up_count}/${s.total}支)&#13;成交 ${s.total_vol}億"
+        style="background:${col.bg};border-color:${col.border};min-height:${size/3}px;"
+        onclick="showSectorDetail('${s.sector}')">
+        <div class="hc-name">${s.sector}</div>
+        <div class="hc-chg" style="color:${up?'#ff8080':'#80ffcc'};">
+          ${up?'+':''}${s.avg_chg}%
+        </div>
+        <div class="hc-ratio">${s.up_ratio}% 上漲</div>
+      </div>`;
+    }).join('');
+
+    // ── 強勢排行（前10）──────────────────────────────
+    document.getElementById('hotSectors').innerHTML =
+      sectors.slice(0,10).map((s,i) => `
+      <div class="rank-row">
+        <div class="rank-num-sm">${i+1}</div>
+        <div>
+          <div class="rank-sector">${s.sector}</div>
+          <div class="rank-sub">${s.up_count}支漲 / ${s.total}支 · ${s.total_vol}億</div>
+        </div>
+        <div class="rank-chg" style="color:var(--red);">+${s.avg_chg}%</div>
+      </div>`).join('');
+
+    // ── 弱勢排行（後10）──────────────────────────────
+    document.getElementById('coldSectors').innerHTML =
+      [...sectors].reverse().slice(0,10).map((s,i) => `
+      <div class="rank-row">
+        <div class="rank-num-sm">${i+1}</div>
+        <div>
+          <div class="rank-sector">${s.sector}</div>
+          <div class="rank-sub">${s.dn_count}支跌 / ${s.total}支 · ${s.total_vol}億</div>
+        </div>
+        <div class="rank-chg" style="color:var(--grn);">${s.avg_chg}%</div>
+      </div>`).join('');
+
+  } catch(e) {
+    document.getElementById('heatmapGrid').innerHTML =
+      `<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--dim);font-size:.72rem;">
+        ${e.message.includes('無法取得') ? '非交易時間，資料待更新' : '載入失敗，請重試'}
+      </div>`;
+  }
+}
+
+function showSectorDetail(sector) {
+  // 跳到 AI 分析頁面並帶入產業篩選
+  location.href = `/analyze?sector=${encodeURIComponent(sector)}`;
+}
+
 // ── 初始化 ────────────────────────────────────────────
 loadIndices();
 loadAISummary();
 loadNews();
+loadSectorHeatmap();
 
 // 每 5 分鐘刷新指數
 setInterval(loadIndices, 5*60*1000);
-// 每 10 分鐘刷新新聞
+// 每 10 分鐘刷新新聞和熱度圖
 setInterval(loadNews, 10*60*1000);
+setInterval(loadSectorHeatmap, 10*60*1000);
 </script>
 </body>
 </html>
