@@ -5364,92 +5364,117 @@ def reversal_page():
 
 @app.route("/api/dashboard/indices")
 def dashboard_indices():
-    """大盤指數：台加權、上櫃、台灣50、電子、半導體、金融"""
-    import time as _time
+    """大盤指數：全用 TWSE/TPEX 官方 API，不依賴 Yahoo Finance"""
     result = {}
+    today  = datetime.today().strftime("%Y%m%d")
 
-    # Yahoo Finance 台股指數列表
-    tw_indices = [
-        ("twii",  "^TWII",   "台灣加權"),
-        ("tpex",  "^TPEX",   "上櫃指數"),
-        ("tw50",  "0050.TW", "台灣50"),
-        ("elec",  "^TWII",   "電子類股"),   # 先用加權，下面用 TWSE API 覆蓋
-        ("semi",  "^TWII",   "半導體"),
-        ("fin",   "^TWII",   "金融類股"),
-    ]
-
-    # 先抓 Yahoo Finance 前三個
-    for key, symbol, name in tw_indices[:3]:
-        try:
-            r = SESSION.get(
-                f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=2d",
-                headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-            d = r.json()["chart"]["result"][0]
-            closes = [c for c in d["indicators"]["quote"][0]["close"] if c]
-            if len(closes) < 2: raise ValueError("資料不足")
-            cur = closes[-1]; prev = closes[-2]
-            result[key] = {"name":name,"value":round(cur,2),
-                           "chg":round(cur-prev,2),"pct":round((cur-prev)/prev*100,2)}
-        except:
-            result[key] = {"name":name,"value":0,"chg":0,"pct":0}
-        _time.sleep(0.2)
-
-    # 抓 TWSE 類股指數（電子、半導體、金融）
+    # 台灣加權（用大盤統計）
     try:
-        today = datetime.today().strftime("%Y%m%d")
         r = SESSION.get(
+            f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={today}&type=MS",
+            timeout=10)
+        d = r.json()
+        for row in d.get("data2",[]):
+            if "發行量加權股價指數" in str(row[0]):
+                cur = safe_float(str(row[1]).replace(",",""))
+                chg = safe_float(str(row[2]).replace(",","").replace("+",""))
+                prv = cur - chg
+                pct = round(chg/prv*100,2) if prv>0 else 0
+                result["twii"] = {"name":"台灣加權","value":round(cur,2),"chg":round(chg,2),"pct":pct}
+                break
+    except: pass
+    if "twii" not in result:
+        result["twii"] = {"name":"台灣加權","value":0,"chg":0,"pct":0}
+
+    # 台灣50（0050）
+    try:
+        r2 = SESSION.get(
+            f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={today}&stockNo=0050",
+            timeout=10)
+        d2 = r2.json()
+        if d2.get("stat")=="OK" and d2.get("data"):
+            rows = d2["data"]
+            cur2 = safe_float(rows[-1][6]); prv2 = safe_float(rows[-2][6]) if len(rows)>=2 else cur2
+            chg2 = round(cur2-prv2,2); pct2 = round(chg2/prv2*100,2) if prv2>0 else 0
+            result["tw50"] = {"name":"台灣50","value":round(cur2,2),"chg":chg2,"pct":pct2}
+        else:
+            result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
+    except:
+        result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
+
+    # 上櫃指數
+    try:
+        roc = f"{datetime.today().year-1911}/{datetime.today().month:02d}/{datetime.today().day:02d}"
+        r3  = SESSION.get(
+            f"https://www.tpex.org.tw/web/stock/aftertrading/index_historical/s/s_result.php?d={roc}&o=json",
+            timeout=10)
+        d3  = r3.json()
+        rows3 = d3.get("aaData",[])
+        if rows3:
+            cur3 = safe_float(str(rows3[-1][4]).replace(",",""))
+            prv3 = safe_float(str(rows3[-2][4]).replace(",","")) if len(rows3)>=2 else cur3
+            chg3 = round(cur3-prv3,2); pct3 = round(chg3/prv3*100,2) if prv3>0 else 0
+            result["tpex"] = {"name":"上櫃指數","value":round(cur3,2),"chg":chg3,"pct":pct3}
+        else:
+            result["tpex"] = {"name":"上櫃指數","value":0,"chg":0,"pct":0}
+    except:
+        result["tpex"] = {"name":"上櫃指數","value":0,"chg":0,"pct":0}
+
+    # 電子、半導體、金融類股指數
+    try:
+        r4   = SESSION.get(
             f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={today}&type=IND",
             timeout=10)
-        data = r.json()
-        # 找電子、半導體、金融
-        target_map = {
-            "電子類": "elec",
-            "半導體類": "semi",
-            "金融保險類": "fin",
-        }
-        name_map = {
-            "電子類": "電子類股",
-            "半導體類": "半導體",
-            "金融保險類": "金融類股",
-        }
-        for row in data.get("data", []):
-            ind_name = row[0] if row else ""
-            for k, v in target_map.items():
-                if k in ind_name:
+        d4   = r4.json()
+        tmap = {"電子類":"elec","半導體類":"semi","金融保險類":"fin"}
+        nmap = {"電子類":"電子類股","半導體類":"半導體","金融保險類":"金融類股"}
+        for row in d4.get("data",[]):
+            nm = row[0] if row else ""
+            for k,v in tmap.items():
+                if k in nm:
                     try:
-                        cur  = safe_float(str(row[1]).replace(",",""))
-                        chg  = safe_float(str(row[2]).replace(",","").replace("+",""))
-                        prev = cur - chg
-                        pct  = round(chg/prev*100,2) if prev > 0 else 0
-                        result[v] = {"name":name_map[k],"value":round(cur,2),
-                                     "chg":round(chg,2),"pct":pct}
+                        c4 = safe_float(str(row[1]).replace(",",""))
+                        g4 = safe_float(str(row[2]).replace(",","").replace("+",""))
+                        p4 = c4-g4; pct4 = round(g4/p4*100,2) if p4>0 else 0
+                        result[v] = {"name":nmap[k],"value":round(c4,2),"chg":round(g4,2),"pct":pct4}
                     except:
-                        result[v] = {"name":name_map[k],"value":0,"chg":0,"pct":0}
-    except:
-        for k, n in [("elec","電子類股"),("semi","半導體"),("fin","金融類股")]:
-            if k not in result:
-                result[k] = {"name":n,"value":0,"chg":0,"pct":0}
+                        result[v] = {"name":nmap[k],"value":0,"chg":0,"pct":0}
+    except: pass
+
+    for k,n in [("elec","電子類股"),("semi","半導體"),("fin","金融類股")]:
+        if k not in result:
+            result[k] = {"name":n,"value":0,"chg":0,"pct":0}
 
     return jsonify(result)
 
 @app.route("/api/dashboard/news")
 def dashboard_news():
-    """財經新聞（Yahoo 財經 RSS）"""
-    try:
-        r = SESSION.get(
-            "https://tw.news.yahoo.com/rss/finance",
-            headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
-        import xml.etree.ElementTree as ET
-        root = ET.fromstring(r.content)
-        items = []
-        for item in root.findall(".//item")[:12]:
-            title = item.findtext("title","")
-            link  = item.findtext("link","")
-            pub   = item.findtext("pubDate","")
-            items.append({"title":title,"link":link,"pub":pub})
-        return jsonify({"news": items})
-    except Exception as e:
-        return jsonify({"news":[], "error":str(e)})
+    """財經新聞（多來源備援：鉅亨網 / 經濟日報 / 工商時報）"""
+    import xml.etree.ElementTree as ET
+
+    rss_sources = [
+        "https://www.cnyes.com/rss/news/cat/tw_stock",
+        "https://money.udn.com/rssfeed/news/1001/5591?ch=money",
+        "https://www.ctee.com.tw/feed",
+    ]
+
+    for url in rss_sources:
+        try:
+            r = SESSION.get(url, headers={"User-Agent":"Mozilla/5.0"}, timeout=8)
+            root = ET.fromstring(r.content)
+            items = []
+            for item in root.findall(".//item")[:12]:
+                title = item.findtext("title","")
+                link  = item.findtext("link","")
+                pub   = item.findtext("pubDate","")
+                if title:
+                    items.append({"title":title,"link":link,"pub":pub})
+            if items:
+                return jsonify({"news":items,"source":url})
+        except:
+            continue
+
+    return jsonify({"news":[], "error":"所有新聞來源暫時無法連線"})
 
 @app.route("/api/dashboard/summary")
 def dashboard_summary():
@@ -5479,10 +5504,21 @@ def dashboard_summary():
 
 @app.route("/api/dashboard/sector_heatmap")
 def dashboard_sector_heatmap():
-    """產業資金熱度：依類股分組計算平均漲跌、上漲比例、成交量"""
+    """產業資金熱度：支援大類(level=broad)和細分產業(level=fine，預設)"""
+    level = request.args.get("level","fine")  # fine=細分產業, broad=TWSE大類
     try:
         _load_sector_map()
         all_stocks = []
+
+        # TWSE 大類對照（用於 broad 模式）
+        BROAD_MAP = {
+            "半導體": "半導體業","記憶體": "半導體業","IC設計": "半導體業","晶圓代工": "半導體業",
+            "印刷電路板": "電子零組件業","被動元件": "電子零組件業","連接器": "電子零組件業",
+            "光纖": "光電業","LED": "光電業","面板": "光電業","太陽能": "光電業",
+            "網路": "通信網路業","電信": "通信網路業",
+            "筆電": "電腦及週邊設備業","伺服器": "電腦及週邊設備業","主機板": "電腦及週邊設備業",
+            "載板": "電子零組件業","ABF載板": "電子零組件業",
+        }
 
         # 上市
         try:
@@ -5495,9 +5531,14 @@ def dashboard_sector_heatmap():
                 prev  = price - chg
                 pct   = round(chg/prev*100,2) if prev>0 else 0
                 if not (str(code).isdigit() and len(code)==4 and price>0): continue
+                fine_sec  = _sector_map.get(code,"其他")
+                broad_sec = fine_sec  # 預設和細分一樣，找到對應才換
+                for k,v in BROAD_MAP.items():
+                    if k in fine_sec:
+                        broad_sec = v; break
                 all_stocks.append({"code":code,"name":row.get("Name",""),
                                    "price":price,"pct":pct,"vol":vol,
-                                   "sector":_sector_map.get(code,"其他")})
+                                   "sector_fine":fine_sec,"sector_broad":broad_sec})
         except Exception as e:
             print(f"[熱度圖] 上市失敗: {e}")
 
@@ -5512,21 +5553,29 @@ def dashboard_sector_heatmap():
                 prev  = price - chg
                 pct   = round(chg/prev*100,2) if prev>0 else 0
                 if not (str(code).isdigit() and len(code)==4 and price>0): continue
+                fine_sec  = _sector_map.get(code,"其他")
+                broad_sec = fine_sec
+                for k,v in BROAD_MAP.items():
+                    if k in fine_sec:
+                        broad_sec = v; break
                 all_stocks.append({"code":code,
                                    "name":row.get("CompanyName","") or row.get("name",""),
                                    "price":price,"pct":pct,"vol":vol,
-                                   "sector":_sector_map.get(code,"其他")})
+                                   "sector_fine":fine_sec,"sector_broad":broad_sec})
         except Exception as e:
             print(f"[熱度圖] 上櫃失敗: {e}")
 
         if not all_stocks:
             return jsonify({"error":"無法取得市場資料"}), 503
 
+        # 選擇用哪個層級分組
+        sec_key = "sector_fine" if level=="fine" else "sector_broad"
+
         # 依類股分組計算
         sector_data = {}
         for s in all_stocks:
-            sec = s["sector"]
-            if sec == "其他": continue
+            sec = s[sec_key]
+            if not sec or sec == "其他": continue
             if sec not in sector_data:
                 sector_data[sec] = {"stocks":[],"pcts":[],"vols":[]}
             sector_data[sec]["stocks"].append(s)
@@ -5542,16 +5591,19 @@ def dashboard_sector_heatmap():
             dn_cnt   = sum(1 for p in pcts if p<0)
             up_ratio = round(up_cnt/len(pcts)*100,1)
             total_vol= sum(data["vols"])
-            top3     = sorted(data["stocks"],key=lambda x:x["pct"],reverse=True)[:3]
+            # 前3名漲幅 + 前3名成交量
+            top3_chg = sorted(data["stocks"],key=lambda x:x["pct"],reverse=True)[:3]
+            top3_vol = sorted(data["stocks"],key=lambda x:x["vol"],reverse=True)[:3]
             result.append({
-                "sector":   sec,
-                "avg_chg":  avg_chg,
-                "up_ratio": up_ratio,
-                "up_count": up_cnt,
-                "dn_count": dn_cnt,
-                "total":    len(pcts),
-                "total_vol":round(total_vol/1e8,1),
-                "top3":     [{"code":s["code"],"name":s["name"],"pct":s["pct"]} for s in top3],
+                "sector":    sec,
+                "avg_chg":   avg_chg,
+                "up_ratio":  up_ratio,
+                "up_count":  up_cnt,
+                "dn_count":  dn_cnt,
+                "total":     len(pcts),
+                "total_vol": round(total_vol/1e8,2),
+                "top3":      [{"code":s["code"],"name":s["name"],"pct":s["pct"]} for s in top3_chg],
+                "top3_vol":  [{"code":s["code"],"name":s["name"],"vol":round(s["vol"]/1000,1)} for s in top3_vol],
             })
 
         result.sort(key=lambda x: x["avg_chg"]*0.6+(x["up_ratio"]-50)*0.04, reverse=True)
@@ -5561,6 +5613,7 @@ def dashboard_sector_heatmap():
         return jsonify({
             "sectors":      result,
             "total_stocks": len(all_stocks),
+            "level":        level,
             "updated":      datetime.now().strftime("%Y/%m/%d %H:%M"),
         })
     except Exception as e:

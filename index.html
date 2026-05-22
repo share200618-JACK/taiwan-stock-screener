@@ -364,7 +364,21 @@ body{
   <!-- 產業資金熱度 -->
   <div class="section-hd" style="margin-top:4px;">
     <div class="section-title">產業資金熱度</div>
-    <button class="refresh-btn" onclick="loadSectorHeatmap()">↻ 刷新</button>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <div style="display:flex;background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;overflow:hidden;">
+        <button id="levelFine" onclick="setHeatLevel('fine')"
+          style="padding:4px 10px;font-size:.65rem;font-weight:700;border:none;cursor:pointer;
+          background:var(--blue);color:#fff;font-family:'Noto Sans TC',sans-serif;">
+          細分產業
+        </button>
+        <button id="levelBroad" onclick="setHeatLevel('broad')"
+          style="padding:4px 10px;font-size:.65rem;font-weight:700;border:none;cursor:pointer;
+          background:transparent;color:var(--muted);font-family:'Noto Sans TC',sans-serif;">
+          大類
+        </button>
+      </div>
+      <button class="refresh-btn" onclick="loadSectorHeatmap()">↻</button>
+    </div>
   </div>
 
   <!-- 熱力圖 -->
@@ -579,80 +593,96 @@ async function loadNews() {
   }
 }
 
+let _heatLevel = 'fine';
+
+function setHeatLevel(level) {
+  _heatLevel = level;
+  document.getElementById('levelFine').style.background  = level==='fine'  ? 'var(--blue)' : 'transparent';
+  document.getElementById('levelFine').style.color       = level==='fine'  ? '#fff' : 'var(--muted)';
+  document.getElementById('levelBroad').style.background = level==='broad' ? 'var(--blue)' : 'transparent';
+  document.getElementById('levelBroad').style.color      = level==='broad' ? '#fff' : 'var(--muted)';
+  loadSectorHeatmap();
+}
+
 // ── 產業資金熱度圖 ───────────────────────────────────
 async function loadSectorHeatmap() {
   document.getElementById('heatmapGrid').innerHTML =
     '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--dim);font-size:.72rem;">載入中...</div>';
   try {
-    const r = await fetch(`${API}/api/dashboard/sector_heatmap`);
+    const r = await fetch(`${API}/api/dashboard/sector_heatmap?level=${_heatLevel}`);
     const d = await r.json();
     if (d.error) throw new Error(d.error);
 
     const sectors = d.sectors || [];
+    if (!sectors.length) {
+      document.getElementById('heatmapGrid').innerHTML =
+        '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--dim);font-size:.72rem;">非交易時間，收盤後更新</div>';
+      document.getElementById('hotSectors').innerHTML = '';
+      document.getElementById('coldSectors').innerHTML = '';
+      return;
+    }
 
-    // ── 熱力圖 ──────────────────────────────────────
     const heatColor = (chg) => {
-      if (chg >= 3)   return {bg:'rgba(240,62,77,.85)',   border:'rgba(240,62,77,.4)'};
-      if (chg >= 1.5) return {bg:'rgba(240,62,77,.55)',   border:'rgba(240,62,77,.3)'};
-      if (chg >= 0.5) return {bg:'rgba(240,62,77,.3)',    border:'rgba(240,62,77,.2)'};
-      if (chg >= 0)   return {bg:'rgba(240,62,77,.12)',   border:'rgba(240,62,77,.1)'};
-      if (chg >= -0.5)return {bg:'rgba(27,196,125,.12)',  border:'rgba(27,196,125,.1)'};
-      if (chg >= -1.5)return {bg:'rgba(27,196,125,.3)',   border:'rgba(27,196,125,.2)'};
-      if (chg >= -3)  return {bg:'rgba(27,196,125,.55)',  border:'rgba(27,196,125,.3)'};
-      return              {bg:'rgba(27,196,125,.85)',   border:'rgba(27,196,125,.4)'};
+      if (chg >= 3)    return {bg:'rgba(240,62,77,.85)',  border:'rgba(240,62,77,.5)'};
+      if (chg >= 1.5)  return {bg:'rgba(240,62,77,.55)',  border:'rgba(240,62,77,.3)'};
+      if (chg >= 0.5)  return {bg:'rgba(240,62,77,.28)',  border:'rgba(240,62,77,.15)'};
+      if (chg >= 0)    return {bg:'rgba(240,62,77,.1)',   border:'rgba(240,62,77,.08)'};
+      if (chg >= -0.5) return {bg:'rgba(27,196,125,.1)',  border:'rgba(27,196,125,.08)'};
+      if (chg >= -1.5) return {bg:'rgba(27,196,125,.28)', border:'rgba(27,196,125,.15)'};
+      if (chg >= -3)   return {bg:'rgba(27,196,125,.55)', border:'rgba(27,196,125,.3)'};
+      return                  {bg:'rgba(27,196,125,.85)', border:'rgba(27,196,125,.5)'};
     };
 
+    // 熱力圖
     document.getElementById('heatmapGrid').innerHTML = sectors.map(s => {
       const col = heatColor(s.avg_chg);
       const up  = s.avg_chg >= 0;
-      // 格子大小依成交量（億元）決定，最小 80px 最大 140px
-      const size = Math.min(140, Math.max(80, 80 + s.total_vol * 2));
-      return `<div class="heat-cell" title="${s.sector}&#13;平均 ${s.avg_chg>0?'+':''}${s.avg_chg}%&#13;上漲 ${s.up_ratio}% (${s.up_count}/${s.total}支)&#13;成交 ${s.total_vol}億"
-        style="background:${col.bg};border-color:${col.border};min-height:${size/3}px;"
-        onclick="showSectorDetail('${s.sector}')">
+      const top3Names = (s.top3||[]).map(t=>`${t.name}${t.pct>0?'+':''}${t.pct}%`).join('・');
+      return `<div class="heat-cell" title="${s.sector}&#13;平均 ${s.avg_chg>0?'+':''}${s.avg_chg}%&#13;${top3Names}&#13;成交 ${s.total_vol}億"
+        style="background:${col.bg};border-color:${col.border};"
+        onclick="location.href='/analyze?sector=${encodeURIComponent(s.sector)}'">
         <div class="hc-name">${s.sector}</div>
-        <div class="hc-chg" style="color:${up?'#ff8080':'#80ffcc'};">
+        <div class="hc-chg" style="color:${up?'#ff9090':'#90ffd0'};">
           ${up?'+':''}${s.avg_chg}%
         </div>
-        <div class="hc-ratio">${s.up_ratio}% 上漲</div>
+        <div class="hc-ratio" style="font-size:.56rem;">${s.up_ratio}%↑ ${s.total_vol}億</div>
       </div>`;
     }).join('');
 
-    // ── 強勢排行（前10）──────────────────────────────
+    // 強勢排行
     document.getElementById('hotSectors').innerHTML =
-      sectors.slice(0,10).map((s,i) => `
-      <div class="rank-row">
-        <div class="rank-num-sm">${i+1}</div>
-        <div>
-          <div class="rank-sector">${s.sector}</div>
-          <div class="rank-sub">${s.up_count}支漲 / ${s.total}支 · ${s.total_vol}億</div>
-        </div>
-        <div class="rank-chg" style="color:var(--red);">+${s.avg_chg}%</div>
-      </div>`).join('');
+      sectors.slice(0,10).map((s,i) => {
+        const top1 = s.top3?.[0];
+        return `<div class="rank-row">
+          <div class="rank-num-sm">${i+1}</div>
+          <div>
+            <div class="rank-sector">${s.sector}</div>
+            <div class="rank-sub">${top1?top1.name+'  ':''} ${s.up_count}/${s.total}支↑ · ${s.total_vol}億</div>
+          </div>
+          <div class="rank-chg" style="color:var(--red);">+${s.avg_chg}%</div>
+        </div>`;
+      }).join('');
 
-    // ── 弱勢排行（後10）──────────────────────────────
+    // 弱勢排行
     document.getElementById('coldSectors').innerHTML =
-      [...sectors].reverse().slice(0,10).map((s,i) => `
-      <div class="rank-row">
-        <div class="rank-num-sm">${i+1}</div>
-        <div>
-          <div class="rank-sector">${s.sector}</div>
-          <div class="rank-sub">${s.dn_count}支跌 / ${s.total}支 · ${s.total_vol}億</div>
-        </div>
-        <div class="rank-chg" style="color:var(--grn);">${s.avg_chg}%</div>
-      </div>`).join('');
+      [...sectors].reverse().slice(0,10).map((s,i) => {
+        const top1 = s.top3?.[0];
+        return `<div class="rank-row">
+          <div class="rank-num-sm">${i+1}</div>
+          <div>
+            <div class="rank-sector">${s.sector}</div>
+            <div class="rank-sub">${s.dn_count}/${s.total}支↓ · ${s.total_vol}億</div>
+          </div>
+          <div class="rank-chg" style="color:var(--grn);">${s.avg_chg}%</div>
+        </div>`;
+      }).join('');
 
   } catch(e) {
     document.getElementById('heatmapGrid').innerHTML =
       `<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--dim);font-size:.72rem;">
-        ${e.message.includes('無法取得') ? '非交易時間，資料待更新' : '載入失敗，請重試'}
+        ${e.message.includes('無法取得')||e.message.includes('503') ? '非交易時間，收盤後更新' : '載入失敗，請重試'}
       </div>`;
   }
-}
-
-function showSectorDetail(sector) {
-  // 跳到 AI 分析頁面並帶入產業篩選
-  location.href = `/analyze?sector=${encodeURIComponent(sector)}`;
 }
 
 // ── 初始化 ────────────────────────────────────────────
