@@ -219,7 +219,7 @@ body{
 
 /* ── 底部快捷工具 ── */
 .tools-grid{
-  display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
+  display:grid;grid-template-columns:repeat(5,1fr);gap:10px;
 }
 .tool-card{
   background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;
@@ -294,13 +294,10 @@ body{
   <nav class="nav-links">
     <a href="/" class="nav-link active">🏠 儀表板</a>
     <a href="/analyze" class="nav-link">🤖 AI分析</a>
-    <a href="/reversal" class="nav-link">🔄 三合一選股</div></a>
-    <a href="/screener" class="tool-card">
-      <div class="tool-icon" style="background:linear-gradient(135deg,rgba(240,180,41,.2),rgba(239,83,80,.1));border:1px solid rgba(240,180,41,.2);">🐎</div>
-      <div class="tool-text">
-        <div class="ttitle">遊牧民選股</div>
-        <div class="tdesc">爆量KD黃金交叉 · 自動加入追蹤清單</div</a>
-    <a href="/watchlist" class="nav-link">👁️ 追蹤清單</a>
+    <a href="/reversal" class="nav-link">🎯 三合一</a>
+    <a href="/screener" class="nav-link">🐎 遊牧民</a>
+    <a href="/backtest" class="nav-link">📈 回測</a>
+    <a href="/watchlist" class="nav-link">👁️ 追蹤</a>
   </nav>
   <div class="date-chip" id="datechip">—</div>
 </div>
@@ -445,7 +442,7 @@ body{
         <div class="tdesc">追蹤個股 · 即時報酬追蹤</div>
       </div>
     </a>
-    <a href="/analyze#backtest" class="tool-card">
+    <a href="/backtest" class="tool-card">
       <div class="tool-icon" style="background:linear-gradient(135deg,rgba(61,139,255,.2),rgba(30,100,200,.1));border:1px solid rgba(61,139,255,.2);">📈</div>
       <div class="tool-text">
         <div class="ttitle">回測驗證</div>
