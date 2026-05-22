@@ -4995,6 +4995,13 @@ def _start_daily_schedule():
                         print("[排程] ✅ 三合一完成")
                     except Exception as e1:
                         print(f"[排程] ❌ 三合一錯誤: {e1}")
+                    # 🐎 遊牧民選股（自動加入追蹤清單）
+                    try:
+                        print("[排程] 🐎 啟動遊牧民選股...")
+                        _run_nomad_screen(user_token="default")
+                        print("[排程] ✅ 遊牧民完成")
+                    except Exception as e2:
+                        print(f"[排程] ❌ 遊牧民錯誤: {e2}")
                     _time.sleep(3600)
                 else:
                     _time.sleep(60)
@@ -5987,6 +5994,245 @@ def trinity_history():
 @app.route("/reversal")
 def trinity_page():
     return send_from_directory(".", "reversal.html")
+
+# ══════════════════════════════════════════════════════
+# 遊牧民選股系統
+# 條件：
+#   ① 近20日均量 > 2000張
+#   ② 今日量 > 近5日均量 × 2倍
+#   ③ KD 黃金交叉（K>D，前日K≤D）
+#   ④ K(9) < 50
+#   ⑤ 股價 > MA60
+# 每天 22:00 自動執行，結果自動加入追蹤清單
+# ══════════════════════════════════════════════════════
+
+def _run_nomad_screen(user_token="default", max_stocks=0):
+    """遊牧民選股：五個條件全中，結果自動加入 watchlist"""
+    import time as _time
+    print("[遊牧民] 開始掃描...")
+
+    # 取得股票清單
+    stocks = []
+    try:
+        r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        for row in r.json():
+            code  = row.get("Code","")
+            price = safe_float(row.get("ClosingPrice","0"))
+            vol   = safe_float(row.get("TradeVolume","0").replace(",",""))
+            chg   = safe_float(row.get("Change","0").replace(",",""))
+            prev  = price - chg
+            pct   = round(chg/prev*100,2) if prev>0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price < 10: continue
+            stocks.append({"code":code,"name":row.get("Name",""),
+                           "price":price,"pct":pct,"vol":round(vol/1000,1),"sector":""})
+    except Exception as e:
+        print(f"  [遊牧民] 上市失敗: {e}")
+
+    try:
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        for row in r2.json():
+            code  = row.get("SecuritiesCompanyCode","") or row.get("code","")
+            price = safe_float(row.get("Close","") or row.get("close",""))
+            vol   = safe_float(row.get("TradingShares","") or "0")
+            chg   = safe_float(row.get("Change","") or "0")
+            prev  = price - chg
+            pct   = round(chg/prev*100,2) if prev>0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price>0): continue
+            if price < 10: continue
+            stocks.append({"code":code,
+                           "name":row.get("CompanyName","") or row.get("name",""),
+                           "price":price,"pct":pct,"vol":round(vol/1000,1),"sector":""})
+    except Exception as e:
+        print(f"  [遊牧民] 上櫃失敗: {e}")
+
+    if not stocks:
+        print("[遊牧民] 無法取得股票清單"); return None
+    if max_stocks and max_stocks < len(stocks):
+        stocks = stocks[:max_stocks]
+
+    _load_sector_map()
+    today    = datetime.today().strftime("%Y-%m-%d")
+    start3m  = (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
+    results  = []
+    total    = len(stocks)
+
+    for idx, s in enumerate(stocks):
+        code = s["code"]
+        if idx % 100 == 0:
+            print(f"  [遊牧民] {idx+1}/{total} ({code})")
+        try:
+            records = fetch_history_range(code, start3m, today)
+            if len(records) < 60: continue
+
+            closes = [r["close"] for r in records]
+            highs  = [r.get("high",r["close"]) for r in records]
+            lows   = [r.get("low", r["close"]) for r in records]
+            vols   = [r.get("vol", 0) for r in records]
+            n = len(closes)
+
+            # ① 近20日均量 > 2000張
+            avg20vol = sum(vols[-20:])/20 if len(vols)>=20 else 0
+            if avg20vol < 2000: continue
+
+            # ② 今日量 > 近5日均量 × 2倍
+            vol5 = sum(vols[-6:-1])/5 if len(vols)>=6 else 0
+            vol_ratio = vols[-1]/vol5 if vol5>0 else 0
+            if vol_ratio < 2.0: continue
+
+            # KD 計算
+            k, d = 50.0, 50.0
+            ks, ds = [], []
+            for i in range(n):
+                sl_h = highs[max(0,i-8):i+1]; sl_l = lows[max(0,i-8):i+1]
+                rh=max(sl_h); rl=min(sl_l)
+                rsv = 50 if rh==rl else (closes[i]-rl)/(rh-rl)*100
+                k=k*2/3+rsv/3; d=d*2/3+k/3
+                ks.append(k); ds.append(d)
+
+            k_cur, d_cur = ks[-1], ds[-1]
+            k_prv, d_prv = ks[-2], ds[-2]
+
+            # ③ KD 黃金交叉（今日K>D，前日K≤D）
+            if not (k_prv <= d_prv and k_cur > d_cur): continue
+
+            # ④ K(9) < 50
+            if k_cur >= 50: continue
+
+            # ⑤ 股價 > MA60
+            ma60 = sum(closes[-60:])/60
+            if closes[-1] <= ma60: continue
+
+            sector = _sector_map.get(code, "其他")
+            results.append({
+                "code":      code,
+                "name":      s["name"],
+                "price":     closes[-1],
+                "chg_pct":   s.get("pct",0),
+                "vol_today": round(vols[-1]),
+                "avg20vol":  round(avg20vol),
+                "vol_ratio": round(vol_ratio,1),
+                "k":         round(k_cur,1),
+                "d":         round(d_cur,1),
+                "ma60":      round(ma60,2),
+                "ma60_pct":  round((closes[-1]-ma60)/ma60*100,1),
+                "sector":    sector,
+            })
+            print(f"  [遊牧民] ✅ {code} {s['name']} | 量比{vol_ratio:.1f}x K={k_cur:.1f} MA60+{(closes[-1]-ma60)/ma60*100:.1f}%")
+        except Exception as e:
+            pass
+        _time.sleep(0.15)
+
+    # 依量比排序
+    results.sort(key=lambda x: x["vol_ratio"], reverse=True)
+
+    out = {
+        "stocks":        results,
+        "total_scanned": total,
+        "total_passed":  len(results),
+        "date":          today,
+        "time":          datetime.now().strftime("%Y/%m/%d %H:%M"),
+    }
+    print(f"[遊牧民] 完成！{len(results)} 支通過")
+
+    # 存入 Supabase
+    _save_nomad_result(out)
+
+    # 自動加入追蹤清單
+    if results and user_token:
+        added = 0
+        add_time = datetime.now().strftime("%Y/%m/%d %H:%M")
+        for s in results:
+            try:
+                # 先查有沒有重複
+                existing = sb_watchlist_load(user_token)
+                codes = [e.get("code","") for e in existing]
+                if s["code"] in codes: continue
+                sb_watchlist_add(
+                    code=s["code"], name=s["name"],
+                    add_price=s["price"], add_time=add_time,
+                    sector=s["sector"], note="遊牧民選股",
+                    user_token=user_token
+                )
+                added += 1
+            except: pass
+        print(f"[遊牧民] 自動加入追蹤清單 {added} 支")
+
+    return out
+
+def _save_nomad_result(data):
+    """存遊牧民選股結果"""
+    if not SUPABASE_URL or not SUPABASE_KEY: return
+    try:
+        url   = f"{SUPABASE_URL}/rest/v1/nomad_results"
+        today = data["date"]
+        requests.delete(url, params={"date":f"eq.{today}"}, headers=_sb_headers(), timeout=10)
+        payload = {
+            "date":          today,
+            "time":          data["time"],
+            "total_scanned": data["total_scanned"],
+            "total_passed":  data["total_passed"],
+            "stocks":        json.dumps(data["stocks"], ensure_ascii=False),
+        }
+        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
+        if r.status_code in (200,201):
+            print(f"[遊牧民] ✅ 儲存 {len(data['stocks'])} 支")
+    except Exception as e:
+        print(f"[遊牧民] ❌ 儲存失敗: {e}")
+
+def _load_nomad_result(date=None):
+    if not SUPABASE_URL or not SUPABASE_KEY: return None
+    try:
+        url    = f"{SUPABASE_URL}/rest/v1/nomad_results"
+        params = {"order":"created_at.desc","limit":"1"}
+        if date: params["date"] = f"eq.{date}"
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200:
+            rows = r.json()
+            if rows:
+                row = rows[0]
+                if isinstance(row.get("stocks"),str):
+                    row["stocks"] = json.loads(row["stocks"])
+                return row
+        return None
+    except: return None
+
+def _load_nomad_history(limit=30):
+    if not SUPABASE_URL or not SUPABASE_KEY: return []
+    try:
+        url    = f"{SUPABASE_URL}/rest/v1/nomad_results"
+        params = {"select":"date,time,total_scanned,total_passed",
+                  "order":"created_at.desc","limit":str(limit)}
+        r = requests.get(url, params=params, headers=_sb_headers(), timeout=10)
+        if r.status_code == 200: return r.json()
+        return []
+    except: return []
+
+# ── 遊牧民 API ────────────────────────────────────────
+@app.route("/api/nomad/run", methods=["POST"])
+def nomad_run():
+    body  = request.get_json() or {}
+    token = body.get("user_token", "default")
+    def _bg():
+        try: _run_nomad_screen(user_token=token)
+        except Exception as e: print(f"[遊牧民] 背景錯誤: {e}")
+    threading.Thread(target=_bg, daemon=True).start()
+    return jsonify({"ok":True, "msg":"遊牧民選股已啟動，約 30~60 分鐘完成"})
+
+@app.route("/api/nomad/latest")
+def nomad_latest():
+    date = request.args.get("date")
+    data = _load_nomad_result(date)
+    if not data: return jsonify({"error":"尚無資料"}), 404
+    return jsonify(data)
+
+@app.route("/api/nomad/history")
+def nomad_history():
+    return jsonify({"history": _load_nomad_history()})
+
+@app.route("/screener")
+def screener_page():
+    return send_from_directory(".", "screener.html")
 
 def _start_keep_alive():
     """每 4 分鐘 ping 自己，防止 Render 免費版休眠（搭配 UptimeRobot 5 分鐘外部 ping）"""
