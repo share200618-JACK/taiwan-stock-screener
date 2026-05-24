@@ -245,35 +245,14 @@ async function initAuth() {
 }
 
 // ── Supabase API 操作 ─────────────────────────────
-const JACK_TOKEN = '85b8cba2f1ec0d8e28a25a00db26e121'; // Jack 的真實 token
+const JACK_TOKEN = '85b8cba2f1ec0d8e28a25a00db26e121';
 
 async function loadList() {
   try {
-    // 同時查詢所有可能的 token
-    const tokens = new Set([JACK_TOKEN, 'default']);
-    const rt = getToken();
-    if (rt && rt !== 'default') tokens.add(rt);
-
-    const results = await Promise.all(
-      [...tokens].map(t =>
-        fetch(`${API}/api/watchlist?token=${t}`)
-          .then(r => r.json())
-          .then(d => d.stocks || [])
-          .catch(() => [])
-      )
-    );
-
-    // 合併去重（code 為 key）
-    const seen = new Set();
-    _watchCache = [];
-    for (const list of results) {
-      for (const s of list) {
-        if (!seen.has(s.code)) {
-          seen.add(s.code);
-          _watchCache.push(s);
-        }
-      }
-    }
+    // 直接用 JACK_TOKEN 查詢（這是 Jack 的真實 token，資料都在這裡）
+    const r = await fetch(`${API}/api/watchlist?token=${JACK_TOKEN}`);
+    const d = await r.json();
+    _watchCache = d.stocks || [];
     return _watchCache;
   } catch(e) {
     console.error('讀取追蹤清單失敗:', e);
