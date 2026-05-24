@@ -245,12 +245,14 @@ async function initAuth() {
 }
 
 // ── Supabase API 操作 ─────────────────────────────
+const JACK_TOKEN = '85b8cba2f1ec0d8e28a25a00db26e121'; // Jack 的真實 token
+
 async function loadList() {
   try {
-    // 同時查詢真實 token 和 default，合併去重
-    const tokens = new Set(['default']);
-    const realToken = getToken();
-    if (realToken && realToken !== 'default') tokens.add(realToken);
+    // 同時查詢所有可能的 token
+    const tokens = new Set([JACK_TOKEN, 'default']);
+    const rt = getToken();
+    if (rt && rt !== 'default') tokens.add(rt);
 
     const results = await Promise.all(
       [...tokens].map(t =>
@@ -261,7 +263,7 @@ async function loadList() {
       )
     );
 
-    // 合併去重（同 code 只保留一筆）
+    // 合併去重（code 為 key）
     const seen = new Set();
     _watchCache = [];
     for (const list of results) {
@@ -281,11 +283,10 @@ async function loadList() {
 
 async function addToList(stock) {
   try {
-    const token = getToken() || 'default';
     const r = await fetch(`${API}/api/watchlist`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({...stock, user_token: token})
+      body: JSON.stringify({...stock, user_token: getToken()||JACK_TOKEN})
     });
     const d = await r.json();
     return d.ok;
@@ -294,11 +295,10 @@ async function addToList(stock) {
 
 async function removeFromList(code) {
   try {
-    const token = getToken() || 'default';
-    const r = await fetch(`${API}/api/watchlist/${code}?token=${token}`, {
+    const r = await fetch(`${API}/api/watchlist/${code}?token=${getToken()||JACK_TOKEN}`, {
       method:'DELETE',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({user_token: token})
+      body: JSON.stringify({user_token: getToken()||JACK_TOKEN})
     });
     const d = await r.json();
     return d.ok;
@@ -310,7 +310,7 @@ async function saveNote(code, text) {
     await fetch(`${API}/api/watchlist/${code}/note`, {
       method: 'PATCH',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({note: text, user_token: _userToken||'default'})
+      body: JSON.stringify({note: text, user_token: getToken()||JACK_TOKEN})
     });
     // 同步更新快取
     const item = _watchCache.find(s => s.code === code);
