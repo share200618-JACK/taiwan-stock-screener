@@ -6002,7 +6002,8 @@ def trinity_page():
 #   ② 今日量 > 近5日均量 × 2倍
 #   ③ KD 黃金交叉（K>D，前日K≤D）
 #   ④ K(9) < 50
-#   ⑤ 股價 > MA60
+#   ⑤ K(9) > 20
+#   ⑥ 股價 > MA60
 # 每天 22:00 自動執行，結果自動加入追蹤清單
 # ══════════════════════════════════════════════════════
 
@@ -6099,7 +6100,10 @@ def _run_nomad_screen(user_token="default", max_stocks=0):
             # ④ K(9) < 50
             if k_cur >= 50: continue
 
-            # ⑤ 股價 > MA60
+            # ⑤ K(9) > 20（不能過於超賣）
+            if k_cur <= 20: continue
+
+            # ⑥ 股價 > MA60
             ma60 = sum(closes[-60:])/60
             if closes[-1] <= ma60: continue
 
