@@ -4423,7 +4423,7 @@ def _analyze_one_v2(code, name, market_closes, history_months=24, sector_rotatio
 def start_analyze():
     import uuid
     body       = request.get_json() or {}
-    max_stocks = int(body.get("max_stocks", 80))
+    max_stocks = int(body.get("max_stocks", 0))   # 0 = 全市場掃描
     top_n      = int(body.get("top_n", 10))
     model_ver  = body.get("model_ver", "v2")
     task_id    = str(uuid.uuid4())[:8]
@@ -5509,6 +5509,36 @@ def dashboard_summary():
 
 
 
+@app.route("/api/stock/history")
+def api_stock_history():
+    """個股歷史 K 線資料（給追蹤清單線圖用）"""
+    code  = request.args.get("code","")
+    start = request.args.get("start","")
+    end   = request.args.get("end","")
+    if not code:
+        return jsonify({"error":"缺少 code 參數"}), 400
+    if not start:
+        start = (datetime.today()-timedelta(days=100)).strftime("%Y-%m-%d")
+    if not end:
+        end = datetime.today().strftime("%Y-%m-%d")
+    try:
+        records = fetch_history_range(code, start, end)
+        # 確保有 open/high/low
+        cleaned = []
+        for r in records:
+            cleaned.append({
+                "date":  r.get("date",""),
+                "open":  r.get("open",  r.get("close",0)),
+                "high":  r.get("high",  r.get("close",0)),
+                "low":   r.get("low",   r.get("close",0)),
+                "close": r.get("close", 0),
+                "vol":   r.get("vol",   0),
+                "chg":   r.get("change", r.get("chg", 0)),
+            })
+        return jsonify({"code":code,"records":cleaned})
+    except Exception as e:
+        return jsonify({"error":str(e)}), 500
+
 @app.route("/api/dashboard/sector_heatmap")
 def dashboard_sector_heatmap():
     """產業資金熱度：支援大類(level=broad)和細分產業(level=fine，預設)"""
@@ -5865,8 +5895,8 @@ def _run_trinity_screen(max_stocks=0, top_n=30):
 
             tech_score, tech_detail = _score_technical(records)
 
-            # 快速過濾：技術面至少 12/30 分（40%）才繼續
-            if tech_score < 12: continue
+            # 快速過濾：技術面至少 8/30 分（40%）才繼續
+            if tech_score < 8: continue
 
             # 籌碼面
             inst_days = _get_inst_buy_days(code, start_dt, today)
@@ -5878,10 +5908,10 @@ def _run_trinity_screen(max_stocks=0, top_n=30):
             # 計算總分
             total_score = fund_score + tech_score + chip_score
 
-            # 三者各需達到 60%
-            fund_ok = fund_score >= 30   # 50*0.6
-            tech_ok = tech_score >= 18   # 30*0.6
-            chip_ok = chip_score >= 12   # 20*0.6
+            # 三者各需達到 40%（放寬，讓更多股票進入排序）
+            fund_ok = fund_score >= 20   # 50*0.4
+            tech_ok = tech_score >= 12   # 30*0.4
+            chip_ok = chip_score >= 8    # 20*0.4
 
             if not (fund_ok and tech_ok and chip_ok):
                 continue
