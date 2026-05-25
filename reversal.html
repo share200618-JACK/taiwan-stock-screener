@@ -157,39 +157,38 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
   <div class="score-legend" style="margin-top:6px;">
     <div class="score-card">
       <div class="sc-header">
-        <div class="sc-title" style="color:#f0b429;">📊 基本面</div>
-        <div class="sc-max">50分</div>
+        <div class="sc-title" style="color:var(--red);">🚫 必要條件</div>
+        <div class="sc-max">全部要過</div>
       </div>
       <div class="sc-items">
-        <div class="sc-item">月營收年增率<span>10分</span></div>
-        <div class="sc-item">EPS 年增率<span>10分</span></div>
-        <div class="sc-item">毛利率水準<span>10分</span></div>
-        <div class="sc-item">現金殖利率<span>10分</span></div>
-        <div class="sc-item">本益比合理<span>10分</span></div>
+        <div class="sc-item">成交量 &gt; 3000萬股<span>流動性</span></div>
+        <div class="sc-item">RS 前 20%<span>相對強度</span></div>
+        <div class="sc-item">投信連買 ≥ 3天<span>籌碼支撐</span></div>
+        <div class="sc-item">MA20 &gt; MA60<span>中期多頭</span></div>
       </div>
     </div>
     <div class="score-card">
       <div class="sc-header">
-        <div class="sc-title" style="color:#3d8bff;">📈 技術面</div>
-        <div class="sc-max">30分</div>
+        <div class="sc-title" style="color:var(--gold);">⭐ 加分條件</div>
+        <div class="sc-max">100分制</div>
       </div>
       <div class="sc-items">
-        <div class="sc-item">站上 MA20<span>10分</span></div>
-        <div class="sc-item">KD 黃金交叉<span>10分</span></div>
-        <div class="sc-item">MACD 翻正<span>10分</span></div>
+        <div class="sc-item">月營收創高<span>+20</span></div>
+        <div class="sc-item">EPS 成長<span>+20</span></div>
+        <div class="sc-item">MACD 翻正<span>+20</span></div>
+        <div class="sc-item">法人同步買<span>+20</span></div>
+        <div class="sc-item">族群強勢<span>+20</span></div>
       </div>
     </div>
     <div class="score-card">
       <div class="sc-header">
-        <div class="sc-title" style="color:#a855f7;">🏦 籌碼面</div>
-        <div class="sc-max">20分</div>
+        <div class="sc-title" style="color:var(--grn);">📋 說明</div>
+        <div class="sc-max"></div>
       </div>
       <div class="sc-items">
-        <div class="sc-item">法人連續買超<span>10分</span></div>
-        <div class="sc-item">量能健康放大<span>10分</span></div>
-      </div>
-      <div style="font-size:.58rem;color:var(--dim);margin-top:6px;">
-        ⚡ 三者各需達 40%，總分排序取前 30 名
+        <div class="sc-item" style="line-height:1.6;color:var(--txt);">
+          必要條件全過後，依加分排序取前30名。滿分100分代表五個加分條件全中。
+        </div>
       </div>
     </div>
   </div>
@@ -295,12 +294,17 @@ function renderResult(d) {
 
   document.getElementById('stockList').innerHTML = stocks.map((s,i)=>{
     const up = s.chg_pct >= 0;
-    const fd = s.fund_detail || {};
-    const td = s.tech_detail || {};
-    const cd = s.chip_detail || {};
-    const fundPct = Math.round(s.fund_score/50*100);
-    const techPct = Math.round(s.tech_score/30*100);
-    const chipPct = Math.round(s.chip_score/20*100);
+    const d  = s.detail || {};
+    const score = s.total_score || 0;
+
+    // 加分條件徽章
+    const badges = [
+      d.rev_high    ? {label:'月營收創高', col:'var(--gold)'}   : null,
+      d.eps_growth  ? {label:'EPS成長',    col:'var(--blue)'}   : null,
+      d.macd_turn   ? {label:'MACD翻正',   col:'var(--grn)'}    : null,
+      d.sync_buy    ? {label:'法人同步買', col:'var(--pur)'}    : null,
+      d.sector_strong?{label:'族群強勢',   col:'var(--red)'}    : null,
+    ].filter(Boolean);
 
     return `<div class="stock-card" onclick="location.href='/analyze'">
       <div class="card-top">
@@ -310,8 +314,8 @@ function renderResult(d) {
           <div class="code">${s.code}</div>
         </div>
         <div class="card-right">
-          <div class="total-score">${s.total_score}分</div>
-          <div class="score-label">總評分 /100</div>
+          <div class="total-score">${score}分</div>
+          <div class="score-label">加分 /100</div>
           <div class="price-row">
             <span style="font-weight:700;font-family:'JetBrains Mono',monospace;color:${up?'var(--red)':'var(--grn)'};">
               ${s.price}元
@@ -323,74 +327,38 @@ function renderResult(d) {
         </div>
       </div>
 
-      <!-- 三維評分條 -->
-      <div class="score-bars">
-        <div class="score-bar-item">
-          <div class="sbi-label">
-            <span style="color:#f0b429;">📊 基本面</span>
-            <span style="color:#f0b429;">${s.fund_score}/50</span>
-          </div>
-          <div class="sbi-track">
-            <div class="sbi-fill" style="width:${fundPct}%;background:linear-gradient(90deg,#f0b429,#ff9800);"></div>
-          </div>
-        </div>
-        <div class="score-bar-item">
-          <div class="sbi-label">
-            <span style="color:#3d8bff;">📈 技術面</span>
-            <span style="color:#3d8bff;">${s.tech_score}/30</span>
-          </div>
-          <div class="sbi-track">
-            <div class="sbi-fill" style="width:${techPct}%;background:linear-gradient(90deg,#3d8bff,#00bcd4);"></div>
-          </div>
-        </div>
-        <div class="score-bar-item">
-          <div class="sbi-label">
-            <span style="color:#a855f7;">🏦 籌碼面</span>
-            <span style="color:#a855f7;">${s.chip_score}/20</span>
-          </div>
-          <div class="sbi-track">
-            <div class="sbi-fill" style="width:${chipPct}%;background:linear-gradient(90deg,#a855f7,#ec4899);"></div>
-          </div>
-        </div>
+      <!-- 必要條件狀態 -->
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;">
+        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ 量&gt;3000萬</span>
+        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ RS前20%</span>
+        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ 投信${s.trust_days||3}天</span>
+        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ MA20&gt;MA60</span>
       </div>
 
-      <!-- 指標細節 -->
-      <div class="detail-grid">
-        <div class="detail-box">
-          <div class="db-label">月營收年增</div>
-          <div class="db-val" style="color:${(fd.rev_yoy||0)>=0?'var(--red)':'var(--grn)'};">
-            ${fd.rev_yoy!=null?(fd.rev_yoy>0?'+':'')+fd.rev_yoy+'%':'—'}
-          </div>
+      <!-- 加分條件 -->
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;">
+        ${badges.length ? badges.map(b=>`<span style="padding:2px 8px;border-radius:4px;font-size:.62rem;font-weight:700;
+          background:rgba(255,255,255,.06);color:${b.col};border:1px solid rgba(255,255,255,.1);">⭐ ${b.label}</span>`).join('')
+          : '<span style="font-size:.62rem;color:var(--dim);">尚無加分條件</span>'}
+      </div>
+
+      <!-- 指標 -->
+      <div class="ind-row">
+        <div class="ind-box">
+          <div class="ind-label">MA20</div>
+          <div class="ind-val" style="color:var(--blue);">${s.ma20||'—'}</div>
         </div>
-        <div class="detail-box">
-          <div class="db-label">毛利率</div>
-          <div class="db-val" style="color:${(fd.gross_margin||0)>=25?'var(--red)':'var(--txt)'};">
-            ${fd.gross_margin!=null?fd.gross_margin+'%':'—'}
-          </div>
+        <div class="ind-box">
+          <div class="ind-label">MA60</div>
+          <div class="ind-val">${s.ma60||'—'}</div>
         </div>
-        <div class="detail-box">
-          <div class="db-label">本益比</div>
-          <div class="db-val" style="color:${(fd.per||0)<=20?'var(--red)':'var(--txt)'};">
-            ${fd.per!=null?fd.per+'x':'—'}
-          </div>
+        <div class="ind-box">
+          <div class="ind-label">MACD柱</div>
+          <div class="ind-val" style="color:${(d.macd_hist||0)>=0?'var(--red)':'var(--grn)'};">${d.macd_hist!=null?(d.macd_hist>0?'+':'')+d.macd_hist:'—'}</div>
         </div>
-        <div class="detail-box">
-          <div class="db-label">KD</div>
-          <div class="db-val" style="color:var(--gold);">
-            ${td.k!=null?td.k+'/'+td.d:'—'}
-          </div>
-        </div>
-        <div class="detail-box">
-          <div class="db-label">MACD柱</div>
-          <div class="db-val" style="color:${(td.macd_hist||0)>=0?'var(--red)':'var(--grn)'};">
-            ${td.macd_hist!=null?(td.macd_hist>0?'+':'')+td.macd_hist:'—'}
-          </div>
-        </div>
-        <div class="detail-box">
-          <div class="db-label">法人買超</div>
-          <div class="db-val" style="color:var(--pur);">
-            ${s.inst_days}天
-          </div>
+        <div class="ind-box">
+          <div class="ind-label">族群漲跌</div>
+          <div class="ind-val" style="color:${(d.sector_pct||0)>=0?'var(--red)':'var(--grn)'};">${d.sector_pct!=null?(d.sector_pct>0?'+':'')+d.sector_pct+'%':'—'}</div>
         </div>
       </div>
     </div>`;

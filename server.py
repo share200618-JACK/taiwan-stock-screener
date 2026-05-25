@@ -5371,84 +5371,76 @@ def reversal_page():
 
 @app.route("/api/dashboard/indices")
 def dashboard_indices():
-    """大盤指數：全用 TWSE/TPEX 官方 API，不依賴 Yahoo Finance"""
+    """大盤指數：全用 TWSE/TPEX OpenAPI，收盤後更新"""
     result = {}
-    today  = datetime.today().strftime("%Y%m%d")
 
-    # 台灣加權（用大盤統計）
+    # 一次抓全部大盤指數（OpenAPI 格式）
     try:
         r = SESSION.get(
-            f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={today}&type=MS",
-            timeout=10)
-        d = r.json()
-        for row in d.get("data2",[]):
-            if "發行量加權股價指數" in str(row[0]):
-                cur = safe_float(str(row[1]).replace(",",""))
-                chg = safe_float(str(row[2]).replace(",","").replace("+",""))
-                prv = cur - chg
-                pct = round(chg/prv*100,2) if prv>0 else 0
-                result["twii"] = {"name":"台灣加權","value":round(cur,2),"chg":round(chg,2),"pct":pct}
-                break
-    except: pass
-    if "twii" not in result:
-        result["twii"] = {"name":"台灣加權","value":0,"chg":0,"pct":0}
+            "https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX",
+            headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+        rows = r.json()
 
-    # 台灣50（0050）
+        # 指數名稱對應
+        target = {
+            "發行量加權股價指數": ("twii", "台灣加權"),
+            "電子類指數":        ("elec", "電子類股"),
+            "半導體類指數":       ("semi", "半導體"),
+            "金融保險類指數":     ("fin",  "金融類股"),
+        }
+        for row in rows:
+            name = row.get("指數","")
+            for k,(key,label) in target.items():
+                if k in name:
+                    try:
+                        cur  = safe_float(str(row.get("收盤指數","0")).replace(",",""))
+                        sign = row.get("漲跌","+")
+                        chg  = safe_float(str(row.get("漲跌點數","0")).replace(",",""))
+                        if sign == "-": chg = -chg
+                        pct  = safe_float(str(row.get("漲跌百分比","0")).replace(",",""))
+                        if sign == "-": pct = -pct
+                        result[key] = {"name":label,"value":round(cur,2),"chg":round(chg,2),"pct":round(pct,2)}
+                    except:
+                        result[key] = {"name":label,"value":0,"chg":0,"pct":0}
+    except Exception as e:
+        print(f"[指數] MI_INDEX 失敗: {e}")
+
+    # 台灣50（0050 收盤價）
     try:
+        today = datetime.today().strftime("%Y%m%d")
         r2 = SESSION.get(
             f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={today}&stockNo=0050",
             timeout=10)
         d2 = r2.json()
         if d2.get("stat")=="OK" and d2.get("data"):
-            rows = d2["data"]
-            cur2 = safe_float(rows[-1][6]); prv2 = safe_float(rows[-2][6]) if len(rows)>=2 else cur2
-            chg2 = round(cur2-prv2,2); pct2 = round(chg2/prv2*100,2) if prv2>0 else 0
+            rows2 = d2["data"]
+            cur2  = safe_float(rows2[-1][6])
+            prv2  = safe_float(rows2[-2][6]) if len(rows2)>=2 else cur2
+            chg2  = round(cur2-prv2,2)
+            pct2  = round(chg2/prv2*100,2) if prv2>0 else 0
             result["tw50"] = {"name":"台灣50","value":round(cur2,2),"chg":chg2,"pct":pct2}
         else:
             result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
     except:
         result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
 
-    # 上櫃指數
+    # 上櫃指數（TPEX OpenAPI）
     try:
-        roc = f"{datetime.today().year-1911}/{datetime.today().month:02d}/{datetime.today().day:02d}"
-        r3  = SESSION.get(
-            f"https://www.tpex.org.tw/web/stock/aftertrading/index_historical/s/s_result.php?d={roc}&o=json",
-            timeout=10)
-        d3  = r3.json()
-        rows3 = d3.get("aaData",[])
-        if rows3:
-            cur3 = safe_float(str(rows3[-1][4]).replace(",",""))
-            prv3 = safe_float(str(rows3[-2][4]).replace(",","")) if len(rows3)>=2 else cur3
-            chg3 = round(cur3-prv3,2); pct3 = round(chg3/prv3*100,2) if prv3>0 else 0
-            result["tpex"] = {"name":"上櫃指數","value":round(cur3,2),"chg":chg3,"pct":pct3}
-        else:
-            result["tpex"] = {"name":"上櫃指數","value":0,"chg":0,"pct":0}
-    except:
-        result["tpex"] = {"name":"上櫃指數","value":0,"chg":0,"pct":0}
-
-    # 電子、半導體、金融類股指數
-    try:
-        r4   = SESSION.get(
-            f"https://www.twse.com.tw/exchangeReport/MI_INDEX?response=json&date={today}&type=IND",
-            timeout=10)
-        d4   = r4.json()
-        tmap = {"電子類":"elec","半導體類":"semi","金融保險類":"fin"}
-        nmap = {"電子類":"電子類股","半導體類":"半導體","金融保險類":"金融類股"}
-        for row in d4.get("data",[]):
-            nm = row[0] if row else ""
-            for k,v in tmap.items():
-                if k in nm:
-                    try:
-                        c4 = safe_float(str(row[1]).replace(",",""))
-                        g4 = safe_float(str(row[2]).replace(",","").replace("+",""))
-                        p4 = c4-g4; pct4 = round(g4/p4*100,2) if p4>0 else 0
-                        result[v] = {"name":nmap[k],"value":round(c4,2),"chg":round(g4,2),"pct":pct4}
-                    except:
-                        result[v] = {"name":nmap[k],"value":0,"chg":0,"pct":0}
+        r3 = SESSION.get(
+            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+            headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
+        d3 = r3.json()
+        for row in d3[:5]:
+            if "指數" in str(row.get("指數","")) or "index" in str(row).lower():
+                cur3 = safe_float(str(row.get("收盤","0")).replace(",",""))
+                if cur3 > 0:
+                    result["tpex"] = {"name":"上櫃指數","value":round(cur3,2),"chg":0,"pct":0}
+                    break
     except: pass
 
-    for k,n in [("elec","電子類股"),("semi","半導體"),("fin","金融類股")]:
+    # fallback
+    for k,n in [("twii","台灣加權"),("tpex","上櫃指數"),("tw50","台灣50"),
+                ("elec","電子類股"),("semi","半導體"),("fin","金融類股")]:
         if k not in result:
             result[k] = {"name":n,"value":0,"chg":0,"pct":0}
 
@@ -5837,39 +5829,60 @@ def _score_chips(code, inst_days, records):
 
 def _run_trinity_screen(max_stocks=0, top_n=30):
     """
-    三合一選股主程式
-    基本面 50分 + 技術面 30分 + 籌碼面 20分
-    三者各至少 60%，總分取前 30 名
+    三合一選股（新版）
+    必要條件（全部要過才繼續）：
+      ① 成交量 > 3000萬（流動性）
+      ② RS 前 20%（相對強度）
+      ③ 投信連續買超 ≥ 3 天
+      ④ MA20 > MA60（中期多頭排列）
+    加分條件（100分制）：
+      月營收創高 +20
+      EPS 成長   +20
+      MACD 翻正  +20
+      法人同步買（外資+投信）+20
+      族群強勢   +20
     """
     import time as _time
-    print("[三合一] 開始掃描...")
+    print("[三合一] 開始掃描（新版條件）...")
 
-    # 取得股票清單
+    # 取得股票清單（含成交量）
     stocks = []
+    all_vols = []  # 用來計算 RS
     try:
         r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
         for row in r.json():
-            code=row.get("Code",""); price=safe_float(row.get("ClosingPrice"))
-            vol=round(safe_float(row.get("TradeVolume","0").replace(",",""))/1000)
-            chg=safe_float(row.get("Change","0").replace(",",""))
-            prev=price-chg; pct=round(chg/prev*100,2) if prev>0 else 0
+            code  = row.get("Code","")
+            price = safe_float(row.get("ClosingPrice","0"))
+            vol_s = safe_float(row.get("TradeVolume","0").replace(",",""))  # 股數
+            vol_k = round(vol_s/1000)  # 張
+            vol_m = round(vol_s*price/1e6/10000,1) if price>0 else 0  # 億元（先用成交值估算）
+            chg   = safe_float(row.get("Change","0").replace(",",""))
+            prev  = price-chg; pct=round(chg/prev*100,2) if prev>0 else 0
             if not (str(code).isdigit() and len(code)==4 and price>0): continue
-            if price < 10 or vol < 200: continue  # 過濾低價低量
+            if price < 10: continue
             stocks.append({"code":code,"name":row.get("Name",""),
-                           "price":price,"pct":pct,"vol":vol,"sector":""})
+                           "price":price,"pct":pct,"vol_k":vol_k,
+                           "vol_shares":vol_s,"sector":""})
+            all_vols.append((code, pct))
     except Exception as e:
         print(f"  [三合一] 上市失敗: {e}")
 
     try:
         r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
         for row in r2.json():
-            code=row.get("SecuritiesCompanyCode","") or row.get("code","")
-            price=safe_float(row.get("Close","") or row.get("close",""))
-            vol=round(safe_float(row.get("TradingShares","") or "0")/1000)
+            code  = row.get("SecuritiesCompanyCode","") or row.get("code","")
+            price = safe_float(row.get("Close","") or row.get("close",""))
+            vol_s = safe_float(row.get("TradingShares","") or "0")
+            vol_k = round(vol_s/1000)
+            chg   = safe_float(row.get("Change","") or "0")
+            prev  = price-chg; pct=round(chg/prev*100,2) if prev>0 else 0
             if not (str(code).isdigit() and len(code)==4 and price>0): continue
-            if price < 10 or vol < 200: continue
-            stocks.append({"code":code,"name":row.get("CompanyName","") or row.get("name",""),
-                           "price":price,"pct":0,"vol":vol,"sector":""})
+            if price < 10: continue
+            stocks.append({"code":code,
+                           "name":row.get("CompanyName","") or row.get("name",""),
+                           "price":price,"pct":pct,"vol_k":vol_k,
+                           "vol_shares":vol_s,"sector":""})
+            all_vols.append((code, pct))
     except Exception as e:
         print(f"  [三合一] 上櫃失敗: {e}")
 
@@ -5878,67 +5891,177 @@ def _run_trinity_screen(max_stocks=0, top_n=30):
     if max_stocks and max_stocks < len(stocks):
         stocks = stocks[:max_stocks]
 
-    today    = datetime.today().strftime("%Y-%m-%d")
-    start_dt = (datetime.today()-timedelta(days=30)).strftime("%Y-%m-%d")
-    start_hist = (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
-    results  = []
-    total    = len(stocks)
+    # 計算 RS（相對強度）：依漲跌幅排名，前20%為強勢
+    all_pcts = sorted([v[1] for v in all_vols], reverse=True)
+    total_n  = len(all_pcts)
+    rs_threshold = all_pcts[int(total_n * 0.2)] if total_n > 0 else 0
+
+    # 計算族群強勢（用 _sector_map 分組，計算各產業平均漲跌）
+    _load_sector_map()
+    sector_pct = {}
+    sector_cnt = {}
+    for s in stocks:
+        sec = _sector_map.get(s["code"],"其他")
+        if sec not in sector_pct:
+            sector_pct[sec] = 0; sector_cnt[sec] = 0
+        sector_pct[sec] += s["pct"]; sector_cnt[sec] += 1
+    sector_avg = {k: sector_pct[k]/sector_cnt[k] for k in sector_pct if sector_cnt[k]>0}
+    # 族群強勢 = 該產業平均漲跌排名前30%
+    all_sec_pcts = sorted(sector_avg.values(), reverse=True)
+    sec_threshold = all_sec_pcts[int(len(all_sec_pcts)*0.3)] if all_sec_pcts else 0
+
+    today     = datetime.today().strftime("%Y-%m-%d")
+    start_dt  = (datetime.today()-timedelta(days=30)).strftime("%Y-%m-%d")
+    start_dt2 = (datetime.today()-timedelta(days=60)).strftime("%Y-%m-%d")
+    start_hist= (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
+    results   = []
+    total     = len(stocks)
 
     for idx, s in enumerate(stocks):
         code = s["code"]
-        if idx % 50 == 0:
+        if idx % 100 == 0:
             print(f"  [三合一] {idx+1}/{total} ({code} {s['name']})")
         try:
-            # 技術面（抓歷史）
+            # ── 必要條件 ① 成交量 > 3000萬股 ────────────
+            if s["vol_shares"] < 30_000_000: continue
+
+            # ── 必要條件 ② RS 前20% ──────────────────────
+            if s["pct"] < rs_threshold: continue
+
+            # 抓歷史資料（技術面用）
             records = fetch_history_range(code, start_hist, today)
             if len(records) < 60: continue
 
-            tech_score, tech_detail = _score_technical(records)
+            closes = [r["close"] for r in records]
+            n      = len(closes)
 
-            # 快速過濾：技術面至少 8/30 分（40%）才繼續
-            if tech_score < 8: continue
+            # MA 計算
+            ma20 = sum(closes[-20:])/20 if n>=20 else None
+            ma60 = sum(closes[-60:])/60 if n>=60 else None
 
-            # 籌碼面
-            inst_days = _get_inst_buy_days(code, start_dt, today)
-            chip_score, chip_detail = _score_chips(code, inst_days, records)
+            # ── 必要條件 ④ MA20 > MA60 ───────────────────
+            if not (ma20 and ma60 and ma20 > ma60): continue
 
-            # 基本面（最耗時，放最後）
-            fund_score, fund_detail = _score_fundamental(code)
+            # ── 必要條件 ③ 投信連續買超 ≥ 3 天 ──────────
+            # 查法人資料
+            try:
+                token = _get_finmind_token()
+                if token:
+                    r_inst = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                        params={"dataset":"TaiwanStockInstitutionalInvestorsBuySell",
+                                "data_id":code,"start_date":start_dt},
+                        headers={"Authorization":f"Bearer {token}"}, timeout=10)
+                    inst_rows = r_inst.json().get("data",[])
+                else:
+                    inst_rows = []
+            except:
+                inst_rows = []
 
-            # 計算總分
-            total_score = fund_score + tech_score + chip_score
+            # 計算投信連續買超天數
+            trust_days   = sorted(set(r["date"] for r in inst_rows if r.get("name")=="投信"))[-5:] if inst_rows else []
+            trust_consec = 0
+            for td in reversed(trust_days):
+                day_net = sum(safe_float(r.get("buy",0))-safe_float(r.get("sell",0))
+                              for r in inst_rows if r["date"]==td and r.get("name")=="投信")
+                if day_net > 0: trust_consec += 1
+                else: break
 
-            # 三者各需達到 40%（放寬，讓更多股票進入排序）
-            fund_ok = fund_score >= 20   # 50*0.4
-            tech_ok = tech_score >= 12   # 30*0.4
-            chip_ok = chip_score >= 8    # 20*0.4
+            if trust_consec < 3: continue
 
-            if not (fund_ok and tech_ok and chip_ok):
-                continue
+            # ── 通過必要條件，計算加分 ────────────────────
+            score = 0
+            detail = {}
 
-            sector = _sector_map.get(code, "")
+            # 加分① 月營收創高
+            try:
+                r_rev = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                    params={"dataset":"TaiwanStockMonthRevenue","data_id":code,
+                            "start_date":(datetime.today()-timedelta(days=180)).strftime("%Y-%m-%d")},
+                    headers={"Authorization":f"Bearer {token}"}, timeout=10)
+                rev_rows = r_rev.json().get("data",[])
+                if len(rev_rows) >= 2:
+                    rev_vals = [safe_float(r.get("revenue",0)) for r in rev_rows]
+                    if rev_vals[-1] >= max(rev_vals[:-1]):
+                        score += 20
+                        detail["rev_high"] = True
+                    yoy = safe_float(rev_rows[-1].get("revenue_year_month_growth",0))
+                    detail["rev_yoy"] = round(yoy,1)
+            except: pass
+
+            # 加分② EPS 成長
+            try:
+                r_eps = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                    params={"dataset":"TaiwanStockFinancialStatements","data_id":code,
+                            "start_date":(datetime.today()-timedelta(days=400)).strftime("%Y-%m-%d")},
+                    headers={"Authorization":f"Bearer {token}"}, timeout=10)
+                eps_rows = [r for r in r_eps.json().get("data",[]) if r.get("type")=="EPS"]
+                if len(eps_rows) >= 5:
+                    cur_eps = safe_float(eps_rows[-1].get("value",0))
+                    yr_eps  = safe_float(eps_rows[-5].get("value",0))
+                    if yr_eps > 0 and cur_eps > yr_eps:
+                        score += 20
+                        detail["eps_growth"] = True
+                    detail["eps"] = round(cur_eps,2)
+            except: pass
+
+            # 加分③ MACD 翻正
+            def ema(arr,p):
+                k=2/(p+1); e=arr[0]; out=[]
+                for x in arr: e=x*k+e*(1-k); out.append(e)
+                return out
+            e12=ema(closes,12); e26=ema(closes,26)
+            macd_line=[e12[i]-e26[i] for i in range(n)]
+            sig=ema(macd_line,9)
+            hist=[macd_line[i]-sig[i] for i in range(n)]
+            if len(hist)>=2 and hist[-2]<0 and hist[-1]>0:
+                score += 20
+                detail["macd_turn"] = True
+            elif hist[-1]>0:
+                score += 10  # MACD 正值也給半分
+            detail["macd_hist"] = round(hist[-1],3)
+
+            # 加分④ 法人同步買（外資+投信同時買）
+            if inst_rows:
+                dates = sorted(set(r["date"] for r in inst_rows))[-3:]
+                sync_days = 0
+                for td in dates:
+                    fii_net   = sum(safe_float(r.get("buy",0))-safe_float(r.get("sell",0))
+                                    for r in inst_rows if r["date"]==td and r.get("name")=="外資")
+                    trust_net = sum(safe_float(r.get("buy",0))-safe_float(r.get("sell",0))
+                                    for r in inst_rows if r["date"]==td and r.get("name")=="投信")
+                    if fii_net > 0 and trust_net > 0: sync_days += 1
+                if sync_days >= 2:
+                    score += 20
+                    detail["sync_buy"] = True
+                detail["trust_days"] = trust_consec
+
+            # 加分⑤ 族群強勢
+            sector = _sector_map.get(code,"其他")
+            sec_pct = sector_avg.get(sector,0)
+            if sec_pct >= sec_threshold:
+                score += 20
+                detail["sector_strong"] = True
+            detail["sector_pct"] = round(sec_pct,2)
+
             results.append({
                 "code":        code,
                 "name":        s["name"],
-                "price":       records[-1]["close"],
+                "price":       closes[-1],
                 "chg_pct":     s.get("pct",0),
-                "vol":         s.get("vol",0),
+                "vol_k":       s.get("vol_k",0),
                 "sector":      sector,
-                "total_score": total_score,
-                "fund_score":  fund_score,
-                "tech_score":  tech_score,
-                "chip_score":  chip_score,
-                "fund_detail": fund_detail,
-                "tech_detail": tech_detail,
-                "chip_detail": chip_detail,
-                "inst_days":   inst_days,
+                "total_score": score,
+                "ma20":        round(ma20,2),
+                "ma60":        round(ma60,2),
+                "trust_days":  trust_consec,
+                "detail":      detail,
             })
-            print(f"  [三合一] ✅ {code} {s['name']} | 基本{fund_score}/技術{tech_score}/籌碼{chip_score} = {total_score}分")
+            print(f"  [三合一] ✅ {code} {s['name']} | {score}分 | 投信{trust_consec}天 | 族群{sec_pct:+.1f}%")
         except Exception as e:
             pass
         _time.sleep(0.2)
 
-    # 依總分排序取前 30
+    # 依總分排序
     results.sort(key=lambda x: x["total_score"], reverse=True)
     top = results[:top_n]
 
@@ -5950,7 +6073,7 @@ def _run_trinity_screen(max_stocks=0, top_n=30):
         "time":          datetime.now().strftime("%Y/%m/%d %H:%M"),
         "screen_type":   "trinity",
     }
-    print(f"[三合一] 完成！{len(results)} 支通過，顯示前 {len(top)} 支")
+    print(f"[三合一] 完成！{len(results)} 支通過，前 {len(top)} 支")
     _save_trinity_result(out)
     return out
 

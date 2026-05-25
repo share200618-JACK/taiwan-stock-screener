@@ -344,19 +344,40 @@ async function loadWatchlist() {
 // ── 抓即時股價（用 TWSE）────────────────────────────
 async function fetchPrices(codes) {
   try {
-    const r = await fetch(`${API}/api/dashboard/indices`);
-    // 抓全市場收盤
-    const r2 = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
-    const rows = await r2.json();
-    rows.forEach(row => {
-      const code  = row.Code || row.code;
-      const price = parseFloat(row.ClosingPrice || row.close || 0);
-      const chg   = parseFloat((row.Change||'0').replace('+',''));
-      const prev  = price - chg;
-      const pct   = prev > 0 ? Math.round(chg/prev*10000)/100 : 0;
-      if (code && price > 0) _prices[code] = {price, chg, pct};
-    });
+    // 用 server 的 watchlist API 已包含 add_price，再抓即時價格
+    // 嘗試從 TWSE OpenAPI 抓當日收盤
+    const r = await fetch('https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL');
+    const rows = await r.json();
+    if (Array.isArray(rows) && rows.length > 0) {
+      rows.forEach(row => {
+        const code  = row.Code || row.code;
+        const price = parseFloat((row.ClosingPrice||'0').replace(',',''));
+        const chg   = parseFloat((row.Change||'0').replace('+','').replace(',',''));
+        const prev  = price - chg;
+        const pct   = prev > 0 ? Math.round(chg/prev*10000)/100 : 0;
+        if (code && price > 0) _prices[code] = {price, chg, pct};
+      });
+    }
+  } catch(e) {
+    console.log('TWSE 即時價格載入失敗（非交易時間）');
+  }
+
+  // 嘗試上櫃
+  try {
+    const r2 = await fetch('https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes');
+    const rows2 = await r2.json();
+    if (Array.isArray(rows2)) {
+      rows2.forEach(row => {
+        const code  = row.SecuritiesCompanyCode || row.code;
+        const price = parseFloat((row.Close||row.close||'0').replace(',',''));
+        const chg   = parseFloat((row.Change||'0').replace('+','').replace(',',''));
+        const prev  = price - chg;
+        const pct   = prev > 0 ? Math.round(chg/prev*10000)/100 : 0;
+        if (code && price > 0) _prices[code] = {price, chg, pct};
+      });
+    }
   } catch(e) {}
+
   renderList();
   updateStats();
 }
@@ -449,7 +470,7 @@ function renderCard(s) {
         <div class="chart-wrap" id="chartWrap_${s.code}">
           <div class="chart-toolbar">
             <span style="font-size:.65rem;color:var(--muted);margin-right:4px;">期間：</span>
-            ${['1M','3M','6M','1Y'].map(p=>`<button class="period-btn${p==='3M'?' active':''}" 
+            ${['1M','3M','6M','1Y','3Y'].map(p=>`<button class="period-btn${p==='3M'?' active':''}" 
               onclick="loadChart('${s.code}','${p}',this)">${p}</button>`).join('')}
           </div>
           <div id="klineChart_${s.code}" style="height:220px;"></div>
@@ -502,24 +523,30 @@ async function loadChart(code, period, btn) {
     btn.classList.add('active');
   }
 
-  const days = {'1M':35,'3M':100,'6M':185,'1Y':370}[period]||100;
+  const days = {'1M':35,'3M':100,'6M':185,'1Y':370,'3Y':1095}[period]||100;
   const start = new Date(); start.setDate(start.getDate()-days);
   const startStr = start.toISOString().slice(0,10);
   const today    = new Date().toISOString().slice(0,10);
 
+  const klineEl = document.getElementById('klineChart_'+code);
+  klineEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.75rem;">⏳ 載入中...</div>';
+
   try {
     const r = await fetch(`${API}/api/stock/history?code=${code}&start=${startStr}&end=${today}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const records = d.records || [];
-    if (!records.length) return;
-
+    if (!records.length) {
+      klineEl.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.75rem;">無歷史資料（資料需在交易日後更新）</div>';
+      return;
+    }
+    klineEl.innerHTML = '';
     drawKlineChart(code, records);
     drawKDChart(code, records);
     drawMACDChart(code, records);
     updateIndicators(code, records);
   } catch(e) {
-    document.getElementById('klineChart_'+code).innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.75rem;">線圖載入失敗</div>';
+    klineEl.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:.75rem;">線圖載入失敗: ${e.message}</div>`;
   }
 }
 
