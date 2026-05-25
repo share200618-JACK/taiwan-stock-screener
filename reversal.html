@@ -161,33 +161,35 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
         <div class="sc-max">全部要過</div>
       </div>
       <div class="sc-items">
-        <div class="sc-item">成交量 &gt; 3000萬股<span>流動性</span></div>
-        <div class="sc-item">RS 前 20%<span>相對強度</span></div>
-        <div class="sc-item">投信連買 ≥ 3天<span>籌碼支撐</span></div>
-        <div class="sc-item">MA20 &gt; MA60<span>中期多頭</span></div>
+        <div class="sc-item">投信連買 ≥ 3天<span>籌碼</span></div>
+        <div class="sc-item">股價 &gt; MA20<span>技術①</span></div>
+        <div class="sc-item">MA20 &gt; MA60<span>技術②</span></div>
+        <div class="sc-item">突破近20日高點<span>技術③</span></div>
+        <div class="sc-item">今日量 &gt; 均量×1.5<span>技術④</span></div>
+        <div class="sc-item">不超MA20的8%<span>防追高</span></div>
       </div>
     </div>
     <div class="score-card">
       <div class="sc-header">
         <div class="sc-title" style="color:var(--gold);">⭐ 加分條件</div>
-        <div class="sc-max">100分制</div>
+        <div class="sc-max">100分</div>
       </div>
       <div class="sc-items">
-        <div class="sc-item">月營收創高<span>+20</span></div>
-        <div class="sc-item">EPS 成長<span>+20</span></div>
-        <div class="sc-item">MACD 翻正<span>+20</span></div>
-        <div class="sc-item">法人同步買<span>+20</span></div>
-        <div class="sc-item">族群強勢<span>+20</span></div>
+        <div class="sc-item">投信連買 ≥ 5天<span>+20</span></div>
+        <div class="sc-item">成交值前200名<span>+20</span></div>
+        <div class="sc-item">平台整理20天+<span>+20</span></div>
+        <div class="sc-item">量增 ≥ 2倍<span>+20</span></div>
+        <div class="sc-item">創近60日新高<span>+20</span></div>
       </div>
     </div>
     <div class="score-card">
       <div class="sc-header">
-        <div class="sc-title" style="color:var(--grn);">📋 說明</div>
+        <div class="sc-title" style="color:var(--grn);">📋 邏輯</div>
         <div class="sc-max"></div>
       </div>
       <div class="sc-items">
-        <div class="sc-item" style="line-height:1.6;color:var(--txt);">
-          必要條件全過後，依加分排序取前30名。滿分100分代表五個加分條件全中。
+        <div class="sc-item" style="color:var(--txt);line-height:1.6;">
+          必要條件全過後，計算加分排序，取前30名。滿分100＝五個加分全中，代表進場訊號最強。
         </div>
       </div>
     </div>
@@ -297,13 +299,12 @@ function renderResult(d) {
     const d  = s.detail || {};
     const score = s.total_score || 0;
 
-    // 加分條件徽章
     const badges = [
-      d.rev_high    ? {label:'月營收創高', col:'var(--gold)'}   : null,
-      d.eps_growth  ? {label:'EPS成長',    col:'var(--blue)'}   : null,
-      d.macd_turn   ? {label:'MACD翻正',   col:'var(--grn)'}    : null,
-      d.sync_buy    ? {label:'法人同步買', col:'var(--pur)'}    : null,
-      d.sector_strong?{label:'族群強勢',   col:'var(--red)'}    : null,
+      d.trust5   ? {label:`投信${s.trust_days}天連買`, col:'var(--pur)'}  : null,
+      d.top200   ? {label:'成交值前200',             col:'var(--blue)'} : null,
+      d.platform ? {label:'平台整理突破',            col:'var(--gold)'} : null,
+      d.vol2x    ? {label:`爆量${s.vol_ratio}x`,     col:'var(--red)'}  : null,
+      d.new_high ? {label:'60日新高',                col:'var(--grn)'}  : null,
     ].filter(Boolean);
 
     return `<div class="stock-card" onclick="location.href='/analyze'">
@@ -327,42 +328,46 @@ function renderResult(d) {
         </div>
       </div>
 
-      <!-- 必要條件狀態 -->
-      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;">
-        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ 量&gt;3000萬</span>
-        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ RS前20%</span>
-        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ 投信${s.trust_days||3}天</span>
-        <span style="padding:2px 7px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.1);color:var(--grn);border:1px solid rgba(27,196,125,.2);">✓ MA20&gt;MA60</span>
+      <!-- 必要條件（全過才到這裡） -->
+      <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 投信${s.trust_days}天</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 股價>MA20</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ MA20>MA60</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 突破20日高</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 量×${s.vol_ratio}</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ MA20+${s.ma20_pct}%</span>
       </div>
 
       <!-- 加分條件 -->
       <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;">
-        ${badges.length ? badges.map(b=>`<span style="padding:2px 8px;border-radius:4px;font-size:.62rem;font-weight:700;
+        ${badges.length ? badges.map(b=>`<span style="padding:3px 8px;border-radius:5px;font-size:.62rem;font-weight:700;
           background:rgba(255,255,255,.06);color:${b.col};border:1px solid rgba(255,255,255,.1);">⭐ ${b.label}</span>`).join('')
-          : '<span style="font-size:.62rem;color:var(--dim);">尚無加分條件</span>'}
+          : '<span style="font-size:.62rem;color:var(--dim);">無加分條件（0分）</span>'}
       </div>
 
-      <!-- 指標 -->
+      <!-- 指標數字 -->
       <div class="ind-row">
         <div class="ind-box">
           <div class="ind-label">MA20</div>
-          <div class="ind-val" style="color:var(--blue);">${s.ma20||'—'}</div>
+          <div class="ind-val" style="color:var(--blue);">${s.ma20}</div>
+          <div style="font-size:.58rem;color:var(--red);">+${s.ma20_pct}%</div>
         </div>
         <div class="ind-box">
           <div class="ind-label">MA60</div>
-          <div class="ind-val">${s.ma60||'—'}</div>
+          <div class="ind-val">${s.ma60}</div>
         </div>
         <div class="ind-box">
-          <div class="ind-label">MACD柱</div>
-          <div class="ind-val" style="color:${(d.macd_hist||0)>=0?'var(--red)':'var(--grn)'};">${d.macd_hist!=null?(d.macd_hist>0?'+':'')+d.macd_hist:'—'}</div>
+          <div class="ind-label">量比</div>
+          <div class="ind-val" style="color:${s.vol_ratio>=2?'var(--red)':'var(--txt)'};">${s.vol_ratio}x</div>
         </div>
         <div class="ind-box">
-          <div class="ind-label">族群漲跌</div>
-          <div class="ind-val" style="color:${(d.sector_pct||0)>=0?'var(--red)':'var(--grn)'};">${d.sector_pct!=null?(d.sector_pct>0?'+':'')+d.sector_pct+'%':'—'}</div>
+          <div class="ind-label">近60日高</div>
+          <div class="ind-val" style="color:${d.new_high?'var(--gold)':'var(--txt)'};">${d.hi60||'—'}</div>
         </div>
       </div>
     </div>`;
   }).join('');
+
 }
 
 function showEmpty() {

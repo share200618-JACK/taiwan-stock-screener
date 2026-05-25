@@ -5829,6 +5829,221 @@ def _score_chips(code, inst_days, records):
 
 def _run_trinity_screen(max_stocks=0, top_n=30):
     """
+    三合一選股（整合版）
+    ── 必要條件（全部要過）──────────────────────────
+    籌碼：投信連買 ≥ 3 天
+    技術①：股價 > MA20
+    技術②：MA20 > MA60
+    技術③：今日突破近20日最高價
+    技術④：今日量 > 近20日均量 × 1.5倍
+    過濾：股價不超過 MA20 的 8%（不追高）
+    ── 加分條件（100分制）───────────────────────────
+    +20 投信連買 ≥ 5 天
+    +20 成交值排行前200名
+    +20 平台整理20天以上（低波動後突破）
+    +20 量增 ≥ 2 倍（突破量）
+    +20 股價創近60日新高（波段新高）
+    """
+    import time as _time
+    print("[三合一] 開始掃描（整合版）...")
+
+    # 取得股票清單（含成交量和成交值）
+    stocks = []
+    all_turnover = []  # 成交值排行用
+
+    try:
+        r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        for row in r.json():
+            code     = row.get("Code","")
+            price    = safe_float(row.get("ClosingPrice","0"))
+            vol_s    = safe_float(row.get("TradeVolume","0").replace(",",""))
+            turnover = safe_float(row.get("TradeValue","0").replace(",",""))  # 成交值（元）
+            chg      = safe_float(row.get("Change","0").replace(",",""))
+            prev     = price - chg
+            pct      = round(chg/prev*100, 2) if prev > 0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price > 0): continue
+            if price < 10: continue
+            stocks.append({
+                "code": code, "name": row.get("Name",""),
+                "price": price, "pct": pct,
+                "vol_shares": vol_s,
+                "turnover": turnover,
+                "sector": ""
+            })
+            all_turnover.append((code, turnover))
+    except Exception as e:
+        print(f"  [三合一] 上市失敗: {e}")
+
+    try:
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        for row in r2.json():
+            code     = row.get("SecuritiesCompanyCode","") or row.get("code","")
+            price    = safe_float(row.get("Close","") or row.get("close",""))
+            vol_s    = safe_float(row.get("TradingShares","") or "0")
+            turnover = safe_float(row.get("TradeValue","") or "0")
+            chg      = safe_float(row.get("Change","") or "0")
+            prev     = price - chg
+            pct      = round(chg/prev*100, 2) if prev > 0 else 0
+            if not (str(code).isdigit() and len(code)==4 and price > 0): continue
+            if price < 10: continue
+            stocks.append({
+                "code": code,
+                "name": row.get("CompanyName","") or row.get("name",""),
+                "price": price, "pct": pct,
+                "vol_shares": vol_s,
+                "turnover": turnover,
+                "sector": ""
+            })
+            all_turnover.append((code, turnover))
+    except Exception as e:
+        print(f"  [三合一] 上櫃失敗: {e}")
+
+    if not stocks:
+        print("[三合一] 無法取得股票清單"); return None
+    if max_stocks and max_stocks < len(stocks):
+        stocks = stocks[:max_stocks]
+
+    # 成交值前200排名
+    top200_codes = set(
+        code for code, _ in
+        sorted(all_turnover, key=lambda x: x[1], reverse=True)[:200]
+    )
+
+    _load_sector_map()
+    today      = datetime.today().strftime("%Y-%m-%d")
+    start_dt   = (datetime.today()-timedelta(days=30)).strftime("%Y-%m-%d")
+    start_hist = (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
+    results    = []
+    total      = len(stocks)
+
+    for idx, s in enumerate(stocks):
+        code = s["code"]
+        if idx % 100 == 0:
+            print(f"  [三合一] {idx+1}/{total} ({code} {s['name']})")
+        try:
+            # 抓歷史資料
+            records = fetch_history_range(code, start_hist, today)
+            if len(records) < 60: continue
+
+            closes = [r["close"] for r in records]
+            highs  = [r.get("high", r["close"]) for r in records]
+            vols   = [r.get("vol", 0) for r in records]
+            n      = len(closes)
+
+            cur    = closes[-1]
+            ma20   = sum(closes[-20:]) / 20
+            ma60   = sum(closes[-60:]) / 60
+            hi20   = max(highs[-21:-1]) if len(highs) >= 21 else max(highs[:-1])  # 前20日最高
+            avg20v = sum(vols[-21:-1]) / 20 if len(vols) >= 21 else sum(vols[:-1]) / max(len(vols)-1,1)
+
+            # ── 必要條件 ─────────────────────────────────
+            # ① 股價 > MA20
+            if cur <= ma20: continue
+            # ② MA20 > MA60
+            if ma20 <= ma60: continue
+            # ③ 今日突破近20日高點
+            if cur <= hi20: continue
+            # ④ 今日量 > 近20日均量 × 1.5
+            vol_ratio = vols[-1] / avg20v if avg20v > 0 else 0
+            if vol_ratio < 1.5: continue
+            # ⑤ 不追高：股價不超過 MA20 的 8%
+            ma20_pct = (cur - ma20) / ma20 * 100
+            if ma20_pct > 8: continue
+
+            # ── 籌碼：投信連買 ≥ 3 天（必要）───────────
+            try:
+                token = _get_finmind_token()
+                if token:
+                    r_inst = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                        params={"dataset":"TaiwanStockInstitutionalInvestorsBuySell",
+                                "data_id":code,"start_date":start_dt},
+                        headers={"Authorization":f"Bearer {token}"}, timeout=10)
+                    inst_rows = r_inst.json().get("data",[])
+                else:
+                    inst_rows = []
+            except:
+                inst_rows = []
+
+            trust_dates = sorted(set(r["date"] for r in inst_rows if r.get("name")=="投信"))[-7:]
+            trust_consec = 0
+            for td in reversed(trust_dates):
+                net = sum(safe_float(r.get("buy",0)) - safe_float(r.get("sell",0))
+                          for r in inst_rows if r["date"]==td and r.get("name")=="投信")
+                if net > 0: trust_consec += 1
+                else: break
+
+            if trust_consec < 3: continue
+
+            # ── 加分條件（100分）──────────────────────────
+            score  = 0
+            detail = {
+                "ma20": round(ma20,2), "ma60": round(ma60,2),
+                "ma20_pct": round(ma20_pct,1),
+                "vol_ratio": round(vol_ratio,1),
+                "trust_days": trust_consec,
+                "hi20": round(hi20,2),
+            }
+
+            # +20 投信連買 ≥ 5 天
+            if trust_consec >= 5:
+                score += 20; detail["trust5"] = True
+
+            # +20 成交值前200
+            if code in top200_codes:
+                score += 20; detail["top200"] = True
+
+            # +20 平台整理20天（近20日收盤價波動 < 8%）
+            hi20c = max(closes[-20:])
+            lo20c = min(closes[-20:])
+            range_pct = (hi20c - lo20c) / lo20c * 100 if lo20c > 0 else 999
+            if range_pct < 8:
+                score += 20; detail["platform"] = True
+            detail["range_pct"] = round(range_pct,1)
+
+            # +20 量增 ≥ 2 倍
+            if vol_ratio >= 2.0:
+                score += 20; detail["vol2x"] = True
+
+            # +20 股價創近60日新高
+            hi60 = max(highs[-61:-1]) if len(highs) >= 61 else max(highs[:-1])
+            if cur > hi60:
+                score += 20; detail["new_high"] = True
+            detail["hi60"] = round(hi60,2)
+
+            sector = _sector_map.get(code, "")
+            results.append({
+                "code":        code,
+                "name":        s["name"],
+                "price":       cur,
+                "chg_pct":     s.get("pct",0),
+                "sector":      sector,
+                "total_score": score,
+                "trust_days":  trust_consec,
+                "vol_ratio":   round(vol_ratio,1),
+                "ma20":        round(ma20,2),
+                "ma60":        round(ma60,2),
+                "ma20_pct":    round(ma20_pct,1),
+                "detail":      detail,
+            })
+            print(f"  [三合一] ✅ {code} {s['name']} | {score}分 | 投信{trust_consec}天 | 量比{vol_ratio:.1f}x | MA20+{ma20_pct:.1f}%")
+        except Exception as e:
+            pass
+        _time.sleep(0.2)
+
+    results.sort(key=lambda x: x["total_score"], reverse=True)
+    top = results[:top_n]
+    out = {
+        "stocks":        top,
+        "total_scanned": total,
+        "total_passed":  len(results),
+        "date":          today,
+        "time":          datetime.now().strftime("%Y/%m/%d %H:%M"),
+        "screen_type":   "trinity",
+    }
+    print(f"[三合一] 完成！{len(results)} 支通過，前 {len(top)} 支")
+    _save_trinity_result(out)
+    return out
+    """
     三合一選股（新版）
     必要條件（全部要過才繼續）：
       ① 成交量 > 3000萬（流動性）
