@@ -4984,12 +4984,24 @@ def _start_daily_schedule():
 
                 if should_run:
                     print(f"[排程] ⏰ {reason}")
-                    # 🤖 v2.0 AI 分析（輕量，只跑 AI 評分）
+                    # v2.0 AI 分析
                     _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
                     last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
                     print(f"[排程] ✅ v2.0 完成，last_ran_date={last_ran_date}")
-                    # 三合一和遊牧民已移至 GitHub Actions 執行，不在這裡跑
-                    print("[排程] ℹ️ 三合一/遊牧民由 GitHub Actions 負責")
+                    # 🎯 三合一選股
+                    try:
+                        print("[排程] 🎯 啟動三合一選股...")
+                        _run_trinity_screen(max_stocks=0, top_n=30)
+                        print("[排程] ✅ 三合一完成")
+                    except Exception as e1:
+                        print(f"[排程] ❌ 三合一錯誤: {e1}")
+                    # 🐎 遊牧民選股（自動加入追蹤清單）
+                    try:
+                        print("[排程] 🐎 啟動遊牧民選股...")
+                        _run_nomad_screen(user_token="default")
+                        print("[排程] ✅ 遊牧民完成")
+                    except Exception as e2:
+                        print(f"[排程] ❌ 遊牧民錯誤: {e2}")
                     _time.sleep(3600)
                 else:
                     _time.sleep(60)
@@ -5491,33 +5503,100 @@ def dashboard_summary():
 
 @app.route("/api/stock/history")
 def api_stock_history():
-    """個股歷史 K 線資料（給追蹤清單線圖用）"""
+    """個股歷史 K 線（優先用 TWSE，速度快不耗記憶體）"""
     code  = request.args.get("code","")
     start = request.args.get("start","")
     end   = request.args.get("end","")
     if not code:
         return jsonify({"error":"缺少 code 參數"}), 400
-    if not start:
-        start = (datetime.today()-timedelta(days=100)).strftime("%Y-%m-%d")
-    if not end:
-        end = datetime.today().strftime("%Y-%m-%d")
-    try:
-        records = fetch_history_range(code, start, end)
-        # 確保有 open/high/low
-        cleaned = []
-        for r in records:
-            cleaned.append({
-                "date":  r.get("date",""),
-                "open":  r.get("open",  r.get("close",0)),
-                "high":  r.get("high",  r.get("close",0)),
-                "low":   r.get("low",   r.get("close",0)),
-                "close": r.get("close", 0),
-                "vol":   r.get("vol",   0),
-                "chg":   r.get("change", r.get("chg", 0)),
-            })
-        return jsonify({"code":code,"records":cleaned})
-    except Exception as e:
-        return jsonify({"error":str(e)}), 500
+
+    start_dt = datetime.strptime(start, "%Y-%m-%d") if start else datetime.today()-timedelta(days=100)
+    end_dt   = datetime.strptime(end,   "%Y-%m-%d") if end   else datetime.today()
+
+    all_records = []
+
+    # 按月抓 TWSE 歷史（每次一個月）
+    cur = start_dt.replace(day=1)
+    while cur <= end_dt:
+        yyyymmdd = cur.strftime("%Y%m%d")
+        try:
+            r = SESSION.get(
+                f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={yyyymmdd}&stockNo={code}",
+                timeout=10)
+            d = r.json()
+            if d.get("stat") == "OK":
+                for row in d.get("data",[]):
+                    try:
+                        # 民國年轉西元
+                        roc = row[0].strip()
+                        parts = roc.split("/")
+                        year  = int(parts[0]) + 1911
+                        date  = f"{year}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                        close = safe_float(row[6].replace(",",""))
+                        open_ = safe_float(row[3].replace(",",""))
+                        high  = safe_float(row[4].replace(",",""))
+                        low   = safe_float(row[5].replace(",",""))
+                        vol   = round(safe_float(row[1].replace(",",""))/1000)
+                        chg   = safe_float(row[7].replace(",","").replace("X","0").replace("+",""))
+                        if close > 0:
+                            all_records.append({
+                                "date":date,"open":open_,"high":high,
+                                "low":low,"close":close,"vol":vol,"chg":chg
+                            })
+                    except: pass
+        except: pass
+
+        # 下個月
+        if cur.month == 12:
+            cur = cur.replace(year=cur.year+1, month=1)
+        else:
+            cur = cur.replace(month=cur.month+1)
+
+    # 如果 TWSE 沒有（上櫃股票），改用 TPEX
+    if not all_records:
+        cur = start_dt.replace(day=1)
+        while cur <= end_dt:
+            roc_y = cur.year - 1911
+            roc_m = f"{roc_y}/{cur.month:02d}"
+            try:
+                r2 = SESSION.get(
+                    f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+                    f"?d={roc_m}&stkno={code}&o=json",
+                    timeout=10)
+                d2 = r2.json()
+                for row in d2.get("aaData",[]):
+                    try:
+                        parts = row[0].split("/")
+                        year  = int(parts[0]) + 1911
+                        date  = f"{year}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                        close = safe_float(row[6].replace(",",""))
+                        open_ = safe_float(row[3].replace(",",""))
+                        high  = safe_float(row[4].replace(",",""))
+                        low   = safe_float(row[5].replace(",",""))
+                        vol   = round(safe_float(row[1].replace(",",""))/1000)
+                        if close > 0:
+                            all_records.append({
+                                "date":date,"open":open_,"high":high,
+                                "low":low,"close":close,"vol":vol,"chg":0
+                            })
+                    except: pass
+            except: pass
+            if cur.month == 12:
+                cur = cur.replace(year=cur.year+1, month=1)
+            else:
+                cur = cur.replace(month=cur.month+1)
+
+    # 過濾日期範圍並排序
+    start_str = start_dt.strftime("%Y-%m-%d")
+    end_str   = end_dt.strftime("%Y-%m-%d")
+    records   = sorted(
+        [r for r in all_records if start_str <= r["date"] <= end_str],
+        key=lambda x: x["date"]
+    )
+    return jsonify({"code":code,"records":records})
+
+
+@app.route("/api/dashboard/sector_heatmap")
 
 @app.route("/api/dashboard/sector_heatmap")
 def dashboard_sector_heatmap():
