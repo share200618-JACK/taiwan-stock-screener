@@ -4984,24 +4984,12 @@ def _start_daily_schedule():
 
                 if should_run:
                     print(f"[排程] ⏰ {reason}")
-                    # v2.0 AI 分析
+                    # 🤖 v2.0 AI 分析（輕量，只跑 AI 評分）
                     _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
                     last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
                     print(f"[排程] ✅ v2.0 完成，last_ran_date={last_ran_date}")
-                    # 🎯 三合一選股
-                    try:
-                        print("[排程] 🎯 啟動三合一選股...")
-                        _run_trinity_screen(max_stocks=0, top_n=30)
-                        print("[排程] ✅ 三合一完成")
-                    except Exception as e1:
-                        print(f"[排程] ❌ 三合一錯誤: {e1}")
-                    # 🐎 遊牧民選股（自動加入追蹤清單）
-                    try:
-                        print("[排程] 🐎 啟動遊牧民選股...")
-                        _run_nomad_screen(user_token="default")
-                        print("[排程] ✅ 遊牧民完成")
-                    except Exception as e2:
-                        print(f"[排程] ❌ 遊牧民錯誤: {e2}")
+                    # 三合一和遊牧民已移至 GitHub Actions 執行，不在這裡跑
+                    print("[排程] ℹ️ 三合一/遊牧民由 GitHub Actions 負責")
                     _time.sleep(3600)
                 else:
                     _time.sleep(60)
