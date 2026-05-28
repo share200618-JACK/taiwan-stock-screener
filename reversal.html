@@ -297,14 +297,22 @@ function renderResult(d) {
   document.getElementById('stockList').innerHTML = stocks.map((s,i)=>{
     const up = s.chg_pct >= 0;
     const d  = s.detail || {};
-    const score = s.total_score || 0;
+
+    // 相容新舊資料格式
+    const trustDays = s.trust_days || d.trust_days || s.inst_days || 0;
+    const volRatio  = s.vol_ratio  || d.vol_ratio  || 0;
+    const ma20val   = s.ma20       || d.ma20       || '—';
+    const ma60val   = s.ma60       || d.ma60       || '—';
+    const ma20pct   = s.ma20_pct   || d.ma20_pct   || 0;
+    const hi60val   = d.hi60       || '—';
+    const score     = s.total_score || 0;
 
     const badges = [
-      d.trust5   ? {label:`投信${s.trust_days}天連買`, col:'var(--pur)'}  : null,
-      d.top200   ? {label:'成交值前200',             col:'var(--blue)'} : null,
-      d.platform ? {label:'平台整理突破',            col:'var(--gold)'} : null,
-      d.vol2x    ? {label:`爆量${s.vol_ratio}x`,     col:'var(--red)'}  : null,
-      d.new_high ? {label:'60日新高',                col:'var(--grn)'}  : null,
+      d.trust5   ? {label:`投信${trustDays}天連買`, col:'var(--pur)'}  : null,
+      d.top200   ? {label:'成交值前200',            col:'var(--blue)'} : null,
+      d.platform ? {label:'平台整理突破',           col:'var(--gold)'} : null,
+      d.vol2x    ? {label:`爆量${volRatio}x`,       col:'var(--red)'}  : null,
+      d.new_high ? {label:'60日新高',               col:'var(--grn)'}  : null,
     ].filter(Boolean);
 
     return `<div class="stock-card" onclick="location.href='/analyze'">
@@ -330,12 +338,12 @@ function renderResult(d) {
 
       <!-- 必要條件（全過才到這裡） -->
       <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;">
-        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 投信${s.trust_days}天</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 投信${trustDays}天</span>
         <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 股價>MA20</span>
         <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ MA20>MA60</span>
         <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 突破20日高</span>
-        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 量×${s.vol_ratio}</span>
-        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ MA20+${s.ma20_pct}%</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ 量×${volRatio}</span>
+        <span style="padding:2px 6px;border-radius:4px;font-size:.6rem;font-weight:700;background:rgba(27,196,125,.08);color:var(--grn);border:1px solid rgba(27,196,125,.15);">✓ MA20+${ma20pct}%</span>
       </div>
 
       <!-- 加分條件 -->
@@ -349,16 +357,16 @@ function renderResult(d) {
       <div class="ind-row">
         <div class="ind-box">
           <div class="ind-label">MA20</div>
-          <div class="ind-val" style="color:var(--blue);">${s.ma20}</div>
-          <div style="font-size:.58rem;color:var(--red);">+${s.ma20_pct}%</div>
+          <div class="ind-val" style="color:var(--blue);">${ma20val}</div>
+          <div style="font-size:.58rem;color:var(--red);">+${ma20pct}%</div>
         </div>
         <div class="ind-box">
           <div class="ind-label">MA60</div>
-          <div class="ind-val">${s.ma60}</div>
+          <div class="ind-val">${ma60val}</div>
         </div>
         <div class="ind-box">
           <div class="ind-label">量比</div>
-          <div class="ind-val" style="color:${s.vol_ratio>=2?'var(--red)':'var(--txt)'};">${s.vol_ratio}x</div>
+          <div class="ind-val" style="color:${volRatio>=2?'var(--red)':'var(--txt)'};">${volRatio}x</div>
         </div>
         <div class="ind-box">
           <div class="ind-label">近60日高</div>
