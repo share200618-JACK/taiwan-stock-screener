@@ -259,8 +259,8 @@ def run_trinity():
     top = results[:30]
     out = {"stocks":top,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
-    log(f"🎯 三合一完成：{len(results)} 支通過")
-    save_result("trinity_results", out)
+    log(f"🎯 三合一完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
+    save_result("trinity_results", out)  # 不管 0 支或多支都存
     return out
 
 # ══════════════════════════════════════════════════════
@@ -366,8 +366,8 @@ def run_nomad():
     results.sort(key=lambda x: x["vol_ratio"], reverse=True)
     out = {"stocks":results,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
-    log(f"🐎 遊牧民完成：{len(results)} 支通過")
-    save_result("nomad_results", out)
+    log(f"🐎 遊牧民完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
+    save_result("nomad_results", out)  # 不管 0 支都存
 
     # 自動加入追蹤清單
     added = 0
