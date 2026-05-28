@@ -2,9 +2,12 @@ name: 每日選股排程
 
 on:
   schedule:
-    # 台灣時間 22:15 = UTC 14:15
     - cron: '15 14 * * 1-5'
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'run_screen.py'
 
 jobs:
   screen:
