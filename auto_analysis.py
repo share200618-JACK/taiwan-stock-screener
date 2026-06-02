@@ -42,6 +42,48 @@ HISTORY_MONTHS = 24    # 抓幾個月歷史資料（2 年）
 # 結果存檔路徑（server.py 會讀這個檔案）
 RESULT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis_result.json")
 
+# Supabase 設定（從環境變數讀取，GitHub Actions / Render 都適用）
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+
+def _sb_headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
+
+def save_to_supabase(data):
+    """把 AI 分析結果寫進 Supabase analysis_results（同日 upsert）"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        print("[Supabase] 未設定 SUPABASE_URL / SUPABASE_KEY，跳過")
+        return
+    try:
+        today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+        url   = f"{SUPABASE_URL}/rest/v1/analysis_results"
+        # 先刪同日舊資料
+        requests.delete(url, params={"date": f"eq.{today}"},
+                        headers=_sb_headers(), timeout=10)
+        payload = {
+            "date":           today,
+            "time":           data.get("time", ""),
+            "model_ver":      data.get("model_ver", "v2"),
+            "total_scanned":  data.get("total_scanned", 0),
+            "total_analyzed": data.get("total_analyzed", 0),
+            "avg_accuracy":   data.get("avg_accuracy", 0),
+            "bullish":        data.get("bullish", 0),
+            "bearish":        data.get("bearish", 0),
+            "stocks":         json.dumps(data.get("stocks", []), ensure_ascii=False),
+        }
+        r = requests.post(url, json=payload, headers=_sb_headers(), timeout=10)
+        if r.status_code in (200, 201):
+            print(f"[Supabase] ✅ analysis_results 已存入 {len(data.get('stocks',[]))} 支推薦")
+        else:
+            print(f"[Supabase] ❌ 存入失敗 {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        print(f"[Supabase] ❌ 例外: {e}")
+
 FILTER = {
     "min_price":   10,
     "max_price":   500,
@@ -693,6 +735,7 @@ def run():
     }
 
     save_result(output)
+    save_to_supabase(output)   # ← 同步寫入 Supabase（GitHub Actions 用）
 
     print(f"\n✅ 完成！前3名：" +
           "、".join(f"{r['code']}{r['name']}" for r in top[:3]))

@@ -184,9 +184,10 @@ def run_trinity():
 
     top200 = set(c for c,_ in sorted(all_turnover, key=lambda x:x[1], reverse=True)[:200])
 
-    today      = datetime.today().strftime("%Y-%m-%d")
-    start_dt   = (datetime.today()-timedelta(days=30)).strftime("%Y-%m-%d")
-    start_hist = (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
+    tw_now     = datetime.utcnow() + timedelta(hours=8)  # 台灣時間（UTC+8）
+    today      = tw_now.strftime("%Y-%m-%d")
+    start_dt   = (tw_now - timedelta(days=30)).strftime("%Y-%m-%d")
+    start_hist = (tw_now - timedelta(days=95)).strftime("%Y-%m-%d")
     results    = []
 
     for idx, s in enumerate(stocks):
@@ -301,8 +302,9 @@ def run_nomad():
 
     log(f"股票清單取得 {len(stocks)} 支")
 
-    today      = datetime.today().strftime("%Y-%m-%d")
-    start_hist = (datetime.today()-timedelta(days=95)).strftime("%Y-%m-%d")
+    tw_now     = datetime.utcnow() + timedelta(hours=8)  # 台灣時間（UTC+8）
+    today      = tw_now.strftime("%Y-%m-%d")
+    start_hist = (tw_now - timedelta(days=95)).strftime("%Y-%m-%d")
     results    = []
 
     for idx, s in enumerate(stocks):
