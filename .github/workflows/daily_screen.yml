@@ -2,8 +2,6 @@ name: 每日選股排程
 
 on:
   schedule:
-    # 06:30 UTC = 台灣 14:30（剛收盤）
-    # GitHub 免費版有延遲，實際執行約 14:30~17:00 台灣時間
     - cron: '30 6 * * 1-5'
   workflow_dispatch:
   push:
