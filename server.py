@@ -4568,6 +4568,16 @@ def stock_analysis(code):
         hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
 
         # ── 近250日 K線資料（前端繪圖用，支援1年視角）──
+        # 先把 MA 陣列算好，避免 Python slice [a:0] 回傳空陣列的 bug
+        def _rolling_ma(arr, n):
+            out = []
+            for idx in range(len(arr)):
+                s = max(0, idx - n + 1)
+                out.append(round(sum(arr[s:idx+1]) / (idx - s + 1), 2))
+            return out
+        ma5_arr  = _rolling_ma(closes, 5)
+        ma20_arr = _rolling_ma(closes, 20)
+
         recent_n = min(250, len(records))
         candles  = [{
             "date":  records[-recent_n+i]["date"],
@@ -4576,8 +4586,8 @@ def stock_analysis(code):
             "low":   lows[-recent_n+i],
             "close": closes[-recent_n+i],
             "vol":   vols[-recent_n+i],
-            "ma5":   round(sum(closes[max(0,-recent_n+i-4):-recent_n+i+1])/min(5,i+1),2) if i>=0 else closes[-recent_n+i],
-            "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
+            "ma5":   ma5_arr[-recent_n+i],
+            "ma20":  ma20_arr[-recent_n+i],
         } for i in range(recent_n)]
 
         return jsonify({
@@ -5552,76 +5562,35 @@ def api_stock_history():
         else:
             cur = cur.replace(month=cur.month+1)
 
-    # 如果 TWSE 沒有（上櫃股票），改用 TPEX（雙 fallback）
+    # 如果 TWSE 沒有（上櫃股票），改用 TPEX
     if not all_records:
         cur = start_dt.replace(day=1)
         while cur <= end_dt:
             roc_y = cur.year - 1911
             roc_m = f"{roc_y}/{cur.month:02d}"
-            fetched = False
-
-            # 方法一：TPEX 舊版 API
             try:
                 r2 = SESSION.get(
                     f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                    f"?l=zh-tw&d={roc_m}&stkno={code}&s=0,asc,0&o=json",
+                    f"?d={roc_m}&stkno={code}&o=json",
                     timeout=10)
                 d2 = r2.json()
-                rows2 = d2.get("aaData", [])
-                if rows2:
-                    for row in rows2:
-                        try:
-                            parts = str(row[0]).strip().split("/")
-                            if len(parts) != 3: continue
-                            year  = int(parts[0]) + 1911
-                            date  = f"{year}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
-                            close = safe_float(str(row[6]).replace(",",""))
-                            open_ = safe_float(str(row[3]).replace(",",""))
-                            high  = safe_float(str(row[4]).replace(",",""))
-                            low   = safe_float(str(row[5]).replace(",",""))
-                            vol   = round(safe_float(str(row[1]).replace(",",""))/1000)
-                            chg   = safe_float(str(row[7]).replace(",","")) if len(row) > 7 else 0
-                            if close > 0:
-                                all_records.append({
-                                    "date":date,"open":open_,"high":high,
-                                    "low":low,"close":close,"vol":vol,"chg":chg
-                                })
-                        except: pass
-                    fetched = True
-            except Exception as e:
-                print(f"[OTC方法1] {code} {roc_m}: {e}")
-
-            # 方法二：TPEX openapi 備用
-            if not fetched:
-                try:
-                    url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
-                            f"?date={cur.year}-{cur.month:02d}-01&stockNo={code}")
-                    r3 = SESSION.get(url2, timeout=10)
-                    rows3 = r3.json()
-                    if isinstance(rows3, list):
-                        for row in rows3:
-                            try:
-                                d_str = row.get("Date","") or row.get("date","")
-                                c3    = safe_float(row.get("Close","") or row.get("close",""))
-                                if not d_str or c3 <= 0: continue
-                                if "/" in d_str:
-                                    pts = d_str.split("/")
-                                    dt  = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
-                                else:
-                                    dt  = datetime.strptime(d_str[:10], "%Y-%m-%d")
-                                all_records.append({
-                                    "date":   dt.strftime("%Y-%m-%d"),
-                                    "open":   safe_float(row.get("Open","") or row.get("open","")),
-                                    "high":   safe_float(row.get("High","") or row.get("high","")),
-                                    "low":    safe_float(row.get("Low","")  or row.get("low","")),
-                                    "close":  c3,
-                                    "vol":    round(safe_float(row.get("TradingShares","") or row.get("volume","")) / 1000),
-                                    "chg":    safe_float(row.get("Change","") or row.get("change","")),
-                                })
-                            except: continue
-                except Exception as e:
-                    print(f"[OTC方法2] {code} {roc_m}: {e}")
-
+                for row in d2.get("aaData",[]):
+                    try:
+                        parts = row[0].split("/")
+                        year  = int(parts[0]) + 1911
+                        date  = f"{year}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                        close = safe_float(row[6].replace(",",""))
+                        open_ = safe_float(row[3].replace(",",""))
+                        high  = safe_float(row[4].replace(",",""))
+                        low   = safe_float(row[5].replace(",",""))
+                        vol   = round(safe_float(row[1].replace(",",""))/1000)
+                        if close > 0:
+                            all_records.append({
+                                "date":date,"open":open_,"high":high,
+                                "low":low,"close":close,"vol":vol,"chg":0
+                            })
+                    except: pass
+            except: pass
             if cur.month == 12:
                 cur = cur.replace(year=cur.year+1, month=1)
             else:

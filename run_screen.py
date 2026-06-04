@@ -198,6 +198,26 @@ def run_trinity():
             records = fetch_history(code, start_hist, today)
             if len(records) < 60: continue
 
+            # ── FinMind 資料延遲補丁 ──────────────────────────
+            # 若 FinMind 最新一筆不是今天，把今天的 OHLCV 補進去
+            last_data_date = records[-1]["date"] if records else ""
+            if last_data_date < today:
+                today_high = s.get("high", s["price"])
+                today_low  = s.get("low",  s["price"])
+                today_vol  = s.get("vol_張", s.get("vol_s", 0) / 1000)
+                if today_high > 0 and today_low > 0:
+                    records.append({
+                        "date":  today,
+                        "open":  s["price"],
+                        "high":  today_high,
+                        "low":   today_low,
+                        "close": s["price"],
+                        "vol":   today_vol,
+                    })
+                # 第一支股票才印一次延遲警告，避免 log 爆炸
+                if idx == 0:
+                    log(f"  ⚠️ FinMind 資料延遲：最新={last_data_date}，今日={today}，已自動補今日快照資料")
+
             closes = [r["close"] for r in records]
             highs  = [r.get("high", r["close"]) for r in records]
             vols   = [r.get("vol", 0) for r in records]
@@ -282,8 +302,12 @@ def run_nomad():
             prev  = price-chg; pct=round(chg/prev*100,2) if prev>0 else 0
             if not (str(code).isdigit() and len(code)==4 and price>0): continue
             if price < 10: continue
+            high_s = safe_float(row.get("HighestPrice","0"))
+            low_s  = safe_float(row.get("LowestPrice","0"))
             stocks.append({"code":code,"name":row.get("Name",""),
-                           "price":price,"pct":pct,"vol_s":vol_s})
+                           "price":price,"pct":pct,"vol_s":vol_s,
+                           "high":high_s,"low":low_s,
+                           "vol_張":round(vol_s/1000,1)})  # TWSE: 股→張
     except Exception as e: log(f"上市失敗: {e}")
 
     try:
@@ -296,8 +320,13 @@ def run_nomad():
             prev  = price-chg; pct=round(chg/prev*100,2) if prev>0 else 0
             if not (str(code).isdigit() and len(code)==4 and price>0): continue
             if price < 10: continue
+            high_s2 = safe_float(row.get("High","") or row.get("high","") or str(price))
+            low_s2  = safe_float(row.get("Low","")  or row.get("low","")  or str(price))
+            vol_千  = safe_float(row.get("TradingShares","") or "0")  # TPEX: 已是千股=張
             stocks.append({"code":code,"name":row.get("CompanyName","") or row.get("name",""),
-                           "price":price,"pct":pct,"vol_s":vol_s})
+                           "price":price,"pct":pct,"vol_s":vol_s,
+                           "high":high_s2,"low":low_s2,
+                           "vol_張":round(vol_千,1)})  # TPEX: 千股=張
     except Exception as e: log(f"上櫃失敗: {e}")
 
     log(f"股票清單取得 {len(stocks)} 支")

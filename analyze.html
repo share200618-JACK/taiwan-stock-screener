@@ -208,7 +208,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       </div>
       <div class="fg">
         <label class="fl">顯示推薦數</label>
-        <input class="fi" type="number" id="topN" value="10" min="5" max="20">
+        <input class="fi" type="number" id="topN" value="20" min="5" max="50">
       </div>
       <div class="fg">
         <label class="fl">模型版本</label>
@@ -699,7 +699,6 @@ window.addEventListener('DOMContentLoaded', () => {
   requireAuth().then(user => {
     if (user) {
     renderAuthBar('authBar');
-    // 同步用戶名到頂部 topbar
     const uname = user.username || user.name || user.user || '';
     const avatar = document.getElementById('userAvatar');
     const nameEl = document.getElementById('topUserName');
