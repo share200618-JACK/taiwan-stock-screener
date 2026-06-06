@@ -49,7 +49,7 @@ def supabase_save_analysis(data):
         return False
     try:
         url     = f"{SUPABASE_URL}/rest/v1/analysis_results"
-        today   = datetime.now().strftime("%Y-%m-%d")
+        today   = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")  # 台灣時間
 
         # ① 先刪除同日期舊資料（避免重複，確保每天只有一筆）
         del_r = requests.delete(url,
@@ -4568,16 +4568,6 @@ def stock_analysis(code):
         hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
 
         # ── 近250日 K線資料（前端繪圖用，支援1年視角）──
-        # 先把 MA 陣列算好，避免 Python slice [a:0] 回傳空陣列的 bug
-        def _rolling_ma(arr, n):
-            out = []
-            for idx in range(len(arr)):
-                s = max(0, idx - n + 1)
-                out.append(round(sum(arr[s:idx+1]) / (idx - s + 1), 2))
-            return out
-        ma5_arr  = _rolling_ma(closes, 5)
-        ma20_arr = _rolling_ma(closes, 20)
-
         recent_n = min(250, len(records))
         candles  = [{
             "date":  records[-recent_n+i]["date"],
@@ -4586,8 +4576,8 @@ def stock_analysis(code):
             "low":   lows[-recent_n+i],
             "close": closes[-recent_n+i],
             "vol":   vols[-recent_n+i],
-            "ma5":   ma5_arr[-recent_n+i],
-            "ma20":  ma20_arr[-recent_n+i],
+            "ma5":   round(sum(closes[max(0,-recent_n+i-4):-recent_n+i+1])/min(5,i+1),2) if i>=0 else closes[-recent_n+i],
+            "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
         } for i in range(recent_n)]
 
         return jsonify({
@@ -4890,33 +4880,48 @@ def portfolio_page():
 
 @app.route("/api/prices")
 def get_prices():
-    """取得指定股票的即時報價"""
+    """取得指定股票的即時報價（上市 + 上櫃）"""
     codes_str = request.args.get("codes","")
     codes = [c.strip() for c in codes_str.split(",") if c.strip()]
     if not codes:
         return jsonify({"error":"請提供股票代號"}), 400
+    prices = {}
     try:
-        url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
+        # 上市（TWSE）
+        url = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         resp = SESSION.get(url, timeout=15); resp.raise_for_status()
         rows = resp.json()
-        prices = {}
-        for r in rows:
-            code  = r.get("Code","")
-            if code not in codes: continue
-            price = safe_float(r.get("ClosingPrice"))
-            chg   = safe_float(r.get("Change"))
-            if price <= 0: continue
-            prev  = price - chg
-            pct   = round(chg/prev*100, 2) if prev > 0 else 0
-            prices[code] = {
-                "price":  price,
-                "change": chg,
-                "chgPct": pct,
-                "name":   r.get("Name",""),
-            }
-        return jsonify({"prices": prices, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+        if isinstance(rows, list):
+            for r in rows:
+                code = r.get("Code","")
+                if code not in codes: continue
+                price = safe_float(r.get("ClosingPrice"))
+                chg   = safe_float(r.get("Change"))
+                if price <= 0: continue
+                prev = price - chg
+                pct  = round(chg/prev*100, 2) if prev > 0 else 0
+                prices[code] = {"price":price,"change":chg,"chgPct":pct,"name":r.get("Name","")}
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"[prices/TWSE] {e}")
+    try:
+        # 上櫃（TPEX）
+        url2 = "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes"
+        resp2 = SESSION.get(url2, timeout=15); resp2.raise_for_status()
+        rows2 = resp2.json()
+        if isinstance(rows2, list):
+            for r in rows2:
+                code = r.get("SecuritiesCompanyCode","") or r.get("code","")
+                if code not in codes: continue
+                price = safe_float(r.get("Close","") or r.get("close",""))
+                chg   = safe_float(r.get("Change","") or r.get("change",""))
+                if price <= 0: continue
+                prev = price - chg
+                pct  = round(chg/prev*100, 2) if prev > 0 else 0
+                name = r.get("CompanyName","") or r.get("name","")
+                prices[code] = {"price":price,"change":chg,"chgPct":pct,"name":name}
+    except Exception as e:
+        print(f"[prices/TPEX] {e}")
+    return jsonify({"prices": prices, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
 
 # ── Keep-Alive（防止 Render 免費版休眠）────────────
 # ══════════════════════════════════════════════════════
