@@ -96,6 +96,9 @@ SESSION = requests.Session()
 SESSION.verify = False
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
 
+# FinMind token（抓「歷史每日」籌碼用；修正訓練/上線籌碼特徵不一致）
+FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+
 # ══════════════════════════════════════════════════
 # 工具函式
 # ══════════════════════════════════════════════════
@@ -193,6 +196,39 @@ def fetch_institutional(code, days=60):
             break
     except: pass
     return result
+
+def fetch_institutional_history(code, months=24):
+    """抓取個股『歷史每日』外資+投信買賣超，回傳 {date: {foreign_net, trust_net}}（單位：張）。
+
+    用 FinMind 一次取整段（比逐日 T86 高效）。這是修正籌碼特徵『訓練/上線不一致』的關鍵：
+    原本訓練時 calc_features 沒帶 inst_data，3 個籌碼特徵在所有訓練樣本中都是 0；
+    有了歷史籌碼，訓練時也能逐日帶入，模型才真的學得到籌碼資訊。
+    """
+    start = (datetime.today() - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    try:
+        r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+            params={"dataset": "TaiwanStockInstitutionalInvestorsBuySell",
+                    "data_id": code, "start_date": start},
+            headers={"Authorization": f"Bearer {FINMIND_TOKEN}"} if FINMIND_TOKEN else {},
+            timeout=20)
+        rows = r.json().get("data", [])
+    except Exception:
+        rows = []
+
+    agg = {}
+    for row in rows:
+        d = row.get("date")
+        if not d:
+            continue
+        name = row.get("name", "")
+        net = (safe_float(row.get("buy", 0)) - safe_float(row.get("sell", 0))) / 1000  # 股->張
+        a = agg.setdefault(d, {"foreign_net": 0.0, "trust_net": 0.0})
+        if name in ("外資", "外陸資", "Foreign_Investor", "Foreign_Dealer_Self"):
+            a["foreign_net"] += net
+        elif name in ("投信", "Investment_Trust"):
+            a["trust_net"] += net
+    return {d: {"foreign_net": round(a["foreign_net"]), "trust_net": round(a["trust_net"])}
+            for d, a in agg.items()}
 
 def fetch_market_index(months=24):
     """抓取加權指數歷史（用於計算相對強弱）"""
@@ -527,11 +563,13 @@ class RandomForest:
 # 訓練資料建立 & 分析
 # ══════════════════════════════════════════════════
 
-def build_training_data(records, market_records, predict_days, rise_threshold):
+def build_training_data(records, market_records, predict_days, rise_threshold, inst_map=None):
     X, y = [], []
     closes = [r["close"] for r in records]
     for i in range(40, len(records) - predict_days):
-        feats = calc_features(records[:i+1], market_records)
+        # 逐日帶入當時的籌碼（修正：訓練時不再讓籌碼特徵恆為 0）
+        inst_i = inst_map.get(records[i]["date"]) if inst_map else None
+        feats = calc_features(records[:i+1], market_records, inst_i)
         if feats is None: continue
         future  = closes[i + predict_days]
         current = closes[i]
@@ -549,7 +587,14 @@ def analyze_stock(code, name, market_records):
     inst_today = fetch_institutional(code)
     inst_data  = inst_today[0] if inst_today else None
 
-    X, y = build_training_data(records, market_records, PREDICT_DAYS, RISE_THRESHOLD)
+    # 抓歷史每日籌碼（修正訓練/上線不一致；訓練時也帶入籌碼特徵）
+    inst_map = fetch_institutional_history(code, HISTORY_MONTHS)
+    # 若拿不到當日籌碼，退而用歷史最後一筆，維持訓練/預測一致
+    if inst_data is None and inst_map:
+        last_d = max(inst_map.keys())
+        inst_data = inst_map[last_d]
+
+    X, y = build_training_data(records, market_records, PREDICT_DAYS, RISE_THRESHOLD, inst_map)
     if len(X) < 50 or sum(y) < 8 or sum(1-v for v in y) < 8:
         return None
 
