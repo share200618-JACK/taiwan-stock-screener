@@ -36,67 +36,6 @@ def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
-# ══════════════════════════════════════════════════════
-# 三合一加權計分（取代原本 5 個條件各 +20 相加）
-# 權重請用 research/validate_trinity.py 的 [C] 輸出填入，每季更新。
-# 以下為佔位值；ma20_pct 方向待你的真實驗證確認，若驗出為負就改成負權或移除。
-# ══════════════════════════════════════════════════════
-TRINITY_WEIGHTS = {
-    "trust_consec": 0.30,   # 投信連買天數
-    "ma20_pct":     0.19,   # 離 MA20 幅度（方向待驗證）
-    "dist_hi20":    0.17,   # 距 20 日高
-    "dist_hi60":    0.17,   # 距 60 日高
-    "ma_trend":     0.10,   # 多頭排列 ma20/ma60-1
-    "turnover":     0.07,   # 成交值
-    # 量比、盤整度經驗證若無效則不放入
-}
-
-def _winsorized_zscore(values, lo_q=0.02, hi_q=0.02):
-    """對一批數值去極值 + 標準化（z-score）。回傳同長度分數，缺值給 0。"""
-    xs = [v for v in values if isinstance(v, (int, float))]
-    if len(xs) < 3:
-        return [0.0 for _ in values]
-    xs_sorted = sorted(xs)
-    lo = xs_sorted[int(len(xs_sorted) * lo_q)]
-    hi = xs_sorted[min(len(xs_sorted) - 1, int(len(xs_sorted) * (1 - hi_q)))]
-    clipped = [min(max(v, lo), hi) if isinstance(v, (int, float)) else None for v in values]
-    valid = [v for v in clipped if v is not None]
-    mu = sum(valid) / len(valid)
-    var = sum((v - mu) ** 2 for v in valid) / max(len(valid) - 1, 1)
-    sd = var ** 0.5
-    if sd == 0:
-        return [0.0 for _ in values]
-    return [((v - mu) / sd if v is not None else 0.0) for v in clipped]
-
-def weighted_score_trinity(candidates, weights=TRINITY_WEIGHTS):
-    """對通過硬篩的候選股做橫斷面加權計分（連續分數，可細排，無大量同分）。
-
-    為相容既有前端，total_score 仍輸出 0–100（依當批 min-max 映射），
-    另存 raw_score（真正用來排序的加權 z-score）。
-    """
-    if not candidates:
-        return []
-    z = {key: _winsorized_zscore([c.get(key) for c in candidates]) for key in weights}
-    for i, c in enumerate(candidates):
-        c["raw_score"] = round(sum(weights[key] * z[key][i] for key in weights), 4)
-    raws = [c["raw_score"] for c in candidates]
-    lo, hi = min(raws), max(raws)
-    for c in candidates:
-        c["total_score"] = round(100 * (c["raw_score"] - lo) / (hi - lo)) if hi > lo else 50
-    candidates.sort(key=lambda x: x["raw_score"], reverse=True)
-    return candidates
-
-# ══════════════════════════════════════════════════════
-# 遊牧民設定
-# ══════════════════════════════════════════════════════
-# 排序依據：改用 validate_nomad.py [B] 中 IC 最高的因子（預設 k_d=KD動能，比原本 vol_ratio
-# 更可能有預測力）。可選："k_d"、"ma60_pct"（距MA60）、"k"、"vol_ratio"。若你選的因子是
-# 「越小越好」，把 NOMAD_SORT_DESC 設 False。
-NOMAD_SORT_KEY  = "k_d"
-NOMAD_SORT_DESC = True
-NOMAD_MAX_SIGNALS = 30      # 訊號數上限（避免某天爆量灌爆追蹤清單；比照三合一取前 N）
-NOMAD_HOLD_DAYS   = 15      # 依 validate_nomad.py [C] 事件研究的最佳持有天數（交易日）填入
-
 # ── 抓個股歷史資料 ────────────────────────────────────
 def fetch_history(code, start, end):
     try:
@@ -304,41 +243,40 @@ def run_trinity():
             trust_consec = get_trust_consec(inst_rows)
             if trust_consec < 3: continue
 
-            # ── 連續因子（加權計分用）＋ 顯示用旗標（沿用原本 detail 徽章）──
-            hi20c = max(closes[-20:]); lo20c = min(closes[-20:])
-            range_pct = (hi20c-lo20c)/lo20c*100 if lo20c>0 else 999
-            hi60 = max(highs[-61:-1]) if n>=61 else max(highs[:-1])
-            sector = _sector_map.get(code,"")
-
+            # 加分
+            score  = 0
             detail = {"ma20":round(ma20,2),"ma60":round(ma60,2),
                       "ma20_pct":round(ma20_pct,1),"vol_ratio":round(vol_ratio,1),
-                      "trust_days":trust_consec,"range_pct":round(range_pct,1),
-                      "hi60":round(hi60,2)}
-            if trust_consec >= 5: detail["trust5"]   = True
-            if code in top200:    detail["top200"]   = True
-            if range_pct < 8:     detail["platform"] = True
-            if vol_ratio >= 2.0:  detail["vol2x"]    = True
-            if cur > hi60:        detail["new_high"] = True
+                      "trust_days":trust_consec}
 
+            if trust_consec >= 5:  score += 20; detail["trust5"] = True
+            if code in top200:     score += 20; detail["top200"] = True
+
+            hi20c = max(closes[-20:]); lo20c = min(closes[-20:])
+            range_pct = (hi20c-lo20c)/lo20c*100 if lo20c>0 else 999
+            if range_pct < 8:      score += 20; detail["platform"] = True
+            detail["range_pct"] = round(range_pct,1)
+
+            if vol_ratio >= 2.0:   score += 20; detail["vol2x"] = True
+
+            hi60 = max(highs[-61:-1]) if n>=61 else max(highs[:-1])
+            if cur > hi60:         score += 20; detail["new_high"] = True
+            detail["hi60"] = round(hi60,2)
+
+            sector = _sector_map.get(code,"")
             results.append({
                 "code":code,"name":s["name"],"price":cur,
                 "chg_pct":s["pct"],"sector":sector,
-                "trust_days":trust_consec,"vol_ratio":round(vol_ratio,1),
+                "total_score":score,"trust_days":trust_consec,
+                "vol_ratio":round(vol_ratio,1),
                 "ma20":round(ma20,2),"ma60":round(ma60,2),
                 "ma20_pct":round(ma20_pct,1),"detail":detail,
-                # 連續因子（weighted_score_trinity 會用這些算分）
-                "trust_consec": trust_consec,
-                "dist_hi20": (cur/hi20 - 1) if hi20 else 0,
-                "dist_hi60": (cur/hi60 - 1) if hi60 else 0,
-                "ma_trend":  (ma20/ma60 - 1) if ma60 else 0,
-                "turnover":  s["turnover"],
             })
-            log(f"  ✅ {code} {s['name']} | 投信{trust_consec}天 | 量比{vol_ratio:.1f}x")
+            log(f"  ✅ {code} {s['name']} | {score}分 | 投信{trust_consec}天 | 量比{vol_ratio:.1f}x")
         except: pass
         time.sleep(0.2)
 
-    # ── 加權計分（取代原本各 +20 相加；連續分數、無大量同分）──
-    results = weighted_score_trinity(results)
+    results.sort(key=lambda x: x["total_score"], reverse=True)
     top = results[:30]
     out = {"stocks":top,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
@@ -448,7 +386,7 @@ def run_nomad():
                 "code":code,"name":s["name"],"price":closes[-1],
                 "chg_pct":s["pct"],"vol_today":round(vols[-1]),
                 "avg20vol":round(avg20v),"vol_ratio":round(vol_ratio,1),
-                "k":round(k_cur,1),"d":round(d_cur,1),"k_d":round(k_cur-d_cur,2),
+                "k":round(k_cur,1),"d":round(d_cur,1),
                 "ma60":round(ma60,2),"ma60_pct":round((closes[-1]-ma60)/ma60*100,1),
                 "sector":sector,
             })
@@ -456,26 +394,19 @@ def run_nomad():
         except: pass
         time.sleep(0.15)
 
-    # ① 改用最有預測力的因子排序（取代原本的 vol_ratio）
-    results.sort(key=lambda x: x.get(NOMAD_SORT_KEY, 0), reverse=NOMAD_SORT_DESC)
-    # ② 訊號數上限，避免灌爆追蹤清單
-    top = results[:NOMAD_MAX_SIGNALS]
-    out = {"stocks":top,"total_scanned":len(stocks),"total_passed":len(results),
+    results.sort(key=lambda x: x["vol_ratio"], reverse=True)
+    out = {"stocks":results,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
-    log(f"🐎 遊牧民完成：{len(results)} 支通過 / 取前 {len(top)} 支（共掃描 {len(stocks)} 支）")
+    log(f"🐎 遊牧民完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
     save_result("nomad_results", out)  # 不管 0 支都存
 
-    # ③ 加出場/檢視窗口：把「建議檢視到期日」寫進 note（不需改 DB schema）
-    review_by = (tw_now + timedelta(days=int(NOMAD_HOLD_DAYS * 1.4))).strftime("%Y/%m/%d")
-    note = f"遊牧民選股 | 檢視到期 {review_by}"
-
-    # 自動加入追蹤清單（僅加入取前 N 的訊號）
+    # 自動加入追蹤清單
     added = 0
-    for s in top:
-        add_to_watchlist(s["code"],s["name"],s["price"],s["sector"],note,JACK_TOKEN)
+    for s in results:
+        add_to_watchlist(s["code"],s["name"],s["price"],s["sector"],"遊牧民選股",JACK_TOKEN)
         added += 1
         time.sleep(0.1)
-    log(f"🐎 自動加入追蹤清單 {added} 支（檢視到期 {review_by}）")
+    log(f"🐎 自動加入追蹤清單 {added} 支")
     return out
 
 # ══════════════════════════════════════════════════════
