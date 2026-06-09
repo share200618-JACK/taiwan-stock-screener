@@ -37,19 +37,56 @@ def log(msg):
     print(f"[{ts}] {msg}", flush=True)
 
 # ── 抓個股歷史資料 ────────────────────────────────────
+# FinMind 錯誤統計（全域，跑完印一次摘要）
+_finmind_stats = {"ok": 0, "empty": 0, "quota": 0, "auth": 0, "error": 0}
+
 def fetch_history(code, start, end):
     try:
         r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
             params={"dataset":"TaiwanStockPrice","data_id":code,
                     "start_date":start,"end_date":end},
             headers={"Authorization":f"Bearer {FINMIND_TOKEN}"}, timeout=15)
-        rows = r.json().get("data",[])
+
+        # 偵測 FinMind 額度/權限錯誤
+        if r.status_code == 402:
+            _finmind_stats["quota"] += 1
+            return []
+        if r.status_code in (401, 403):
+            _finmind_stats["auth"] += 1
+            return []
+        if r.status_code == 429:
+            _finmind_stats["quota"] += 1
+            return []
+
+        j = r.json()
+        # FinMind 也會用 msg 回報額度問題（status 200 但 msg 提示）
+        msg = str(j.get("msg", "")).lower()
+        if "limit" in msg or "quota" in msg or "upper" in msg:
+            _finmind_stats["quota"] += 1
+            return []
+
+        rows = j.get("data", [])
+        if not rows:
+            _finmind_stats["empty"] += 1
+            return []
+
+        _finmind_stats["ok"] += 1
         return [{"date":r["date"],"open":safe_float(r.get("open",0)),
                  "high":safe_float(r.get("max",0)),"low":safe_float(r.get("min",0)),
                  "close":safe_float(r.get("close",0)),"vol":safe_float(r.get("Trading_Volume",0))/1000}
                 for r in rows if r.get("close")]
     except Exception as e:
+        _finmind_stats["error"] += 1
         return []
+
+def print_finmind_summary():
+    s = _finmind_stats
+    log(f"📊 FinMind 統計：成功 {s['ok']} | 空資料 {s['empty']} | "
+        f"超量402/429 {s['quota']} | 權限401/403 {s['auth']} | 其他錯誤 {s['error']}")
+    if s["quota"] > 10:
+        log(f"🚨 FinMind 超量呼叫 {s['quota']} 次！免費 token 額度已耗盡，這是 0 支的主因。")
+    if s["auth"] > 10:
+        log(f"🚨 FinMind 權限錯誤 {s['auth']} 次！token 可能失效或過期。")
 
 # ── 抓法人買賣資料 ────────────────────────────────────
 def fetch_inst(code, start):
@@ -184,6 +221,15 @@ def run_trinity():
 
     top200 = set(c for c,_ in sorted(all_turnover, key=lambda x:x[1], reverse=True)[:200])
 
+    # ── 方案3：用快照粗篩，大幅減少 FinMind 呼叫量 ──────────────
+    # 三合一必要條件含「突破近20日高點」(cur > hi20)，代表今天一定要上漲且接近高點。
+    # 用快照的今日漲跌幅刷掉：今日收黑或小漲(<1%)的，幾乎不可能創20日新高。
+    # 門檻設 0.5% 保留安全邊際（避免平盤附近誤殺）。
+    def _pct(s): return s.get("pct", 0)
+    pre = [s for s in stocks if _pct(s) >= 0.5]
+    log(f"  粗篩後 {len(pre)} 支（今日漲幅≥0.5%），開始抓 FinMind")
+    stocks = pre
+
     tw_now     = datetime.utcnow() + timedelta(hours=8)  # 台灣時間（UTC+8）
     today      = tw_now.strftime("%Y-%m-%d")
     start_dt   = (tw_now - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -192,7 +238,7 @@ def run_trinity():
 
     for idx, s in enumerate(stocks):
         code = s["code"]
-        if idx % 200 == 0:
+        if idx % 50 == 0:
             log(f"  三合一進度 {idx+1}/{len(stocks)}")
         try:
             records = fetch_history(code, start_hist, today)
@@ -281,6 +327,7 @@ def run_trinity():
     out = {"stocks":top,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
     log(f"🎯 三合一完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
+    print_finmind_summary()
     save_result("trinity_results", out)  # 不管 0 支或多支都存
     return out
 
@@ -331,6 +378,19 @@ def run_nomad():
 
     log(f"股票清單取得 {len(stocks)} 支")
 
+    # ── 方案3：用快照粗篩，大幅減少 FinMind 呼叫量 ──────────────
+    # 今日量(張)。TWSE 的 vol_s 是「股」，要除以 1000 變張；TPEX 已是張
+    def _today_vol_張(s):
+        v = s.get("vol_張")
+        if v is not None: return v
+        return s.get("vol_s", 0) / 1000
+    # 條件①要求近20日均量>2000張，②要求今日量>5日均量×2。
+    # 若今日量連 1000 張都不到，幾乎不可能同時滿足①②，先刷掉。
+    # （門檻設 1000 而非 2000，保留安全邊際避免誤殺）
+    pre = [s for s in stocks if _today_vol_張(s) >= 1000]
+    log(f"  粗篩後 {len(pre)} 支（今日量≥1000張），開始抓 FinMind 算 KD")
+    stocks = pre
+
     tw_now     = datetime.utcnow() + timedelta(hours=8)  # 台灣時間（UTC+8）
     today      = tw_now.strftime("%Y-%m-%d")
     start_hist = (tw_now - timedelta(days=95)).strftime("%Y-%m-%d")
@@ -338,7 +398,7 @@ def run_nomad():
 
     for idx, s in enumerate(stocks):
         code = s["code"]
-        if idx % 200 == 0:
+        if idx % 50 == 0:
             log(f"  遊牧民進度 {idx+1}/{len(stocks)}")
         try:
             records = fetch_history(code, start_hist, today)
@@ -398,6 +458,7 @@ def run_nomad():
     out = {"stocks":results,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
     log(f"🐎 遊牧民完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
+    print_finmind_summary()
     save_result("nomad_results", out)  # 不管 0 支都存
 
     # 自動加入追蹤清單
