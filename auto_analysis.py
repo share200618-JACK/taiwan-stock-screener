@@ -670,10 +670,19 @@ def run():
         save_result({"error": "無法取得市場資料", "time": now_str})
         return
 
-    # 抽樣 80 支
-    if len(stocks) > 80:
-        random.shuffle(stocks)
-        stocks = stocks[:80]
+    # ── 方案3：智慧粗篩（取代隨機抽樣），兼顧 FinMind 呼叫量與品質 ──
+    # 原本 random.shuffle 取 80 支會導致結果飄忽、漏掉強勢股。
+    # 改為：先用快照粗篩，再依「今日成交量」排序取前 MAX_ANALYZE 支。
+    MAX_ANALYZE = 250   # 上限（控制 FinMind 呼叫量，可視額度調整）
+
+    # 粗篩：今日上漲或平盤（pct >= -1），排除明顯弱勢股
+    pre = [s for s in stocks if s.get("pct", 0) >= -1]
+    if len(pre) < 50:           # 若太少則放寬回原清單
+        pre = stocks
+    # 依今日成交量由大到小排序（量大＝市場關注度高），取前 N 支
+    pre.sort(key=lambda x: x.get("vol", 0), reverse=True)
+    stocks = pre[:MAX_ANALYZE]
+    print(f"   智慧粗篩後取量能前 {len(stocks)} 支進行分析（上限 {MAX_ANALYZE}）")
 
     # 逐支分析
     print(f"\n② 隨機森林分析（{len(stocks)} 支）...")

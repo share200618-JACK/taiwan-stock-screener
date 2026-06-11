@@ -708,17 +708,43 @@ window.addEventListener('DOMContentLoaded', () => {
   }).catch(() => {});
 });
 
+const MODEL_NAMES = {v1:'v1.0 基礎版', v2:'v2.0 強化版', v3:'v3.0 護城河選股'};
+
 async function startAnalysis() {
-  const maxStocks = parseInt(document.getElementById('maxStocks').value)||0;
-  const topN      = parseInt(document.getElementById('topN').value)||10;
-  const modelVer  = document.getElementById('modelVer').value;
+  const maxEl = document.getElementById('maxStocks');
+  const topEl = document.getElementById('topN');
+  const verEl = document.getElementById('modelVer');
+
+  // ── 防呆①：讀值並驗證 ──────────────────────────
+  let maxStocks = parseInt(maxEl.value);
+  let topN      = parseInt(topEl.value);
+  const modelVer = verEl.value;
+
+  if (isNaN(maxStocks) || maxStocks < 0) maxStocks = 0;   // 空白或負數 → 0=全市場
+  if (isNaN(topN) || topN < 1) topN = 20;                 // 空白 → 20
+  if (!['v1','v2','v3'].includes(modelVer)) {             // 版本異常 → 擋下
+    showError('模型版本讀取異常，請重新選擇後再試');
+    return;
+  }
+  // 把校正後的值寫回畫面，確保所見即所送
+  maxEl.value = maxStocks;
+  topEl.value = topN;
+
+  const verName = MODEL_NAMES[modelVer] || modelVer;
+  const scanDesc = maxStocks === 0 ? '全市場' : `${maxStocks} 支`;
+
+  // ── 防呆②：送出前明確確認，避免誤觸 ──────────────
+  if (!confirm(`即將開始分析\n\n模型版本：${verName}\n掃描範圍：${scanDesc}\n顯示推薦：${topN} 支\n\n確定執行？`)) {
+    return;
+  }
 
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = '⏳ 分析中...';
   document.getElementById('progressWrap').style.display = 'block';
   document.getElementById('emptyState').style.display   = 'none';
   document.getElementById('results').style.display      = 'none';
-  setProgress(0, `啟動 ${modelVer==='v2'?'v2.0 強化版':'v1.0 基礎版'} 分析...`);
+  // ── 防呆③：進度條清楚標示「實際送出」的版本與範圍 ──
+  setProgress(0, `啟動 ${verName}（掃描${scanDesc}）...`);
 
   try {
     const r = await fetch(`${API}/api/analyze/start`, {
@@ -1221,7 +1247,7 @@ async function deleteHistoryRecord(date, btn) {
 
 function renderResults(data) {
   const stocks = data.stocks || [];
-  const ver    = data.model_ver || 'v1';
+  const ver    = data.model_ver || 'v2';   // 預設 v2（系統實際預設模型），避免誤標成 v1
   const isV3   = (ver === 'v3');
   window._lastCustomResult = data;
   window._lastRenderData   = data;  // 供彈出面板的 AI 評估頁籤使用
