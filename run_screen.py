@@ -36,57 +36,84 @@ def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
-# ── 抓個股歷史資料 ────────────────────────────────────
-# FinMind 錯誤統計（全域，跑完印一次摘要）
-_finmind_stats = {"ok": 0, "empty": 0, "quota": 0, "auth": 0, "error": 0}
+# ══════════════════════════════════════════════════════
+# 三合一加權計分（取代原本 5 個條件各 +20 相加）
+# 權重來自 research/validate_trinity.py 的 [C]（120 檔大型股、2021–2026 實證）。
+# 只保留通過顯著門檻（|t|≥2 且 IC>0）的因子；trust/dist_hi20/turnover 經驗證無預測力已移除。
+# 注意：此結論偏大型股+趨勢盤，建議每季用更廣股票池重驗。
+# ══════════════════════════════════════════════════════
+TRINITY_WEIGHTS = {
+    "ma_trend":  0.40,   # 多頭排列 ma20/ma60-1（最強，t=+4.2、多空年化 +21.7%）
+    "ma20_pct":  0.31,   # 離 MA20 幅度（越延伸未來越好，t=+3.4）
+    "dist_hi60": 0.29,   # 距 60 日高（t=+3.0；分層較弱，可自行再降權集中於 ma_trend）
+}
 
+# ── 必要條件開關（實證顯示這兩個硬篩反而拖累報酬，但它們也是風控）──
+# 資料：離MA20≤8% 旗標 t=-13.41、投信≥3天 t=-2.83，關掉(設 False)在此樣本報酬較好。
+# 預設維持原行為(True)較保守、可逆；想測「關掉」的效果就改 False，建議先觀察/回測再上線。
+GATE_MA20_PCT_CAP = True   # True=維持「離MA20需≤8%」硬篩；False=取消此上限（不再排除延伸股）
+GATE_TRUST_MIN    = True   # True=維持「投信連買≥3天」硬篩；False=不再用投信當必要條件
+
+def _winsorized_zscore(values, lo_q=0.02, hi_q=0.02):
+    """對一批數值去極值 + 標準化（z-score）。回傳同長度分數，缺值給 0。"""
+    xs = [v for v in values if isinstance(v, (int, float))]
+    if len(xs) < 3:
+        return [0.0 for _ in values]
+    xs_sorted = sorted(xs)
+    lo = xs_sorted[int(len(xs_sorted) * lo_q)]
+    hi = xs_sorted[min(len(xs_sorted) - 1, int(len(xs_sorted) * (1 - hi_q)))]
+    clipped = [min(max(v, lo), hi) if isinstance(v, (int, float)) else None for v in values]
+    valid = [v for v in clipped if v is not None]
+    mu = sum(valid) / len(valid)
+    var = sum((v - mu) ** 2 for v in valid) / max(len(valid) - 1, 1)
+    sd = var ** 0.5
+    if sd == 0:
+        return [0.0 for _ in values]
+    return [((v - mu) / sd if v is not None else 0.0) for v in clipped]
+
+def weighted_score_trinity(candidates, weights=TRINITY_WEIGHTS):
+    """對通過硬篩的候選股做橫斷面加權計分（連續分數，可細排，無大量同分）。
+
+    為相容既有前端，total_score 仍輸出 0–100（依當批 min-max 映射），
+    另存 raw_score（真正用來排序的加權 z-score）。
+    """
+    if not candidates:
+        return []
+    z = {key: _winsorized_zscore([c.get(key) for c in candidates]) for key in weights}
+    for i, c in enumerate(candidates):
+        c["raw_score"] = round(sum(weights[key] * z[key][i] for key in weights), 4)
+    raws = [c["raw_score"] for c in candidates]
+    lo, hi = min(raws), max(raws)
+    for c in candidates:
+        c["total_score"] = round(100 * (c["raw_score"] - lo) / (hi - lo)) if hi > lo else 50
+    candidates.sort(key=lambda x: x["raw_score"], reverse=True)
+    return candidates
+
+# ══════════════════════════════════════════════════════
+# 遊牧民設定
+# ══════════════════════════════════════════════════════
+# 排序依據：改用 validate_nomad.py [B] 中 IC 最高的因子（預設 k_d=KD動能，比原本 vol_ratio
+# 更可能有預測力）。可選："k_d"、"ma60_pct"（距MA60）、"k"、"vol_ratio"。若你選的因子是
+# 「越小越好」，把 NOMAD_SORT_DESC 設 False。
+NOMAD_SORT_KEY  = "k_d"
+NOMAD_SORT_DESC = True
+NOMAD_MAX_SIGNALS = 30      # 訊號數上限（避免某天爆量灌爆追蹤清單；比照三合一取前 N）
+NOMAD_HOLD_DAYS   = 15      # 依 validate_nomad.py [C] 事件研究的最佳持有天數（交易日）填入
+
+# ── 抓個股歷史資料 ────────────────────────────────────
 def fetch_history(code, start, end):
     try:
         r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
             params={"dataset":"TaiwanStockPrice","data_id":code,
                     "start_date":start,"end_date":end},
             headers={"Authorization":f"Bearer {FINMIND_TOKEN}"}, timeout=15)
-
-        # 偵測 FinMind 額度/權限錯誤
-        if r.status_code == 402:
-            _finmind_stats["quota"] += 1
-            return []
-        if r.status_code in (401, 403):
-            _finmind_stats["auth"] += 1
-            return []
-        if r.status_code == 429:
-            _finmind_stats["quota"] += 1
-            return []
-
-        j = r.json()
-        # FinMind 也會用 msg 回報額度問題（status 200 但 msg 提示）
-        msg = str(j.get("msg", "")).lower()
-        if "limit" in msg or "quota" in msg or "upper" in msg:
-            _finmind_stats["quota"] += 1
-            return []
-
-        rows = j.get("data", [])
-        if not rows:
-            _finmind_stats["empty"] += 1
-            return []
-
-        _finmind_stats["ok"] += 1
+        rows = r.json().get("data",[])
         return [{"date":r["date"],"open":safe_float(r.get("open",0)),
                  "high":safe_float(r.get("max",0)),"low":safe_float(r.get("min",0)),
                  "close":safe_float(r.get("close",0)),"vol":safe_float(r.get("Trading_Volume",0))/1000}
                 for r in rows if r.get("close")]
     except Exception as e:
-        _finmind_stats["error"] += 1
         return []
-
-def print_finmind_summary():
-    s = _finmind_stats
-    log(f"📊 FinMind 統計：成功 {s['ok']} | 空資料 {s['empty']} | "
-        f"超量402/429 {s['quota']} | 權限401/403 {s['auth']} | 其他錯誤 {s['error']}")
-    if s["quota"] > 10:
-        log(f"🚨 FinMind 超量呼叫 {s['quota']} 次！免費 token 額度已耗盡，這是 0 支的主因。")
-    if s["auth"] > 10:
-        log(f"🚨 FinMind 權限錯誤 {s['auth']} 次！token 可能失效或過期。")
 
 # ── 抓法人買賣資料 ────────────────────────────────────
 def fetch_inst(code, start):
@@ -221,15 +248,6 @@ def run_trinity():
 
     top200 = set(c for c,_ in sorted(all_turnover, key=lambda x:x[1], reverse=True)[:200])
 
-    # ── 方案3：用快照粗篩，大幅減少 FinMind 呼叫量 ──────────────
-    # 三合一必要條件含「突破近20日高點」(cur > hi20)，代表今天一定要上漲且接近高點。
-    # 用快照的今日漲跌幅刷掉：今日收黑或小漲(<1%)的，幾乎不可能創20日新高。
-    # 門檻設 0.5% 保留安全邊際（避免平盤附近誤殺）。
-    def _pct(s): return s.get("pct", 0)
-    pre = [s for s in stocks if _pct(s) >= 0.5]
-    log(f"  粗篩後 {len(pre)} 支（今日漲幅≥0.5%），開始抓 FinMind")
-    stocks = pre
-
     tw_now     = datetime.utcnow() + timedelta(hours=8)  # 台灣時間（UTC+8）
     today      = tw_now.strftime("%Y-%m-%d")
     start_dt   = (tw_now - timedelta(days=30)).strftime("%Y-%m-%d")
@@ -238,7 +256,7 @@ def run_trinity():
 
     for idx, s in enumerate(stocks):
         code = s["code"]
-        if idx % 50 == 0:
+        if idx % 200 == 0:
             log(f"  三合一進度 {idx+1}/{len(stocks)}")
         try:
             records = fetch_history(code, start_hist, today)
@@ -282,52 +300,52 @@ def run_trinity():
             vol_ratio = vols[-1]/avg20v if avg20v>0 else 0
             if vol_ratio < 1.5: continue
             ma20_pct = (cur-ma20)/ma20*100
-            if ma20_pct > 8: continue
+            if GATE_MA20_PCT_CAP and ma20_pct > 8: continue
 
             # 法人
             inst_rows    = fetch_inst(code, start_dt)
             trust_consec = get_trust_consec(inst_rows)
-            if trust_consec < 3: continue
+            if GATE_TRUST_MIN and trust_consec < 3: continue
 
-            # 加分
-            score  = 0
-            detail = {"ma20":round(ma20,2),"ma60":round(ma60,2),
-                      "ma20_pct":round(ma20_pct,1),"vol_ratio":round(vol_ratio,1),
-                      "trust_days":trust_consec}
-
-            if trust_consec >= 5:  score += 20; detail["trust5"] = True
-            if code in top200:     score += 20; detail["top200"] = True
-
+            # ── 連續因子（加權計分用）＋ 顯示用旗標（沿用原本 detail 徽章）──
             hi20c = max(closes[-20:]); lo20c = min(closes[-20:])
             range_pct = (hi20c-lo20c)/lo20c*100 if lo20c>0 else 999
-            if range_pct < 8:      score += 20; detail["platform"] = True
-            detail["range_pct"] = round(range_pct,1)
-
-            if vol_ratio >= 2.0:   score += 20; detail["vol2x"] = True
-
             hi60 = max(highs[-61:-1]) if n>=61 else max(highs[:-1])
-            if cur > hi60:         score += 20; detail["new_high"] = True
-            detail["hi60"] = round(hi60,2)
-
             sector = _sector_map.get(code,"")
+
+            detail = {"ma20":round(ma20,2),"ma60":round(ma60,2),
+                      "ma20_pct":round(ma20_pct,1),"vol_ratio":round(vol_ratio,1),
+                      "trust_days":trust_consec,"range_pct":round(range_pct,1),
+                      "hi60":round(hi60,2)}
+            if trust_consec >= 5: detail["trust5"]   = True
+            if code in top200:    detail["top200"]   = True
+            if range_pct < 8:     detail["platform"] = True
+            if vol_ratio >= 2.0:  detail["vol2x"]    = True
+            if cur > hi60:        detail["new_high"] = True
+
             results.append({
                 "code":code,"name":s["name"],"price":cur,
                 "chg_pct":s["pct"],"sector":sector,
-                "total_score":score,"trust_days":trust_consec,
-                "vol_ratio":round(vol_ratio,1),
+                "trust_days":trust_consec,"vol_ratio":round(vol_ratio,1),
                 "ma20":round(ma20,2),"ma60":round(ma60,2),
                 "ma20_pct":round(ma20_pct,1),"detail":detail,
+                # 連續因子（weighted_score_trinity 會用這些算分）
+                "trust_consec": trust_consec,
+                "dist_hi20": (cur/hi20 - 1) if hi20 else 0,
+                "dist_hi60": (cur/hi60 - 1) if hi60 else 0,
+                "ma_trend":  (ma20/ma60 - 1) if ma60 else 0,
+                "turnover":  s["turnover"],
             })
-            log(f"  ✅ {code} {s['name']} | {score}分 | 投信{trust_consec}天 | 量比{vol_ratio:.1f}x")
+            log(f"  ✅ {code} {s['name']} | 投信{trust_consec}天 | 量比{vol_ratio:.1f}x")
         except: pass
         time.sleep(0.2)
 
-    results.sort(key=lambda x: x["total_score"], reverse=True)
+    # ── 加權計分（取代原本各 +20 相加；連續分數、無大量同分）──
+    results = weighted_score_trinity(results)
     top = results[:30]
     out = {"stocks":top,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
     log(f"🎯 三合一完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
-    print_finmind_summary()
     save_result("trinity_results", out)  # 不管 0 支或多支都存
     return out
 
@@ -378,19 +396,6 @@ def run_nomad():
 
     log(f"股票清單取得 {len(stocks)} 支")
 
-    # ── 方案3：用快照粗篩，大幅減少 FinMind 呼叫量 ──────────────
-    # 今日量(張)。TWSE 的 vol_s 是「股」，要除以 1000 變張；TPEX 已是張
-    def _today_vol_張(s):
-        v = s.get("vol_張")
-        if v is not None: return v
-        return s.get("vol_s", 0) / 1000
-    # 條件①要求近20日均量>2000張，②要求今日量>5日均量×2。
-    # 若今日量連 1000 張都不到，幾乎不可能同時滿足①②，先刷掉。
-    # （門檻設 1000 而非 2000，保留安全邊際避免誤殺）
-    pre = [s for s in stocks if _today_vol_張(s) >= 1000]
-    log(f"  粗篩後 {len(pre)} 支（今日量≥1000張），開始抓 FinMind 算 KD")
-    stocks = pre
-
     tw_now     = datetime.utcnow() + timedelta(hours=8)  # 台灣時間（UTC+8）
     today      = tw_now.strftime("%Y-%m-%d")
     start_hist = (tw_now - timedelta(days=95)).strftime("%Y-%m-%d")
@@ -398,7 +403,7 @@ def run_nomad():
 
     for idx, s in enumerate(stocks):
         code = s["code"]
-        if idx % 50 == 0:
+        if idx % 200 == 0:
             log(f"  遊牧民進度 {idx+1}/{len(stocks)}")
         try:
             records = fetch_history(code, start_hist, today)
@@ -446,7 +451,7 @@ def run_nomad():
                 "code":code,"name":s["name"],"price":closes[-1],
                 "chg_pct":s["pct"],"vol_today":round(vols[-1]),
                 "avg20vol":round(avg20v),"vol_ratio":round(vol_ratio,1),
-                "k":round(k_cur,1),"d":round(d_cur,1),
+                "k":round(k_cur,1),"d":round(d_cur,1),"k_d":round(k_cur-d_cur,2),
                 "ma60":round(ma60,2),"ma60_pct":round((closes[-1]-ma60)/ma60*100,1),
                 "sector":sector,
             })
@@ -454,20 +459,26 @@ def run_nomad():
         except: pass
         time.sleep(0.15)
 
-    results.sort(key=lambda x: x["vol_ratio"], reverse=True)
-    out = {"stocks":results,"total_scanned":len(stocks),"total_passed":len(results),
+    # ① 改用最有預測力的因子排序（取代原本的 vol_ratio）
+    results.sort(key=lambda x: x.get(NOMAD_SORT_KEY, 0), reverse=NOMAD_SORT_DESC)
+    # ② 訊號數上限，避免灌爆追蹤清單
+    top = results[:NOMAD_MAX_SIGNALS]
+    out = {"stocks":top,"total_scanned":len(stocks),"total_passed":len(results),
            "date":today,"time":datetime.now().strftime("%Y/%m/%d %H:%M")}
-    log(f"🐎 遊牧民完成：{len(results)} 支通過（共掃描 {len(stocks)} 支）")
-    print_finmind_summary()
+    log(f"🐎 遊牧民完成：{len(results)} 支通過 / 取前 {len(top)} 支（共掃描 {len(stocks)} 支）")
     save_result("nomad_results", out)  # 不管 0 支都存
 
-    # 自動加入追蹤清單
+    # ③ 加出場/檢視窗口：把「建議檢視到期日」寫進 note（不需改 DB schema）
+    review_by = (tw_now + timedelta(days=int(NOMAD_HOLD_DAYS * 1.4))).strftime("%Y/%m/%d")
+    note = f"遊牧民選股 | 檢視到期 {review_by}"
+
+    # 自動加入追蹤清單（僅加入取前 N 的訊號）
     added = 0
-    for s in results:
-        add_to_watchlist(s["code"],s["name"],s["price"],s["sector"],"遊牧民選股",JACK_TOKEN)
+    for s in top:
+        add_to_watchlist(s["code"],s["name"],s["price"],s["sector"],note,JACK_TOKEN)
         added += 1
         time.sleep(0.1)
-    log(f"🐎 自動加入追蹤清單 {added} 支")
+    log(f"🐎 自動加入追蹤清單 {added} 支（檢視到期 {review_by}）")
     return out
 
 # ══════════════════════════════════════════════════════
