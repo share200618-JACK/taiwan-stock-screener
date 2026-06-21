@@ -12,7 +12,7 @@
     gunicorn server:app
 """
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import redirect, Flask, jsonify, request, send_from_directory
 import requests
 import urllib3
 from datetime import datetime, timedelta
@@ -5378,7 +5378,7 @@ def reversal_history():
 
 @app.route("/reversal")
 def reversal_page():
-    return send_from_directory(".", "reversal.html")
+    return redirect("/", code=302)  # 已併入AI選股，導回首頁
 
 # ══════════════════════════════════════════════════════
 # 儀表板 API
@@ -6441,9 +6441,9 @@ def trinity_latest():
 def trinity_history():
     return jsonify({"history": _load_trinity_history()})
 
-@app.route("/reversal")
+@app.route("/reversal", endpoint="trinity_page_redirect")
 def trinity_page():
-    return send_from_directory(".", "reversal.html")
+    return redirect("/", code=302)
 
 # ══════════════════════════════════════════════════════
 # 遊牧民選股系統
@@ -6686,7 +6686,7 @@ def nomad_history():
 
 @app.route("/screener")
 def screener_page():
-    return send_from_directory(".", "screener.html")
+    return redirect("/", code=302)  # 已併入AI選股，導回首頁
 
 def _start_keep_alive():
     """每 4 分鐘 ping 自己，防止 Render 免費版休眠（搭配 UptimeRobot 5 分鐘外部 ping）"""
