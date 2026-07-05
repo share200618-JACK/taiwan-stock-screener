@@ -140,7 +140,6 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .modal-loading{text-align:center;padding:32px;color:#6a748f;}
 </style>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
-<script src="/auth.js"></script>
 </head>
 <body>
 <div class="w">
@@ -693,17 +692,11 @@ window.addEventListener('DOMContentLoaded', () => {
   updateCustomHistoryCount();
   loadWatchingCodes();
 
-  // 背景驗證（不阻塞頁面）
-  requireAuth().then(user => {
-    if (user) {
-    renderAuthBar('authBar');
-    const uname = user.username || user.name || user.user || '';
-    const avatar = document.getElementById('userAvatar');
-    const nameEl = document.getElementById('topUserName');
-    if (avatar) avatar.textContent = uname ? uname[0].toUpperCase() : '?';
-    if (nameEl) nameEl.textContent = uname || '—';
-  }
-  }).catch(() => {});
+  // 已移除登入，固定顯示 Jack
+  const avatar = document.getElementById('userAvatar');
+  const nameEl = document.getElementById('topUserName');
+  if (avatar) avatar.textContent = 'J';
+  if (nameEl) nameEl.textContent = 'Jack';
 });
 
 const MODEL_NAMES = {v1:'v1.0 基礎版', v2:'v2.0 強化版', v3:'v3.0 護城河選股'};
@@ -1122,7 +1115,7 @@ let _watchingCodes = new Set();  // 快取已追蹤的代號
 
 async function loadWatchingCodes() {
   try {
-    const r = await fetch(`${API}/api/watchlist?token=${getToken()||'default'}`);
+    const r = await fetch(`${API}/api/watchlist?token=${'85b8cba2f1ec0d8e28a25a00db26e121'}`);
     const d = await r.json();
     _watchingCodes = new Set((d.stocks||[]).map(s => s.code));
   } catch(e) { console.log('追蹤清單載入失敗:', e); }
@@ -1137,10 +1130,10 @@ async function toggleWatch(code, name, price, sector, btn) {
   try {
     if (isWatching(code)) {
       // 移除
-      const r = await fetch(`${API}/api/watchlist/${code}?token=${getToken()||'default'}`, {
+      const r = await fetch(`${API}/api/watchlist/${code}?token=${'85b8cba2f1ec0d8e28a25a00db26e121'}`, {
       method:'DELETE',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({user_token: getToken()||'default'})
+      body: JSON.stringify({user_token: '85b8cba2f1ec0d8e28a25a00db26e121'})
     });
       const d = await r.json();
       if (d.ok) {
@@ -1157,7 +1150,7 @@ async function toggleWatch(code, name, price, sector, btn) {
           add_price:  price,
           add_time:   new Date().toLocaleString('zh-TW', {hour12:false}),
           sector:     sector || '',
-          user_token: getToken() || 'default',
+          user_token: '85b8cba2f1ec0d8e28a25a00db26e121',
         })
       });
       const d = await r.json();

@@ -6,7 +6,6 @@
 <title>我的追蹤清單</title>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
-<script src="/auth.js"></script>
 <style>
 :root{
   --bg:#080b12;--bg2:#0d1120;--bg3:#121828;--bdr:#1a2235;--bdr2:#232d42;
@@ -193,18 +192,6 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
 <body>
 
 <!-- 登入畫面 -->
-<div class="login-overlay" id="loginOverlay">
-  <div class="login-card">
-    <div class="login-icon">👁️</div>
-    <div class="login-title">我的追蹤清單</div>
-    <div class="login-sub">請登入以查看您的個人追蹤清單</div>
-    <input class="login-input" id="loginUser" type="text" placeholder="帳號" autocomplete="username">
-    <input class="login-input" id="loginPass" type="password" placeholder="密碼" autocomplete="current-password">
-    <button class="login-btn" onclick="doLogin()">登入</button>
-    <div class="login-err" id="loginErr"></div>
-  </div>
-</div>
-
 <!-- 頂部 -->
 <div class="topbar">
   <a href="/" class="logo">
@@ -271,54 +258,22 @@ let _chartInst = {};
 let _chartPeriod = {};
 
 // ── 登入 ────────────────────────────────────────────
-async function checkAuth() {
-  const token = getToken ? getToken() : localStorage.getItem('tw_user_token');
-  if (token && token !== 'default' && token.length > 10) {
-    showApp();
-    return;
-  }
-  document.getElementById('loginOverlay').style.display = 'flex';
+function checkAuth() {
+  // 已移除登入，直接進入
+  showApp();
 }
 
 function showApp() {
-  document.getElementById('loginOverlay').style.display = 'none';
-  const name = (getUsername ? getUsername() : localStorage.getItem('tw_username')) || 'Jack';
-  document.getElementById('userName').textContent = name;
-  document.getElementById('userAvatar').textContent = name.charAt(0).toUpperCase();
+  const nameEl = document.getElementById('userName');
+  const avEl   = document.getElementById('userAvatar');
+  if (nameEl) nameEl.textContent = 'Jack';
+  if (avEl)   avEl.textContent = 'J';
   loadWatchlist();
 }
 
-async function doLogin() {
-  const user = document.getElementById('loginUser').value.trim();
-  const pass = document.getElementById('loginPass').value.trim();
-  if (!user || !pass) { document.getElementById('loginErr').textContent = '請填寫帳號密碼'; return; }
-  document.getElementById('loginErr').textContent = '';
-  try {
-    const r = await fetch(`${API}/api/auth/login`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({username:user, password:pass})
-    });
-    const d = await r.json();
-    if (d.ok) {
-      if (typeof saveAuth === 'function') saveAuth(d.token, d.username);
-      else { localStorage.setItem('tw_user_token', d.token); localStorage.setItem('tw_username', d.username); }
-      showApp();
-    } else {
-      document.getElementById('loginErr').textContent = d.error || '帳號或密碼錯誤';
-    }
-  } catch(e) {
-    // 如果沒有 auth API，直接用 JACK_TOKEN
-    if (user === 'jack' || user === 'Jack') {
-      localStorage.setItem('tw_user_token', JACK_TOKEN);
-      localStorage.setItem('tw_username', user);
-      showApp();
-    } else {
-      document.getElementById('loginErr').textContent = '登入失敗，請重試';
-    }
-  }
-}
-
 function doLogout() {
+  // 已移除登入，登出無作用
+  return;
   if (typeof authLogout === 'function') authLogout();
   else { localStorage.removeItem('tw_user_token'); localStorage.removeItem('tw_username'); }
   location.reload();

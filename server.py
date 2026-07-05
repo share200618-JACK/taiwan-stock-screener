@@ -356,7 +356,7 @@ def index():
 
 @app.route("/login")
 def login_page():
-    return send_from_directory(".", "login.html")
+    return redirect("/", code=302)  # 已移除登入
 
 @app.route("/auth.js")
 def auth_js():
@@ -368,11 +368,11 @@ def backtest_page():
 
 @app.route("/alert")
 def alert_page():
-    return send_from_directory(".", "alert.html")
+    return redirect("/", code=302)  # 已移除
 
 @app.route("/predict")
 def predict_page():
-    return send_from_directory(".", "predict.html")
+    return redirect("/", code=302)  # 頁面不存在
 
 @app.route("/watchlist")
 def watchlist_page():
@@ -4876,7 +4876,7 @@ def analyze_page():
 
 @app.route("/portfolio")
 def portfolio_page():
-    return send_from_directory(".", "portfolio.html")
+    return redirect("/", code=302)  # 已移除
 
 @app.route("/api/prices")
 def get_prices():
