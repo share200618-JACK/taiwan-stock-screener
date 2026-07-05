@@ -259,8 +259,7 @@ let _chartPeriod = {};
 
 // ── 登入 ────────────────────────────────────────────
 function checkAuth() {
-  // 已移除登入，直接進入
-  showApp();
+  showApp();  // 已移除登入，直接進入
 }
 
 function showApp() {
@@ -272,8 +271,7 @@ function showApp() {
 }
 
 function doLogout() {
-  // 已移除登入，登出無作用
-  return;
+  return;  // 已移除登入
   if (typeof authLogout === 'function') authLogout();
   else { localStorage.removeItem('tw_user_token'); localStorage.removeItem('tw_username'); }
   location.reload();
@@ -657,11 +655,20 @@ async function loadHistory(code) {
 
   const addDate = (stock.add_time||'').slice(0,10);
   const today   = new Date().toISOString().slice(0,10);
+  // 抓取起始日：加入日往前推90天，確保有足夠K線資料（避免剛加入的股票資料太少而失敗）
+  let fetchStart = addDate;
+  try {
+    const d90 = new Date();
+    d90.setDate(d90.getDate() - 90);
+    const d90str = d90.toISOString().slice(0,10);
+    // 用「加入日」與「90天前」較早者當起始，確保資料量足夠
+    fetchStart = (!addDate || addDate > d90str) ? d90str : addDate;
+  } catch(e) { fetchStart = addDate; }
   const curPrice= _prices[code]?.price || null;
   const ret     = curPrice && stock.add_price ? Math.round((curPrice-stock.add_price)/stock.add_price*10000)/100 : null;
 
   try {
-    const r = await fetch(`${API}/api/stock/history?code=${code}&start=${addDate}&end=${today}`);
+    const r = await fetch(`${API}/api/stock/history?code=${code}&start=${fetchStart}&end=${today}`);
     const d = await r.json();
     const records = (d.records||[]).slice(-30).reverse(); // 最近30筆
 
