@@ -212,6 +212,14 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
   </div>
 </div>
 
+<!-- 分頁切換：追蹤清單 / 交易日誌 -->
+<div class="main-tabs" style="display:flex;gap:8px;padding:0 4px 14px;">
+  <button class="mtab active" id="mtab_watch" onclick="switchMainTab('watch')"
+    style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--bdr);background:var(--pur);color:#fff;font-size:.85rem;font-weight:700;cursor:pointer;transition:all .15s;">👁️ 追蹤清單</button>
+  <button class="mtab" id="mtab_journal" onclick="switchMainTab('journal')"
+    style="flex:1;padding:11px;border-radius:10px;border:1px solid var(--bdr);background:var(--bg2);color:var(--muted);font-size:.85rem;font-weight:700;cursor:pointer;transition:all .15s;">📊 交易日誌</button>
+</div>
+
 <!-- 統計 -->
 <div class="stats-grid">
   <div class="stat-card">
@@ -243,6 +251,48 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
 <!-- 清單 -->
 <div class="container">
   <div id="stockList"></div>
+</div>
+
+<!-- ═══ 交易日誌區塊（預設隱藏）═══ -->
+<div id="journalView" style="display:none;">
+  <!-- 績效總覽 -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-num" id="jTotalPnl" style="color:var(--grn);">—</div>
+      <div class="stat-lbl">總損益(元)</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="jWinRate" style="color:var(--gold);">—</div>
+      <div class="stat-lbl">勝率</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="jHolding" style="color:var(--blue);">0</div>
+      <div class="stat-lbl">持倉中</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num" id="jClosed" style="color:var(--muted);">0</div>
+      <div class="stat-lbl">已平倉</div>
+    </div>
+  </div>
+
+  <!-- 來源績效對比（優化AI選股的關鍵）-->
+  <div id="jSourceCompare" style="background:linear-gradient(135deg,rgba(168,85,247,.06),rgba(124,58,237,.03));border:1px solid rgba(168,85,247,.2);border-radius:12px;padding:14px;margin-bottom:14px;">
+    <div style="font-size:.82rem;font-weight:700;color:#c4a4f7;margin-bottom:10px;">🎯 來源績效對比 <span style="font-size:.66rem;color:var(--muted);font-weight:400;">— 看跟AI買的有沒有比自選賺</span></div>
+    <div id="jSourceRows"></div>
+  </div>
+
+  <!-- 新增交易按鈕 -->
+  <button onclick="openTradeForm()" style="width:100%;padding:12px;border-radius:10px;border:1px dashed var(--pur);background:rgba(168,85,247,.08);color:#c4a4f7;font-size:.85rem;font-weight:600;cursor:pointer;margin-bottom:14px;">＋ 新增交易紀錄</button>
+
+  <!-- 交易列表 -->
+  <div id="journalList"></div>
+</div>
+
+<!-- 新增/賣出交易的彈窗 -->
+<div id="tradeModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;align-items:center;justify-content:center;padding:16px;" onclick="if(event.target===this)closeTradeForm()">
+  <div style="background:var(--bg2);border:1px solid var(--bdr2);border-radius:16px;padding:20px;width:100%;max-width:380px;max-height:85vh;overflow-y:auto;">
+    <div id="tradeModalBody"></div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -437,7 +487,10 @@ function renderCard(s) {
           <div class="ind-box"><div class="ind-lbl">MACD柱</div><div class="ind-val" id="ind_macd_${s.code}">—</div></div>
         </div>
       </div>
-      <button class="remove-btn" onclick="removeStock('${s.code}','${s.name||s.code}')">✕ 取消追蹤 ${s.name||s.code}</button>
+      <div style="display:flex;gap:8px;margin-top:4px;">
+        <button onclick="recordBuyFromWatch('${s.code}','${(s.name||s.code).replace(/'/g,'')}',${s.add_price||0},'${s.note||''}')" style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--pur);background:rgba(168,85,247,.1);color:#c4a4f7;font-size:.75rem;font-weight:600;cursor:pointer;">📊 記錄買進</button>
+        <button class="remove-btn" style="flex:1;margin:0;" onclick="removeStock('${s.code}','${s.name||s.code}')">✕ 取消追蹤</button>
+      </div>
     </div>
   </div>`;
 }
@@ -754,6 +807,18 @@ function sectorColor(sec) {
   return '#5a6888';
 }
 
+// 從追蹤清單一鍵記錄買進（自動帶入來源與AI機率）
+function recordBuyFromWatch(code, name, addPrice, note) {
+  // 依備註判斷來源
+  let source = '自選';
+  if (note && note.includes('遊牧民')) source = '遊牧民';
+  else if (note && note.includes('三合一')) source = '三合一';
+  else if (note && (note.includes('AI') || note.includes('推薦'))) source = 'AI推薦';
+  const curPrice = _prices[code]?.price || addPrice || '';
+  switchMainTab('journal');
+  setTimeout(() => openTradeForm({code, name, price: curPrice, source, note}), 100);
+}
+
 function showToast(msg) {
   const t=document.getElementById('toast');
   t.textContent=msg; t.classList.add('show');
@@ -761,6 +826,218 @@ function showToast(msg) {
 }
 
 // ── 初始化 ────────────────────────────────────────────
+// ═══════════════════════════════════════════
+// 交易日誌
+// ═══════════════════════════════════════════
+const SOURCES = ['AI推薦','三合一','遊牧民','自選'];
+
+function switchMainTab(tab) {
+  const isWatch = tab === 'watch';
+  document.getElementById('journalView').style.display = isWatch ? 'none' : 'block';
+  // 追蹤清單相關元素
+  document.querySelector('.stats-grid').style.display = isWatch ? '' : 'none';
+  document.querySelector('.toolbar').style.display = isWatch ? '' : 'none';
+  document.querySelector('.container').style.display = isWatch ? '' : 'none';
+  // tab 樣式
+  const wt = document.getElementById('mtab_watch'), jt = document.getElementById('mtab_journal');
+  if (isWatch) {
+    wt.style.background = 'var(--pur)'; wt.style.color = '#fff';
+    jt.style.background = 'var(--bg2)'; jt.style.color = 'var(--muted)';
+  } else {
+    jt.style.background = 'var(--pur)'; jt.style.color = '#fff';
+    wt.style.background = 'var(--bg2)'; wt.style.color = 'var(--muted)';
+    loadJournal();
+  }
+}
+
+async function loadJournal() {
+  try {
+    const r = await fetch(`${API}/api/journal?token=${JACK_TOKEN}`);
+    const d = await r.json();
+    renderJournalStats(d.stats || {});
+    renderJournalList(d.trades || []);
+  } catch(e) {
+    document.getElementById('journalList').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;font-size:.8rem;">載入失敗，請重試</div>';
+  }
+}
+
+function renderJournalStats(st) {
+  const pnl = st.total_pnl || 0;
+  const pnlEl = document.getElementById('jTotalPnl');
+  pnlEl.textContent = (pnl>=0?'+':'') + pnl.toLocaleString();
+  pnlEl.style.color = pnl>=0 ? 'var(--red)' : 'var(--grn)';
+  document.getElementById('jWinRate').textContent = (st.win_rate||0) + '%';
+  document.getElementById('jHolding').textContent = st.holding || 0;
+  document.getElementById('jClosed').textContent = st.closed || 0;
+
+  // 來源對比
+  const rows = st.by_source || {};
+  let html = '';
+  Object.entries(rows).forEach(([src, b]) => {
+    const col = b.pnl>=0 ? 'var(--red)' : 'var(--grn)';
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--bdr);">
+      <div style="font-size:.8rem;font-weight:600;color:var(--txt);">${src}</div>
+      <div style="display:flex;gap:14px;align-items:center;">
+        <span style="font-size:.72rem;color:var(--muted);">${b.n}筆</span>
+        <span style="font-size:.72rem;color:var(--muted);">勝率${b.win_rate}%</span>
+        <span style="font-size:.85rem;font-weight:700;color:${col};font-family:'JetBrains Mono',monospace;min-width:70px;text-align:right;">${b.pnl>=0?'+':''}${b.pnl.toLocaleString()}</span>
+      </div>
+    </div>`;
+  });
+  document.getElementById('jSourceRows').innerHTML = html || '<div style="font-size:.72rem;color:var(--muted);text-align:center;padding:8px;">尚無已平倉交易</div>';
+}
+
+function renderJournalList(trades) {
+  if (!trades.length) {
+    document.getElementById('journalList').innerHTML = '<div style="text-align:center;color:var(--muted);padding:30px;font-size:.8rem;">尚無交易紀錄<br>點上方「＋新增交易紀錄」開始</div>';
+    return;
+  }
+  let html = '';
+  trades.forEach(t => {
+    const isClosed = !!t.sell_price;
+    const cur = _prices[t.code];
+    if (isClosed) {
+      const pnl = t.net_pnl || 0;
+      const col = pnl>=0 ? 'var(--red)' : 'var(--grn)';
+      html += `<div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:12px;padding:14px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+          <div><span style="font-weight:700;color:var(--white);">${t.name||t.code}</span> <span style="font-size:.7rem;color:var(--muted);">${t.code}</span>
+            <span style="font-size:.62rem;padding:1px 6px;border-radius:4px;background:rgba(168,85,247,.15);color:#c4a4f7;margin-left:6px;">${t.source||'自選'}</span></div>
+          <div style="font-size:1.05rem;font-weight:800;color:${col};font-family:'JetBrains Mono',monospace;">${pnl>=0?'+':''}${pnl.toLocaleString()}</div>
+        </div>
+        <div style="font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;">
+          買 ${t.buy_price}×${t.shares}張 (${t.buy_date}) → 賣 ${t.sell_price} (${t.sell_date}) · 淨報酬 ${t.net_pct>=0?'+':''}${t.net_pct}%
+        </div>
+        <div style="font-size:.62rem;color:var(--dim);margin-top:4px;">手續費 ${(t.buy_fee||0)+(t.sell_fee||0)} · 證交稅 ${t.tax||0}</div>
+        <button onclick="delTrade(${t.id})" style="margin-top:8px;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,83,80,.3);background:none;color:var(--red);font-size:.68rem;cursor:pointer;">刪除</button>
+      </div>`;
+    } else {
+      // 持倉中：顯示距停損距離
+      const curPrice = cur?.price;
+      const slDist = curPrice ? Math.round((curPrice - t.stop_loss)/curPrice*10000)/100 : null;
+      const nearSL = slDist !== null && slDist < 2;
+      html += `<div style="background:var(--bg2);border:1px solid ${nearSL?'rgba(239,83,80,.5)':'var(--bdr)'};border-radius:12px;padding:14px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+          <div><span style="font-weight:700;color:var(--white);">${t.name||t.code}</span> <span style="font-size:.7rem;color:var(--muted);">${t.code}</span>
+            <span style="font-size:.62rem;padding:1px 6px;border-radius:4px;background:rgba(61,139,255,.15);color:var(--blue);margin-left:6px;">持倉中</span>
+            <span style="font-size:.62rem;padding:1px 6px;border-radius:4px;background:rgba(168,85,247,.15);color:#c4a4f7;margin-left:4px;">${t.source||'自選'}</span></div>
+        </div>
+        <div style="font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;">
+          買 ${t.buy_price}×${t.shares}張 (${t.buy_date}) · 停損 <span style="color:var(--red);">${t.stop_loss}</span> (-${t.stop_loss_pct}%)
+          ${curPrice?` · 現價 ${curPrice}`:''}${slDist!==null?` · 距停損 <span style="color:${nearSL?'var(--red)':'var(--muted)'};">${slDist}%</span>`:''}
+        </div>
+        ${nearSL?'<div style="font-size:.68rem;color:var(--red);margin-top:4px;">⚠️ 接近停損價，注意風險</div>':''}
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button onclick="openSellForm(${t.id},'${t.code}','${(t.name||'').replace(/'/g,'')}',${t.buy_price},${t.shares})" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--grn);background:rgba(27,196,125,.1);color:var(--grn);font-size:.72rem;cursor:pointer;">賣出平倉</button>
+          <button onclick="delTrade(${t.id})" style="padding:6px 12px;border-radius:6px;border:1px solid rgba(239,83,80,.3);background:none;color:var(--red);font-size:.72rem;cursor:pointer;">刪除</button>
+        </div>
+      </div>`;
+    }
+  });
+  document.getElementById('journalList').innerHTML = html;
+}
+
+// 新增交易表單
+function openTradeForm(prefill) {
+  const p = prefill || {};
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('tradeModalBody').innerHTML = `
+    <div style="font-size:1rem;font-weight:700;color:var(--white);margin-bottom:14px;">＋ 新增買進紀錄</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;gap:8px;">
+        <input id="tCode" placeholder="代號" value="${p.code||''}" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+        <input id="tName" placeholder="名稱" value="${p.name||''}" style="flex:2;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      </div>
+      <div style="display:flex;gap:8px;">
+        <input id="tBuyPrice" type="number" step="0.01" placeholder="買進價" value="${p.price||''}" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+        <input id="tShares" type="number" placeholder="張數" value="1" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      </div>
+      <input id="tBuyDate" type="date" value="${today}" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      <div style="display:flex;gap:8px;align-items:center;">
+        <label style="font-size:.75rem;color:var(--muted);">停損幅度</label>
+        <input id="tStopLoss" type="number" value="8" style="width:70px;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+        <span style="font-size:.75rem;color:var(--muted);">%</span>
+        <select id="tSource" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+          ${SOURCES.map(s=>`<option ${p.source===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <input id="tNote" placeholder="備註（選填）" value="${p.note||''}" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      <input type="hidden" id="tAiProb" value="${p.ai_rise_prob||0}">
+      <div style="display:flex;gap:8px;margin-top:6px;">
+        <button onclick="closeTradeForm()" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--bdr);background:none;color:var(--muted);font-size:.85rem;cursor:pointer;">取消</button>
+        <button onclick="submitTrade()" style="flex:2;padding:10px;border-radius:8px;border:none;background:var(--pur);color:#fff;font-size:.85rem;font-weight:600;cursor:pointer;">確認買進</button>
+      </div>
+    </div>`;
+  document.getElementById('tradeModal').style.display = 'flex';
+}
+
+function openSellForm(id, code, name, buyPrice, shares) {
+  const today = new Date().toISOString().slice(0,10);
+  const cur = _prices[code]?.price || '';
+  document.getElementById('tradeModalBody').innerHTML = `
+    <div style="font-size:1rem;font-weight:700;color:var(--white);margin-bottom:6px;">賣出平倉 — ${name} ${code}</div>
+    <div style="font-size:.72rem;color:var(--muted);margin-bottom:14px;">買進 ${buyPrice} × ${shares}張</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <input id="sSellPrice" type="number" step="0.01" placeholder="賣出價" value="${cur}" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      <input id="sSellDate" type="date" value="${today}" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      <div id="sPnlPreview" style="font-size:.75rem;color:var(--muted);text-align:center;padding:6px;"></div>
+      <div style="display:flex;gap:8px;margin-top:6px;">
+        <button onclick="closeTradeForm()" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--bdr);background:none;color:var(--muted);font-size:.85rem;cursor:pointer;">取消</button>
+        <button onclick="submitSell(${id})" style="flex:2;padding:10px;border-radius:8px;border:none;background:var(--grn);color:#fff;font-size:.85rem;font-weight:600;cursor:pointer;">確認賣出</button>
+      </div>
+    </div>`;
+  document.getElementById('tradeModal').style.display = 'flex';
+}
+
+function closeTradeForm() { document.getElementById('tradeModal').style.display = 'none'; }
+
+async function submitTrade() {
+  const body = {
+    user_token: JACK_TOKEN,
+    code: document.getElementById('tCode').value.trim(),
+    name: document.getElementById('tName').value.trim(),
+    buy_price: parseFloat(document.getElementById('tBuyPrice').value),
+    shares: parseInt(document.getElementById('tShares').value)||1,
+    buy_date: document.getElementById('tBuyDate').value,
+    stop_loss_pct: parseFloat(document.getElementById('tStopLoss').value)||8,
+    source: document.getElementById('tSource').value,
+    ai_rise_prob: parseFloat(document.getElementById('tAiProb').value)||0,
+    note: document.getElementById('tNote').value.trim(),
+  };
+  if (!body.code || !body.buy_price) { showToast('請填代號和買進價'); return; }
+  const r = await fetch(`${API}/api/journal`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json();
+  if (d.ok) { closeTradeForm(); showToast('✅ 已新增交易'); loadJournal(); }
+  else showToast('新增失敗');
+}
+
+async function submitSell(id) {
+  const body = {
+    user_token: JACK_TOKEN,
+    sell_price: parseFloat(document.getElementById('sSellPrice').value),
+    sell_date: document.getElementById('sSellDate').value,
+  };
+  if (!body.sell_price) { showToast('請填賣出價'); return; }
+  const r = await fetch(`${API}/api/journal/${id}/sell`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json();
+  if (d.ok) { closeTradeForm(); showToast(`✅ 已平倉，淨損益 ${d.pnl.net_pnl>=0?'+':''}${d.pnl.net_pnl}`); loadJournal(); }
+  else showToast('賣出失敗');
+}
+
+async function delTrade(id) {
+  if (!confirm('確定刪除這筆交易？')) return;
+  const r = await fetch(`${API}/api/journal/${id}?token=${JACK_TOKEN}`, {method:'DELETE'});
+  const d = await r.json();
+  if (d.ok) { showToast('已刪除'); loadJournal(); }
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  if (!t) { alert(msg); return; }
+  t.textContent = msg; t.style.opacity = '1';
+  setTimeout(()=>{ t.style.opacity = '0'; }, 2000);
+}
+
 checkAuth();
 </script>
 </body>

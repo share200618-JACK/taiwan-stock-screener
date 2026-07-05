@@ -477,6 +477,124 @@ def api_watchlist_note(code):
     ok    = sb_watchlist_update_note(code, note, token)
     return jsonify({"ok": ok})
 
+# ══════════════════════════════════════════════════════
+# 交易日誌（Trade Journal）— 台股手續費、停損、AI推薦關聯
+# ══════════════════════════════════════════════════════
+FEE_RATE = 0.001425   # 手續費 0.1425%
+TAX_RATE = 0.003      # 證交稅 0.3%（賣出）
+FEE_MIN  = 20         # 單筆手續費最低 20 元
+
+def calc_fee(amount):
+    return max(round(amount * FEE_RATE), FEE_MIN)
+
+def calc_trade_pnl(buy_price, sell_price, shares):
+    qty      = shares * 1000
+    buy_amt  = buy_price * qty
+    sell_amt = sell_price * qty
+    buy_fee  = calc_fee(buy_amt)
+    sell_fee = calc_fee(sell_amt)
+    tax      = round(sell_amt * TAX_RATE)
+    net_pnl  = round(sell_amt - buy_amt - buy_fee - sell_fee - tax)
+    cost     = buy_amt + buy_fee
+    net_pct  = round(net_pnl / cost * 100, 2) if cost > 0 else 0
+    return {"buy_amount":round(buy_amt),"sell_amount":round(sell_amt),
+            "buy_fee":buy_fee,"sell_fee":sell_fee,"tax":tax,
+            "net_pnl":net_pnl,"net_pct":net_pct}
+
+def sb_journal_load(user_token="default"):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/trade_journal"
+        r = requests.get(url, params={"user_token": f"eq.{user_token}", "order": "buy_date.desc", "limit": "300"},
+                         headers=_sb_headers(), timeout=10)
+        return r.json() if r.status_code == 200 else []
+    except Exception as e:
+        print(f"[Journal] {e}"); return []
+
+@app.route("/api/journal", methods=["GET"])
+def api_journal_list():
+    token = request.args.get("token", "default")
+    rows  = sb_journal_load(token)
+    closed = [r for r in rows if r.get("sell_price")]
+    total_pnl = sum(r.get("net_pnl", 0) or 0 for r in closed)
+    wins = [r for r in closed if (r.get("net_pnl", 0) or 0) > 0]
+    win_rate = round(len(wins) / len(closed) * 100, 1) if closed else 0
+    by_source = {}
+    for r in closed:
+        src = r.get("source", "自選") or "自選"
+        by_source.setdefault(src, {"n": 0, "pnl": 0, "wins": 0})
+        by_source[src]["n"] += 1
+        by_source[src]["pnl"] += (r.get("net_pnl", 0) or 0)
+        if (r.get("net_pnl", 0) or 0) > 0: by_source[src]["wins"] += 1
+    for src in by_source:
+        b = by_source[src]
+        b["win_rate"] = round(b["wins"] / b["n"] * 100, 1) if b["n"] else 0
+    return jsonify({"trades": rows, "stats": {
+        "total_trades": len(rows), "closed": len(closed),
+        "holding": len(rows) - len(closed), "total_pnl": total_pnl,
+        "win_rate": win_rate, "by_source": by_source}})
+
+@app.route("/api/journal", methods=["POST"])
+def api_journal_add():
+    b = request.get_json() or {}
+    token = b.get("user_token", "default")
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False}), 200
+    try:
+        buy_price = safe_float(b.get("buy_price"))
+        shares = int(b.get("shares", 1))
+        sl_pct = safe_float(b.get("stop_loss_pct", 8))
+        stop_loss = round(buy_price * (1 - sl_pct / 100), 2)
+        buy_amt = buy_price * shares * 1000
+        payload = {
+            "user_token": token, "code": b.get("code", ""), "name": b.get("name", ""),
+            "buy_date": b.get("buy_date") or (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d"),
+            "buy_price": buy_price, "shares": shares, "buy_fee": calc_fee(buy_amt),
+            "stop_loss": stop_loss, "stop_loss_pct": sl_pct,
+            "source": b.get("source", "自選"), "ai_rise_prob": safe_float(b.get("ai_rise_prob", 0)),
+            "note": b.get("note", "")}
+        r = requests.post(f"{SUPABASE_URL}/rest/v1/trade_journal", json=payload, headers=_sb_headers(), timeout=10)
+        return jsonify({"ok": r.status_code in (200, 201)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+@app.route("/api/journal/<int:tid>/sell", methods=["POST"])
+def api_journal_sell(tid):
+    b = request.get_json() or {}
+    token = b.get("user_token", "default")
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False}), 200
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/trade_journal"
+        r0 = requests.get(url, params={"id": f"eq.{tid}", "user_token": f"eq.{token}"}, headers=_sb_headers(), timeout=8)
+        rows = r0.json() if r0.status_code == 200 else []
+        if not rows: return jsonify({"ok": False, "error": "找不到"}), 200
+        trade = rows[0]
+        sell_price = safe_float(b.get("sell_price"))
+        shares = int(trade.get("shares", 1))
+        pnl = calc_trade_pnl(safe_float(trade.get("buy_price")), sell_price, shares)
+        patch = {"sell_date": b.get("sell_date") or (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d"),
+                 "sell_price": sell_price, "sell_fee": pnl["sell_fee"], "tax": pnl["tax"],
+                 "net_pnl": pnl["net_pnl"], "net_pct": pnl["net_pct"]}
+        r = requests.patch(url, json=patch, params={"id": f"eq.{tid}", "user_token": f"eq.{token}"}, headers=_sb_headers(), timeout=10)
+        return jsonify({"ok": r.status_code in (200, 204), "pnl": pnl})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+@app.route("/api/journal/<int:tid>", methods=["DELETE"])
+def api_journal_delete(tid):
+    token = request.args.get("token", "default")
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False}), 200
+    try:
+        r = requests.delete(f"{SUPABASE_URL}/rest/v1/trade_journal",
+                           params={"id": f"eq.{tid}", "user_token": f"eq.{token}"}, headers=_sb_headers(), timeout=8)
+        return jsonify({"ok": r.status_code in (200, 204)})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 200
+
+
 @app.route("/api/health")
 def health():
     return jsonify({"ok": True, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
