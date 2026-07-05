@@ -1,0 +1,57 @@
+name: 每日選股排程
+
+on:
+  schedule:
+    - cron: '30 6 * * 1-5'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'run_screen.py'
+      - 'auto_analysis.py'
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: 執行三合一選股
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          JACK_TOKEN: ${{ secrets.JACK_TOKEN }}
+        run: python run_screen.py trinity
+
+      - name: 執行遊牧民選股
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          JACK_TOKEN: ${{ secrets.JACK_TOKEN }}
+        run: python run_screen.py nomad
+
+      - name: 執行 AI 自動選股分析
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python auto_analysis.py
+
+      - name: 計算 AI 選股實戰績效
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python performance.py

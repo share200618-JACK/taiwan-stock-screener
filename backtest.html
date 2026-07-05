@@ -167,6 +167,75 @@ tr:hover td{background:rgba(255,255,255,.015);}
   <a class="back-btn" href="index.html">← 回到選股</a>
 </header>
 
+<!-- ★ 階段1：AI 選股實戰績效儀表板 ★ -->
+<div class="perf-panel" id="perfPanel" style="background:linear-gradient(135deg,rgba(168,85,247,.08),rgba(124,58,237,.04));border:1px solid rgba(168,85,247,.25);border-radius:14px;padding:18px;margin-bottom:20px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+    <div style="font-size:1rem;font-weight:700;color:#c4a4f7;">🎯 AI 選股實戰績效</div>
+    <span id="perfMeta" style="font-size:.7rem;color:var(--dim);">載入中...</span>
+  </div>
+  <div id="perfCards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div>
+  <div id="perfProb" style="margin-top:14px;"></div>
+  <div id="perfEmpty" style="display:none;font-size:.8rem;color:var(--dim);text-align:center;padding:14px;">
+    尚無績效資料 — 需先累積數天 AI 推薦，並由排程跑 performance.py 後才會顯示
+  </div>
+</div>
+
+<script>
+(async function loadPerformance(){
+  const meta = document.getElementById('perfMeta');
+  const cards = document.getElementById('perfCards');
+  const probEl = document.getElementById('perfProb');
+  const emptyEl = document.getElementById('perfEmpty');
+  try {
+    const r = await fetch('/api/performance');
+    const d = await r.json();
+    if (!d.ok || !d.summary) {
+      meta.textContent = '';
+      cards.style.display = 'none';
+      emptyEl.style.display = 'block';
+      return;
+    }
+    const s = d.summary;
+    meta.textContent = `${s.generated} · 樣本 ${s.sample_count} 筆`;
+    const labels = {'5':'持有 5 日','10':'持有 10 日','20':'持有 20 日'};
+    let html = '';
+    Object.entries(s.by_hold || {}).forEach(([hd, st]) => {
+      const retColor = st.avg_return >= 0 ? '#f0436d' : '#27d981';
+      const winColor = st.win_rate >= 50 ? '#f0436d' : '#27d981';
+      html += `<div style="background:rgba(0,0,0,.25);border-radius:10px;padding:12px;text-align:center;">
+        <div style="font-size:.7rem;color:var(--dim);margin-bottom:6px;">${labels[hd]||hd+'日'}</div>
+        <div style="font-size:1.3rem;font-weight:800;color:${retColor};font-family:'JetBrains Mono',monospace;">${st.avg_return>=0?'+':''}${st.avg_return}%</div>
+        <div style="font-size:.68rem;color:var(--dim);margin-top:4px;">平均報酬</div>
+        <div style="margin-top:8px;font-size:.8rem;color:${winColor};font-weight:600;">勝率 ${st.win_rate}%</div>
+        <div style="font-size:.62rem;color:var(--dim);margin-top:4px;">最高+${st.max_gain}% / 最低${st.max_loss}%</div>
+      </div>`;
+    });
+    cards.innerHTML = html;
+
+    // 上漲機率分組驗證
+    if (s.prob_validation && Object.keys(s.prob_validation).length) {
+      let ph = '<div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;">📊 上漲機率分組驗證（持有20日）— 驗證模型機率是否真的有效：</div>';
+      ph += '<div style="display:flex;gap:8px;flex-wrap:wrap;">';
+      Object.entries(s.prob_validation).forEach(([k, st]) => {
+        const col = st.avg_return >= 0 ? '#f0436d' : '#27d981';
+        ph += `<div style="flex:1;min-width:90px;background:rgba(0,0,0,.2);border-radius:8px;padding:8px;text-align:center;">
+          <div style="font-size:.68rem;color:var(--dim);">${k}</div>
+          <div style="font-size:.95rem;font-weight:700;color:${col};font-family:'JetBrains Mono',monospace;">${st.avg_return>=0?'+':''}${st.avg_return}%</div>
+          <div style="font-size:.62rem;color:var(--dim);">勝率${st.win_rate}% · n=${st.n}</div>
+        </div>`;
+      });
+      ph += '</div>';
+      ph += '<div style="font-size:.62rem;color:var(--dim);margin-top:8px;">↑ 若「高機率」組的報酬明顯高於「低機率」組，代表模型有預測力；若差不多甚至相反，代表機率分數需要重新校準。</div>';
+      probEl.innerHTML = ph;
+    }
+  } catch(e) {
+    meta.textContent = '';
+    cards.style.display = 'none';
+    emptyEl.style.display = 'block';
+  }
+})();
+</script>
+
 <!-- 設定區 -->
 <div class="settings">
 
