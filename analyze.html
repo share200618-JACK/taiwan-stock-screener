@@ -1112,7 +1112,7 @@ let _watchingCodes = new Set();  // 快取已追蹤的代號
 
 async function loadWatchingCodes() {
   try {
-    const r = await fetch(`${API}/api/watchlist?token=${'85b8cba2f1ec0d8e28a25a00db26e121'}`);
+    const r = await fetch(`${API}/api/watchlist?token=${'default'}`);
     const d = await r.json();
     _watchingCodes = new Set((d.stocks||[]).map(s => s.code));
   } catch(e) { console.log('追蹤清單載入失敗:', e); }
@@ -1127,10 +1127,10 @@ async function toggleWatch(code, name, price, sector, btn) {
   try {
     if (isWatching(code)) {
       // 移除
-      const r = await fetch(`${API}/api/watchlist/${code}?token=${'85b8cba2f1ec0d8e28a25a00db26e121'}`, {
+      const r = await fetch(`${API}/api/watchlist/${code}?token=${'default'}`, {
       method:'DELETE',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({user_token: '85b8cba2f1ec0d8e28a25a00db26e121'})
+      body: JSON.stringify({user_token: 'default'})
     });
       const d = await r.json();
       if (d.ok) {
@@ -1147,7 +1147,7 @@ async function toggleWatch(code, name, price, sector, btn) {
           add_price:  price,
           add_time:   new Date().toLocaleString('zh-TW', {hour12:false}),
           sector:     sector || '',
-          user_token: '85b8cba2f1ec0d8e28a25a00db26e121',
+          user_token: 'default',
         })
       });
       const d = await r.json();
