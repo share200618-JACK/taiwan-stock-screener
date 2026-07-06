@@ -244,6 +244,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
   <button class="sort-btn" id="sortCode" onclick="setSort('code')"># 代號</button>
   <button class="sort-btn" id="sortRet" onclick="setSort('ret')">📈 報酬率</button>
 </div>
+<button onclick="openAddWatch()" style="width:100%;padding:11px;border-radius:10px;border:1px dashed var(--grn);background:rgba(27,196,125,.08);color:var(--grn);font-size:.85rem;font-weight:600;cursor:pointer;margin-bottom:14px;">＋ 手動新增追蹤股票</button>
 
 <!-- 清單 -->
 <div class="container">
@@ -795,6 +796,43 @@ function sectorColor(sec) {
   };
   for (const [k,v] of Object.entries(map)) if (sec.includes(k)) return v;
   return '#5a6888';
+}
+
+// 手動新增追蹤股票
+function openAddWatch() {
+  const html = `
+    <div style="font-size:1rem;font-weight:700;color:var(--white);margin-bottom:14px;">＋ 新增追蹤股票</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div style="display:flex;gap:8px;">
+        <input id="wCode" placeholder="代號 如 2330" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+        <input id="wName" placeholder="名稱（選填）" style="flex:2;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      </div>
+      <input id="wPrice" type="number" step="0.01" placeholder="買進價/參考價（選填）" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      <input id="wNote" placeholder="備註（選填）" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+      <div style="display:flex;gap:8px;margin-top:6px;">
+        <button onclick="closeTradeForm()" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--bdr);background:none;color:var(--muted);font-size:.85rem;cursor:pointer;">取消</button>
+        <button onclick="submitAddWatch()" style="flex:2;padding:10px;border-radius:8px;border:none;background:var(--grn);color:#fff;font-size:.85rem;font-weight:600;cursor:pointer;">加入追蹤</button>
+      </div>
+    </div>`;
+  document.getElementById('tradeModalBody').innerHTML = html;
+  document.getElementById('tradeModal').style.display = 'flex';
+}
+
+async function submitAddWatch() {
+  const code = document.getElementById('wCode').value.trim();
+  if (!code) { showToast('請輸入代號'); return; }
+  const body = {
+    user_token: JACK_TOKEN,
+    code: code,
+    name: document.getElementById('wName').value.trim() || code,
+    add_price: parseFloat(document.getElementById('wPrice').value) || 0,
+    note: document.getElementById('wNote').value.trim(),
+    add_time: new Date().toLocaleString('sv').slice(0,16).replace('-','/').replace('-','/'),
+  };
+  const r = await fetch(`${API}/api/watchlist`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json();
+  if (d.ok) { closeTradeForm(); showToast('✅ 已加入追蹤'); loadWatchlist(); }
+  else showToast(d.error || '加入失敗');
 }
 
 // 從追蹤清單一鍵記錄買進（自動帶入來源與AI機率）
