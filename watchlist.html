@@ -205,10 +205,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
     <a href="/watchlist" class="nav-link active">👁️ 追蹤</a>
   </nav>
   <div class="user-chip">
-    <div class="user-avatar" id="userAvatar">?</div>
-    <span id="userName">—</span>
-    <button onclick="doLogout()" style="padding:3px 8px;background:none;border:1px solid var(--bdr);
-      border-radius:5px;color:var(--muted);font-size:.65rem;cursor:pointer;">登出</button>
+    <div class="user-avatar" id="userAvatar" style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#a855f7,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;color:#fff;">J</div>
   </div>
 </div>
 
@@ -313,17 +310,10 @@ function checkAuth() {
 }
 
 function showApp() {
-  const nameEl = document.getElementById('userName');
-  const avEl   = document.getElementById('userAvatar');
-  if (nameEl) nameEl.textContent = 'Jack';
-  if (avEl)   avEl.textContent = 'J';
-  loadWatchlist();
+  loadWatchlist();  // 已移除登入，直接載入
 }
 
-function doLogout() {
-  return;  // 已移除登入
-  if (typeof authLogout === 'function') authLogout();
-  else { localStorage.removeItem('tw_user_token'); localStorage.removeItem('tw_username'); }
+
   location.reload();
 }
 

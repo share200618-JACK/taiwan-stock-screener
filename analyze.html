@@ -156,10 +156,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     <a href="/watchlist" class="nav-link">👁️ 追蹤</a>
   </nav>
   <div class="user-chip">
-    <div class="user-avatar" id="userAvatar">?</div>
-    <span id="topUserName">—</span>
-    <button onclick="doLogout()" style="padding:3px 8px;background:none;border:1px solid rgba(255,255,255,.15);
-      border-radius:5px;color:var(--dim);font-size:.65rem;cursor:pointer;">登出</button>
+    <div class="user-avatar" id="userAvatar" style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#a855f7,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:.72rem;font-weight:700;color:#fff;">J</div>
   </div>
 </div>
 
@@ -694,7 +691,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // 已移除登入，固定顯示 Jack
   const avatar = document.getElementById('userAvatar');
-  const nameEl = document.getElementById('topUserName');
+  const nameEl = document.getElementById('topUserName'); // 已移除
   if (avatar) avatar.textContent = 'J';
   if (nameEl) nameEl.textContent = 'Jack';
 });
@@ -1488,11 +1485,7 @@ function renderResults(data) {
     </div>`;
   }).join('');
 }
-function doLogout() {
-  if (typeof authLogout === 'function') authLogout();
-  else { localStorage.removeItem('tw_user_token'); localStorage.removeItem('tw_username'); }
-  location.reload();
-}
+
 </script>
 </body>
 </html>
