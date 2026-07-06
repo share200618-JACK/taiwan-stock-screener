@@ -844,21 +844,47 @@ async function loadJournal() {
   try {
     const r = await fetch(`${API}/api/journal?token=${JACK_TOKEN}`);
     const d = await r.json();
-    renderJournalStats(d.stats || {});
+    // 先抓持倉中股票的現價，才能算未實現損益
+    const holdingCodes = [...new Set((d.trades||[]).filter(t=>!t.sell_price).map(t=>t.code))];
+    if (holdingCodes.length) { try { await fetchPrices(holdingCodes); } catch(e){} }
+    renderJournalStats(d.stats || {}, d.trades || []);
     renderJournalList(d.trades || []);
   } catch(e) {
     document.getElementById('journalList').innerHTML = '<div style="text-align:center;color:var(--muted);padding:20px;font-size:.8rem;">載入失敗，請重試</div>';
   }
 }
 
-function renderJournalStats(st) {
+function renderJournalStats(st, trades) {
   const pnl = st.total_pnl || 0;
   const pnlEl = document.getElementById('jTotalPnl');
   pnlEl.textContent = (pnl>=0?'+':'') + pnl.toLocaleString();
   pnlEl.style.color = pnl>=0 ? 'var(--red)' : 'var(--grn)';
   document.getElementById('jWinRate').textContent = (st.win_rate||0) + '%';
-  document.getElementById('jHolding').textContent = st.holding || 0;
   document.getElementById('jClosed').textContent = st.closed || 0;
+
+  // 計算所有持倉的未實現損益總和（券商「損益試算」）
+  let unrealizedTotal = 0, hasPrice = false;
+  (trades||[]).filter(t=>!t.sell_price).forEach(t => {
+    const cur = _prices[t.code];
+    if (cur?.price) {
+      hasPrice = true;
+      const qty = t.shares*1000;
+      const buyAmt = t.buy_price*qty, curVal = cur.price*qty;
+      const buyFee = t.buy_fee || Math.max(Math.round(buyAmt*0.001425),20);
+      const sellFee = Math.max(Math.round(curVal*0.001425),20);
+      const tax = Math.round(curVal*0.003);
+      unrealizedTotal += Math.round(curVal - buyAmt - buyFee - sellFee - tax);
+    }
+  });
+  const holdEl = document.getElementById('jHolding');
+  if (hasPrice) {
+    holdEl.textContent = (unrealizedTotal>=0?'+':'') + unrealizedTotal.toLocaleString();
+    holdEl.style.color = unrealizedTotal>=0 ? 'var(--red)' : 'var(--grn)';
+    const lbl = holdEl.parentElement.querySelector('.stat-lbl');
+    if (lbl) lbl.textContent = `未實現損益(持倉${st.holding||0})`;
+  } else {
+    holdEl.textContent = st.holding || 0;
+  }
 
   // 來源對比
   const rows = st.by_source || {};
@@ -902,19 +928,39 @@ function renderJournalList(trades) {
         <button onclick="delTrade(${t.id})" style="margin-top:8px;padding:4px 10px;border-radius:6px;border:1px solid rgba(239,83,80,.3);background:none;color:var(--red);font-size:.68rem;cursor:pointer;">刪除</button>
       </div>`;
     } else {
-      // 持倉中：顯示距停損距離
+      // 持倉中：計算未實現損益（含手續費估算）
       const curPrice = cur?.price;
       const slDist = curPrice ? Math.round((curPrice - t.stop_loss)/curPrice*10000)/100 : null;
       const nearSL = slDist !== null && slDist < 2;
+      // 未實現損益：現值 - 成本 - 買手續費 - 估算賣手續費 - 估算證交稅
+      let uPnl = null, uPct = null;
+      if (curPrice) {
+        const qty     = t.shares * 1000;
+        const buyAmt  = t.buy_price * qty;
+        const curVal  = curPrice * qty;
+        const buyFee  = t.buy_fee || Math.max(Math.round(buyAmt*0.001425), 20);
+        const sellFee = Math.max(Math.round(curVal*0.001425), 20);
+        const tax     = Math.round(curVal*0.003);
+        uPnl = Math.round(curVal - buyAmt - buyFee - sellFee - tax);
+        uPct = Math.round(uPnl / (buyAmt + buyFee) * 10000) / 100;
+      }
+      const pnlCol = uPnl===null ? 'var(--muted)' : (uPnl>=0 ? 'var(--red)' : 'var(--grn)');
       html += `<div style="background:var(--bg2);border:1px solid ${nearSL?'rgba(239,83,80,.5)':'var(--bdr)'};border-radius:12px;padding:14px;margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
           <div><span style="font-weight:700;color:var(--white);">${t.name||t.code}</span> <span style="font-size:.7rem;color:var(--muted);">${t.code}</span>
             <span style="font-size:.62rem;padding:1px 6px;border-radius:4px;background:rgba(61,139,255,.15);color:var(--blue);margin-left:6px;">持倉中</span>
             <span style="font-size:.62rem;padding:1px 6px;border-radius:4px;background:rgba(168,85,247,.15);color:#c4a4f7;margin-left:4px;">${t.source||'自選'}</span></div>
+          <div style="text-align:right;">
+            <div style="font-size:1.05rem;font-weight:800;color:${pnlCol};font-family:'JetBrains Mono',monospace;line-height:1.1;">${uPnl===null?'—':(uPnl>=0?'+':'')+uPnl.toLocaleString()}</div>
+            <div style="font-size:.7rem;color:${pnlCol};font-family:'JetBrains Mono',monospace;">${uPct===null?'':(uPct>=0?'+':'')+uPct+'%'}</div>
+          </div>
         </div>
-        <div style="font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;">
-          買 ${t.buy_price}×${t.shares}張 (${t.buy_date}) · 停損 <span style="color:var(--red);">${t.stop_loss}</span> (-${t.stop_loss_pct}%)
-          ${curPrice?` · 現價 ${curPrice}`:''}${slDist!==null?` · 距停損 <span style="color:${nearSL?'var(--red)':'var(--muted)'};">${slDist}%</span>`:''}
+        <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-bottom:4px;">
+          <span>成本 ${t.buy_price} × ${t.shares}張</span>
+          <span>現價 <span style="color:${curPrice?'var(--white)':'var(--dim)'};">${curPrice||'—'}</span></span>
+        </div>
+        <div style="font-size:.66rem;color:var(--muted);font-family:'JetBrains Mono',monospace;">
+          買 ${t.buy_date} · 停損 <span style="color:var(--red);">${t.stop_loss}</span> (-${t.stop_loss_pct}%)${slDist!==null?` · 距停損 <span style="color:${nearSL?'var(--red)':'var(--muted)'};">${slDist}%</span>`:''}
         </div>
         ${nearSL?'<div style="font-size:.68rem;color:var(--red);margin-top:4px;">⚠️ 接近停損價，注意風險</div>':''}
         <div style="display:flex;gap:8px;margin-top:8px;">
