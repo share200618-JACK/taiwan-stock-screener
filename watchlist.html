@@ -710,7 +710,12 @@ async function loadHistory(code) {
   try {
     const r = await fetch(`${API}/api/stock/history?code=${code}&start=${fetchStart}&end=${today}`);
     const d = await r.json();
-    const records = (d.records||[]).slice(-30).reverse(); // 最近30筆
+    const allRecords = d.records || [];
+    const records = allRecords.slice(-30).reverse(); // 最近30筆
+    // 現價備援：即時價抓不到時，用歷史最後一筆收盤價
+    const lastClose = allRecords.length ? allRecords[allRecords.length-1].close : null;
+    const effPrice = curPrice || lastClose;
+    const effRet = effPrice && stock.add_price ? Math.round((effPrice-stock.add_price)/stock.add_price*10000)/100 : null;
 
     el.innerHTML = `
       <div style="margin-bottom:10px;padding:10px;background:var(--bg3);border-radius:8px;">
@@ -718,8 +723,8 @@ async function loadHistory(code) {
         <div style="display:flex;gap:16px;flex-wrap:wrap;">
           <div style="font-size:.75rem;">加入日期 <span style="color:var(--txt);font-family:'JetBrains Mono',monospace;">${addDate}</span></div>
           <div style="font-size:.75rem;">買進價 <span style="color:var(--gold);font-family:'JetBrains Mono',monospace;">${stock.add_price||'—'}</span></div>
-          <div style="font-size:.75rem;">現價 <span style="color:${ret>=0?'var(--red)':'var(--grn)'};font-family:'JetBrains Mono',monospace;">${curPrice||'—'}</span></div>
-          <div style="font-size:.75rem;">報酬率 <span style="color:${ret>=0?'var(--red)':'var(--grn)'};font-family:'JetBrains Mono',monospace;">${ret!==null?(ret>=0?'+':'')+ret+'%':'—'}</span></div>
+          <div style="font-size:.75rem;">現價 <span style="color:${effRet>=0?'var(--red)':'var(--grn)'};font-family:'JetBrains Mono',monospace;">${effPrice||'—'}</span></div>
+          <div style="font-size:.75rem;">報酬率 <span style="color:${effRet>=0?'var(--red)':'var(--grn)'};font-family:'JetBrains Mono',monospace;">${effRet!==null?(effRet>=0?'+':'')+effRet+'%':'—'}</span></div>
         </div>
       </div>
       <div class="history-list">
