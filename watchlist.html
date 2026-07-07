@@ -799,13 +799,35 @@ function sectorColor(sec) {
   return '#5a6888';
 }
 
+// 輸入股號自動帶出中文名稱
+let _nameFillTimer = null;
+async function autoFillName(code, nameFieldId) {
+  code = (code||'').trim();
+  nameFieldId = nameFieldId || 'wName';
+  const nameEl = document.getElementById(nameFieldId);
+  if (!nameEl) return;
+  if (code.length < 4) return;  // 台股代號至少4碼才查
+  clearTimeout(_nameFillTimer);
+  _nameFillTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`${API}/api/stock/name/${code}`);
+      const d = await r.json();
+      // 只在名稱欄為空、或使用者還沒手動改過時才自動帶入
+      if (d.found && (!nameEl.value || nameEl.dataset.auto === '1')) {
+        nameEl.value = d.name;
+        nameEl.dataset.auto = '1';
+      }
+    } catch(e) {}
+  }, 400);
+}
+
 // 手動新增追蹤股票
 function openAddWatch() {
   const html = `
     <div style="font-size:1rem;font-weight:700;color:var(--white);margin-bottom:14px;">＋ 新增追蹤股票</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div style="display:flex;gap:8px;">
-        <input id="wCode" placeholder="代號 如 2330" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+        <input id="wCode" placeholder="代號 如 2330" oninput="autoFillName(this.value)" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
         <input id="wName" placeholder="名稱（選填）" style="flex:2;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
       </div>
       <input id="wPrice" type="number" step="0.01" placeholder="買進價/參考價（選填）" style="padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
@@ -1020,7 +1042,7 @@ function openTradeForm(prefill) {
     <div style="font-size:1rem;font-weight:700;color:var(--white);margin-bottom:14px;">＋ 新增買進紀錄</div>
     <div style="display:flex;flex-direction:column;gap:10px;">
       <div style="display:flex;gap:8px;">
-        <input id="tCode" placeholder="代號" value="${p.code||''}" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
+        <input id="tCode" placeholder="代號" value="${p.code||''}" oninput="autoFillName(this.value,'tName')" style="flex:1;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
         <input id="tName" placeholder="名稱" value="${p.name||''}" style="flex:2;padding:9px;background:var(--bg3);border:1px solid var(--bdr);border-radius:8px;color:var(--txt);font-size:.85rem;">
       </div>
       <div style="display:flex;gap:8px;">

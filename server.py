@@ -4996,6 +4996,49 @@ def analyze_page():
 def portfolio_page():
     return redirect("/", code=302)  # 已移除
 
+# 股號 → 名稱查詢（含全市場清單快取）
+_stock_name_cache = {}
+_stock_name_cache_time = 0
+
+def _load_stock_names():
+    """載入全市場股號→名稱對照，快取 1 小時"""
+    global _stock_name_cache, _stock_name_cache_time
+    import time
+    now = time.time()
+    if _stock_name_cache and (now - _stock_name_cache_time) < 3600:
+        return _stock_name_cache
+    names = {}
+    try:
+        r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        if r.status_code == 200 and isinstance(r.json(), list):
+            for row in r.json():
+                code = row.get("Code", "")
+                nm   = row.get("Name", "")
+                if code and nm: names[code] = nm
+    except Exception as e:
+        print(f"[names/TWSE] {e}")
+    try:
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        if r2.status_code == 200 and isinstance(r2.json(), list):
+            for row in r2.json():
+                code = row.get("SecuritiesCompanyCode", "") or row.get("code", "")
+                nm   = row.get("CompanyName", "") or row.get("name", "")
+                if code and nm: names[code] = nm
+    except Exception as e:
+        print(f"[names/TPEX] {e}")
+    if names:
+        _stock_name_cache = names
+        _stock_name_cache_time = now
+    return _stock_name_cache
+
+@app.route("/api/stock/name/<code>")
+def api_stock_name(code):
+    """輸入股號回傳中文名稱"""
+    names = _load_stock_names()
+    nm = names.get(code.strip(), "")
+    return jsonify({"code": code, "name": nm, "found": bool(nm)})
+
+
 @app.route("/api/prices")
 def get_prices():
     """取得指定股票的即時報價（上市 + 上櫃）"""
@@ -5685,35 +5728,70 @@ def api_stock_history():
         else:
             cur = cur.replace(month=cur.month+1)
 
-    # 如果 TWSE 沒有（上櫃股票），改用 TPEX
+    # 如果 TWSE 沒有（上櫃股票），改用 TPEX（雙 fallback：舊API + openapi）
     if not all_records:
         cur = start_dt.replace(day=1)
         while cur <= end_dt:
             roc_y = cur.year - 1911
             roc_m = f"{roc_y}/{cur.month:02d}"
+            fetched = False
+            # 方法一：TPEX 舊版 st43
             try:
                 r2 = SESSION.get(
                     f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-                    f"?d={roc_m}&stkno={code}&o=json",
+                    f"?l=zh-tw&d={roc_m}&stkno={code}&o=json",
                     timeout=10)
                 d2 = r2.json()
-                for row in d2.get("aaData",[]):
-                    try:
-                        parts = row[0].split("/")
-                        year  = int(parts[0]) + 1911
-                        date  = f"{year}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
-                        close = safe_float(row[6].replace(",",""))
-                        open_ = safe_float(row[3].replace(",",""))
-                        high  = safe_float(row[4].replace(",",""))
-                        low   = safe_float(row[5].replace(",",""))
-                        vol   = round(safe_float(row[1].replace(",",""))/1000)
-                        if close > 0:
-                            all_records.append({
-                                "date":date,"open":open_,"high":high,
-                                "low":low,"close":close,"vol":vol,"chg":0
-                            })
-                    except: pass
-            except: pass
+                rows2 = d2.get("aaData", [])
+                if rows2:
+                    for row in rows2:
+                        try:
+                            parts = str(row[0]).strip().split("/")
+                            if len(parts) != 3: continue
+                            year  = int(parts[0]) + 1911
+                            date  = f"{year}-{parts[1].zfill(2)}-{parts[2].zfill(2)}"
+                            close = safe_float(str(row[6]).replace(",",""))
+                            open_ = safe_float(str(row[3]).replace(",",""))
+                            high  = safe_float(str(row[4]).replace(",",""))
+                            low   = safe_float(str(row[5]).replace(",",""))
+                            vol   = round(safe_float(str(row[1]).replace(",",""))/1000)
+                            if close > 0:
+                                all_records.append({"date":date,"open":open_,"high":high,
+                                    "low":low,"close":close,"vol":vol,"chg":0})
+                        except: pass
+                    fetched = True
+            except Exception as e:
+                print(f"[hist/TPEX-st43] {code} {roc_m}: {e}")
+            # 方法二：TPEX openapi 備用
+            if not fetched:
+                try:
+                    url2 = (f"https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes"
+                            f"?date={cur.year}-{cur.month:02d}-01&stockNo={code}")
+                    r3 = SESSION.get(url2, timeout=10)
+                    rows3 = r3.json()
+                    if isinstance(rows3, list):
+                        for row in rows3:
+                            try:
+                                d_str = row.get("Date","") or row.get("date","")
+                                c3 = safe_float(row.get("Close","") or row.get("close",""))
+                                if not d_str or c3 <= 0: continue
+                                if "/" in d_str:
+                                    pts = d_str.split("/")
+                                    dt = datetime(int(pts[0])+1911, int(pts[1]), int(pts[2]))
+                                else:
+                                    dt = datetime.strptime(d_str[:10], "%Y-%m-%d")
+                                all_records.append({
+                                    "date": dt.strftime("%Y-%m-%d"),
+                                    "open": safe_float(row.get("Open","") or row.get("open","")),
+                                    "high": safe_float(row.get("High","") or row.get("high","")),
+                                    "low":  safe_float(row.get("Low","")  or row.get("low","")),
+                                    "close": c3,
+                                    "vol": round(safe_float(row.get("TradingShares","") or row.get("volume","")) / 1000),
+                                    "chg": safe_float(row.get("Change","") or row.get("change","")),
+                                })
+                            except: continue
+                except Exception as e:
+                    print(f"[hist/TPEX-openapi] {code} {roc_m}: {e}")
             if cur.month == 12:
                 cur = cur.replace(year=cur.year+1, month=1)
             else:
