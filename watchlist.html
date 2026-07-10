@@ -324,11 +324,27 @@ async function loadWatchlist() {
     if (_cache.length) {
       const codes = [...new Set(_cache.map(s => s.code))];
       await fetchPrices(codes);
+      backfillNames();  // 自動補上名稱為空的股票中文名
     }
   } catch(e) {
     document.getElementById('stockList').innerHTML =
       `<div class="empty"><div class="empty-icon">⚠️</div><div>載入失敗，請重試</div></div>`;
   }
+}
+
+// 補上追蹤清單裡名稱為空（或等於代號）的中文名稱
+async function backfillNames() {
+  const need = _cache.filter(s => !s.name || s.name === s.code);
+  if (!need.length) return;
+  let changed = false;
+  for (const s of need) {
+    try {
+      const r = await fetch(`${API}/api/stock/name/${s.code}`);
+      const d = await r.json();
+      if (d.found && d.name) { s.name = d.name; changed = true; }
+    } catch(e) {}
+  }
+  if (changed) renderList();
 }
 
 // ── 抓即時股價（用 TWSE）────────────────────────────
