@@ -840,7 +840,6 @@ function switchModalTab(tab) {
 
 async function fetchStockAnalysis(code, name, price, sector) {
   try {
-    // 15秒逾時保護，避免後端慢時無限卡住
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
     const r = await fetch(`${API}/api/stock/analysis/${code}`, {signal: ctrl.signal});
@@ -1049,16 +1048,25 @@ function drawModalCharts(d) {
     });
     cs.setData(candleData);
 
+    // 合理價格範圍：以收盤價中位數為基準，過濾異常值避免拉爆Y軸
+    const _closeVals = candleData.map(c=>c.close).filter(v=>v>0).sort((a,b)=>a-b);
+    const _median = _closeVals[Math.floor(_closeVals.length/2)] || 1;
+    const _validMA = v => v && v > _median*0.2 && v < _median*3;  // 只畫合理範圍內的MA
+
     const ma5s  = chart.addLineSeries({color:'#f0b429',lineWidth:1.5,priceLineVisible:false});
-    ma5s.setData(candles.map(c=>({time:c.date,value:c.ma5})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
+    ma5s.setData(candles.map(c=>({time:c.date,value:c.ma5})).filter(c=>_validMA(c.value)).sort((a,b)=>a.time.localeCompare(b.time)));
     const ma20s = chart.addLineSeries({color:'#3d8bff',lineWidth:1.5,priceLineVisible:false});
-    ma20s.setData(candles.map(c=>({time:c.date,value:c.ma20})).filter(c=>c.value).sort((a,b)=>a.time.localeCompare(b.time)));
+    ma20s.setData(candles.map(c=>({time:c.date,value:c.ma20})).filter(c=>_validMA(c.value)).sort((a,b)=>a.time.localeCompare(b.time)));
 
     if (lev) {
-      const ss = chart.addLineSeries({color:'rgba(39,217,129,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
-      ss.setData([{time:candleData[0].time,value:lev.support1},{time:candleData[candleData.length-1].time,value:lev.support1}]);
-      const rs = chart.addLineSeries({color:'rgba(255,77,94,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
-      rs.setData([{time:candleData[0].time,value:lev.resist1},{time:candleData[candleData.length-1].time,value:lev.resist1}]);
+      if (_validMA(lev.support1)) {
+        const ss = chart.addLineSeries({color:'rgba(39,217,129,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
+        ss.setData([{time:candleData[0].time,value:lev.support1},{time:candleData[candleData.length-1].time,value:lev.support1}]);
+      }
+      if (_validMA(lev.resist1)) {
+        const rs = chart.addLineSeries({color:'rgba(255,77,94,.5)',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false});
+        rs.setData([{time:candleData[0].time,value:lev.resist1},{time:candleData[candleData.length-1].time,value:lev.resist1}]);
+      }
     }
     chart.timeScale().fitContent();
     _modalChartK = chart;

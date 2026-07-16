@@ -4717,6 +4717,16 @@ def stock_analysis(code):
         hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
 
         # ── 近250日 K線資料（前端繪圖用，支援1年視角）──
+        # 先算好完整 MA 陣列，避免 Python slice [a:0] 回傳空陣列導致數值爆掉
+        def _rolling_ma(arr, n):
+            out = []
+            for idx in range(len(arr)):
+                s = max(0, idx - n + 1)
+                out.append(round(sum(arr[s:idx+1]) / (idx - s + 1), 2))
+            return out
+        ma5_arr  = _rolling_ma(closes, 5)
+        ma20_arr = _rolling_ma(closes, 20)
+
         recent_n = min(250, len(records))
         candles  = [{
             "date":  records[-recent_n+i]["date"],
@@ -4725,8 +4735,8 @@ def stock_analysis(code):
             "low":   lows[-recent_n+i],
             "close": closes[-recent_n+i],
             "vol":   vols[-recent_n+i],
-            "ma5":   round(sum(closes[max(0,-recent_n+i-4):-recent_n+i+1])/min(5,i+1),2) if i>=0 else closes[-recent_n+i],
-            "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
+            "ma5":   ma5_arr[-recent_n+i],
+            "ma20":  ma20_arr[-recent_n+i],
         } for i in range(recent_n)]
 
         return jsonify({
