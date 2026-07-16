@@ -5547,76 +5547,64 @@ def reversal_page():
 
 @app.route("/api/dashboard/indices")
 def dashboard_indices():
-    """大盤指數：全用 TWSE/TPEX OpenAPI，收盤後更新"""
+    """大盤指數：優先 FinMind（穩定），備援 TWSE OpenAPI"""
     result = {}
+    fm_token = _get_finmind_token()
 
-    # 一次抓全部大盤指數（OpenAPI 格式）
-    try:
-        r = SESSION.get(
-            "https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX",
-            headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
-        rows = r.json()
+    # FinMind 台股加權指數資料集 TaiwanStockTotalReturnIndex 對照
+    # index_id: TAIEX=加權, TPEx=櫃買, 也可用各類指數
+    # FinMind TaiwanStockTotalReturnIndex 僅支援 TAIEX（加權）與 TPEx（櫃買）
+    fm_map = {
+        "TAIEX": ("twii", "台灣加權"),
+        "TPEx":  ("tpex", "上櫃指數"),
+    }
 
-        # 指數名稱對應
-        target = {
-            "發行量加權股價指數": ("twii", "台灣加權"),
-            "電子類指數":        ("elec", "電子類股"),
-            "半導體類指數":       ("semi", "半導體"),
-            "金融保險類指數":     ("fin",  "金融類股"),
-        }
-        for row in rows:
-            name = row.get("指數","")
-            for k,(key,label) in target.items():
-                if k in name:
-                    try:
-                        cur  = safe_float(str(row.get("收盤指數","0")).replace(",",""))
-                        sign = row.get("漲跌","+")
-                        chg  = safe_float(str(row.get("漲跌點數","0")).replace(",",""))
-                        if sign == "-": chg = -chg
-                        pct  = safe_float(str(row.get("漲跌百分比","0")).replace(",",""))
-                        if sign == "-": pct = -pct
-                        result[key] = {"name":label,"value":round(cur,2),"chg":round(chg,2),"pct":round(pct,2)}
-                    except:
-                        result[key] = {"name":label,"value":0,"chg":0,"pct":0}
-    except Exception as e:
-        print(f"[指數] MI_INDEX 失敗: {e}")
+    if fm_token:
+        try:
+            end_d = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+            start_d = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=10)).strftime("%Y-%m-%d")
+            for idx_id, (key, label) in fm_map.items():
+                try:
+                    rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                        params={"dataset":"TaiwanStockTotalReturnIndex","data_id":idx_id,
+                                "start_date":start_d,"end_date":end_d},
+                        headers={"Authorization":f"Bearer {fm_token}"}, timeout=12)
+                    if rf.status_code==200:
+                        data = rf.json().get("data",[])
+                        if len(data)>=2:
+                            cur = safe_float(data[-1].get("price",0))
+                            prv = safe_float(data[-2].get("price",0))
+                            chg = round(cur-prv,2)
+                            pct = round(chg/prv*100,2) if prv>0 else 0
+                            if cur>0:
+                                result[key] = {"name":label,"value":round(cur,2),"chg":chg,"pct":pct}
+                except Exception as e:
+                    print(f"[指數/FinMind] {idx_id}: {e}")
+        except Exception as e:
+            print(f"[指數/FinMind] {e}")
 
-    # 台灣50（0050 收盤價）
-    try:
-        today = datetime.today().strftime("%Y%m%d")
-        r2 = SESSION.get(
-            f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={today}&stockNo=0050",
-            timeout=10)
-        d2 = r2.json()
-        if d2.get("stat")=="OK" and d2.get("data"):
-            rows2 = d2["data"]
-            cur2  = safe_float(rows2[-1][6])
-            prv2  = safe_float(rows2[-2][6]) if len(rows2)>=2 else cur2
-            chg2  = round(cur2-prv2,2)
-            pct2  = round(chg2/prv2*100,2) if prv2>0 else 0
-            result["tw50"] = {"name":"台灣50","value":round(cur2,2),"chg":chg2,"pct":pct2}
-        else:
-            result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
-    except:
-        result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
+    # 台灣50（0050）— 用 FinMind 個股價
+    if "tw50" not in result and fm_token:
+        try:
+            end_d = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+            start_d = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=10)).strftime("%Y-%m-%d")
+            rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockPrice","data_id":"0050",
+                        "start_date":start_d,"end_date":end_d},
+                headers={"Authorization":f"Bearer {fm_token}"}, timeout=12)
+            if rf.status_code==200:
+                data = rf.json().get("data",[])
+                if len(data)>=2:
+                    cur = safe_float(data[-1].get("close",0))
+                    prv = safe_float(data[-2].get("close",0))
+                    chg = round(cur-prv,2)
+                    pct = round(chg/prv*100,2) if prv>0 else 0
+                    result["tw50"] = {"name":"台灣50","value":round(cur,2),"chg":chg,"pct":pct}
+        except Exception as e:
+            print(f"[指數/tw50] {e}")
 
-    # 上櫃指數（TPEX OpenAPI）
-    try:
-        r3 = SESSION.get(
-            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-            headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
-        d3 = r3.json()
-        for row in d3[:5]:
-            if "指數" in str(row.get("指數","")) or "index" in str(row).lower():
-                cur3 = safe_float(str(row.get("收盤","0")).replace(",",""))
-                if cur3 > 0:
-                    result["tpex"] = {"name":"上櫃指數","value":round(cur3,2),"chg":0,"pct":0}
-                    break
-    except: pass
-
-    # fallback
-    for k,n in [("twii","台灣加權"),("tpex","上櫃指數"),("tw50","台灣50"),
-                ("elec","電子類股"),("semi","半導體"),("fin","金融類股")]:
+    # 最終 fallback：只保留加權、上櫃、台灣50
+    for k,n in [("twii","台灣加權"),("tpex","上櫃指數"),("tw50","台灣50")]:
         if k not in result:
             result[k] = {"name":n,"value":0,"chg":0,"pct":0}
 
@@ -5690,39 +5678,6 @@ def api_stock_history():
     end_dt   = datetime.strptime(end,   "%Y-%m-%d") if end   else datetime.today()
 
     all_records = []
-
-    # ── 優先用 FinMind（一次抓整段、上市上櫃通吃、不會被 TWSE 限流）──
-    fm_token = _get_finmind_token()
-    if fm_token:
-        try:
-            rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset": "TaiwanStockPrice", "data_id": code,
-                        "start_date": start_dt.strftime("%Y-%m-%d"),
-                        "end_date": end_dt.strftime("%Y-%m-%d")},
-                headers={"Authorization": f"Bearer {fm_token}"}, timeout=15)
-            if rf.status_code == 200:
-                for row in rf.json().get("data", []):
-                    cl = safe_float(row.get("close", 0))
-                    if cl > 0:
-                        all_records.append({
-                            "date":  row["date"],
-                            "open":  safe_float(row.get("open", 0)),
-                            "high":  safe_float(row.get("max", 0)),
-                            "low":   safe_float(row.get("min", 0)),
-                            "close": cl,
-                            "vol":   round(safe_float(row.get("Trading_Volume", 0)) / 1000),
-                            "chg":   safe_float(row.get("spread", 0)),
-                        })
-        except Exception as e:
-            print(f"[hist/FinMind] {code}: {e}")
-
-    # FinMind 有抓到就直接跳過 TWSE/TPEX（節省時間、避免限流）
-    if all_records:
-        start_str = start_dt.strftime("%Y-%m-%d")
-        end_str   = end_dt.strftime("%Y-%m-%d")
-        records = sorted([r for r in all_records if start_str <= r["date"] <= end_str],
-                         key=lambda x: x["date"])
-        return jsonify({"code": code, "records": records, "source": "finmind"})
 
     # 按月抓 TWSE 歷史（每次一個月）
     cur = start_dt.replace(day=1)

@@ -97,7 +97,7 @@ body{
 
 /* ── 大盤指數 ── */
 .indices-grid{
-  display:grid;grid-template-columns:repeat(6,1fr);gap:8px;
+  display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
   margin-bottom:20px;
 }
 .idx-card{
@@ -457,7 +457,7 @@ async function loadIndices() {
   try {
     const r = await fetch(`${API}/api/dashboard/indices`);
     const d = await r.json();
-    const order = ['twii','tpex','tw50','elec','semi','fin'];
+    const order = ['twii','tpex','tw50'];
     const fmt = v => v >= 1000 ? v.toLocaleString('en',{maximumFractionDigits:2}) : v.toFixed(2);
     document.getElementById('indicesGrid').innerHTML = order.map(k => {
       const idx = d[k] || {name:'—',value:0,chg:0,pct:0};
