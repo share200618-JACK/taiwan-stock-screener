@@ -97,7 +97,7 @@ body{
 
 /* ── 大盤指數 ── */
 .indices-grid{
-  display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+  display:grid;grid-template-columns:repeat(6,1fr);gap:8px;
   margin-bottom:20px;
 }
 .idx-card{
@@ -302,6 +302,36 @@ body{
 
 <div class="container">
 
+  <!-- 市場風險指數 -->
+  <div class="section-hd" style="margin-top:6px;">
+    <div class="section-title">市場風險指數</div>
+    <button class="refresh-btn" onclick="loadRisk()">↻ 刷新</button>
+  </div>
+  <div id="riskPanel" style="background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:18px;margin-bottom:16px;">
+    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center;">
+      <!-- 儀表盤 -->
+      <div style="position:relative;width:200px;height:120px;flex-shrink:0;">
+        <svg viewBox="0 0 200 120" style="width:100%;height:100%;">
+          <!-- 背景弧（四色分段）-->
+          <path d="M 20 110 A 80 80 0 0 1 60.4 40.5" fill="none" stroke="#1bc47d" stroke-width="14" stroke-linecap="round"/>
+          <path d="M 66 37 A 80 80 0 0 1 100 30" fill="none" stroke="#8bc34a" stroke-width="14"/>
+          <path d="M 100 30 A 80 80 0 0 1 134 37" fill="none" stroke="#f0b429" stroke-width="14"/>
+          <path d="M 139.6 40.5 A 80 80 0 0 1 180 110" fill="none" stroke="#ef5350" stroke-width="14" stroke-linecap="round"/>
+          <!-- 指針 -->
+          <line id="riskNeedle" x1="100" y1="110" x2="100" y2="45" stroke="#e4eaf5" stroke-width="3" stroke-linecap="round" transform="rotate(0 100 110)"/>
+          <circle cx="100" cy="110" r="7" fill="#e4eaf5"/>
+        </svg>
+        <div style="position:absolute;bottom:-6px;left:0;width:100%;text-align:center;">
+          <div id="riskScore" style="font-size:2rem;font-weight:800;font-family:'JetBrains Mono',monospace;line-height:1;">—</div>
+          <div id="riskLabel" style="font-size:.85rem;font-weight:700;margin-top:2px;">載入中...</div>
+        </div>
+      </div>
+      <!-- 三項指標明細 -->
+      <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:8px;" id="riskComponents"></div>
+    </div>
+    <div id="riskUpdated" style="font-size:.62rem;color:var(--dim);text-align:right;margin-top:8px;"></div>
+  </div>
+
   <!-- 大盤指數 -->
   <div class="section-hd" style="margin-top:6px;">
     <div class="section-title">大盤指數</div>
@@ -453,11 +483,52 @@ function updateClock() {
 updateClock(); setInterval(updateClock,10000);
 
 // ── 大盤指數 ──────────────────────────────────────────
+async function loadRisk() {
+  try {
+    const r = await fetch('/api/dashboard/risk');
+    const d = await r.json();
+    if (d.error || d.score === null) {
+      document.getElementById('riskLabel').textContent = d.error || '資料不足';
+      return;
+    }
+    // 分數與標籤
+    document.getElementById('riskScore').textContent = d.score;
+    document.getElementById('riskScore').style.color = d.color;
+    const lbl = document.getElementById('riskLabel');
+    lbl.textContent = d.label;
+    lbl.style.color = d.color;
+    // 指針角度：0分→-90度(左), 100分→+90度(右)
+    const angle = (d.score / 100) * 180 - 90;
+    const needle = document.getElementById('riskNeedle');
+    if (needle) needle.setAttribute('transform', `rotate(${angle} 100 110)`);
+    // 三項指標明細
+    let html = '';
+    for (const [name, comp] of Object.entries(d.components || {})) {
+      const pct = Math.round(comp.risk / comp.max * 100);
+      const barCol = pct >= 66 ? '#ef5350' : pct >= 33 ? '#f0b429' : '#1bc47d';
+      html += `<div>
+        <div style="display:flex;justify-content:space-between;font-size:.72rem;margin-bottom:3px;">
+          <span style="color:var(--txt);font-weight:600;">${name} <span style="color:var(--muted);font-weight:400;">${comp.state}</span></span>
+          <span style="color:var(--muted);font-family:'JetBrains Mono',monospace;">${comp.risk}/${comp.max}</span>
+        </div>
+        <div style="height:5px;background:var(--bdr);border-radius:3px;overflow:hidden;">
+          <div style="width:${pct}%;height:100%;background:${barCol};transition:width .5s;"></div>
+        </div>
+        <div style="font-size:.6rem;color:var(--dim);margin-top:2px;">${comp.detail}</div>
+      </div>`;
+    }
+    document.getElementById('riskComponents').innerHTML = html;
+    document.getElementById('riskUpdated').textContent = '更新：' + (d.updated||'');
+  } catch(e) {
+    document.getElementById('riskLabel').textContent = '載入失敗';
+  }
+}
+
 async function loadIndices() {
   try {
     const r = await fetch(`${API}/api/dashboard/indices`);
     const d = await r.json();
-    const order = ['twii','tpex','tw50'];
+    const order = ['twii','tpex','tw50','elec','semi','fin'];
     const fmt = v => v >= 1000 ? v.toLocaleString('en',{maximumFractionDigits:2}) : v.toFixed(2);
     document.getElementById('indicesGrid').innerHTML = order.map(k => {
       const idx = d[k] || {name:'—',value:0,chg:0,pct:0};
@@ -680,6 +751,7 @@ async function loadSectorHeatmap() {
 
 // ── 初始化 ────────────────────────────────────────────
 loadIndices();
+loadRisk();
 loadAISummary();
 loadNews();
 loadSectorHeatmap();

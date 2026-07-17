@@ -647,7 +647,7 @@ def calc_rsi_series(closes, period=14):
 _history_cache = {}
 
 def fetch_history_range(code, start_date, end_date):
-    """抓指定期間的歷史資料（優先 FinMind 一次抓完，備援 TWSE 逐月）"""
+    """抓指定期間的歷史資料（根據市場別直接查詢，含快取）"""
     import time as _time
 
     cache_key = f"{code}_{start_date[:7]}_{end_date[:7]}"
@@ -657,37 +657,6 @@ def fetch_history_range(code, start_date, end_date):
     start_dt    = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt      = datetime.strptime(end_date,   "%Y-%m-%d")
     fetch_start = start_dt - timedelta(days=90)
-
-    # ── 優先 FinMind：一次抓整段，秒回、不用逐月打12次 TWSE ──
-    fm_token = _get_finmind_token()
-    if fm_token:
-        try:
-            rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset": "TaiwanStockPrice", "data_id": code,
-                        "start_date": fetch_start.strftime("%Y-%m-%d"),
-                        "end_date": end_date},
-                headers={"Authorization": f"Bearer {fm_token}"}, timeout=15)
-            if rf.status_code == 200:
-                fm_recs = []
-                for row in rf.json().get("data", []):
-                    cl = safe_float(row.get("close", 0))
-                    if cl > 0:
-                        fm_recs.append({
-                            "date":   row["date"],
-                            "open":   safe_float(row.get("open", 0)),
-                            "high":   safe_float(row.get("max", 0)),
-                            "low":    safe_float(row.get("min", 0)),
-                            "close":  cl,
-                            "vol":    round(safe_float(row.get("Trading_Volume", 0)) / 1000),
-                            "change": safe_float(row.get("spread", 0)),
-                        })
-                if len(fm_recs) >= 30:
-                    fm_recs.sort(key=lambda x: x["date"])
-                    _history_cache[cache_key] = fm_recs
-                    return fm_recs
-        except Exception as e:
-            print(f"[fetch_range/FinMind] {code}: {e}")
-
     cur = datetime(fetch_start.year, fetch_start.month, 1)
 
     # 查市場別（防呆：若查不到就兩個都試）
@@ -4717,16 +4686,6 @@ def stock_analysis(code):
         hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
 
         # ── 近250日 K線資料（前端繪圖用，支援1年視角）──
-        # 先算好完整 MA 陣列，避免 Python slice [a:0] 回傳空陣列導致數值爆掉
-        def _rolling_ma(arr, n):
-            out = []
-            for idx in range(len(arr)):
-                s = max(0, idx - n + 1)
-                out.append(round(sum(arr[s:idx+1]) / (idx - s + 1), 2))
-            return out
-        ma5_arr  = _rolling_ma(closes, 5)
-        ma20_arr = _rolling_ma(closes, 20)
-
         recent_n = min(250, len(records))
         candles  = [{
             "date":  records[-recent_n+i]["date"],
@@ -4735,8 +4694,8 @@ def stock_analysis(code):
             "low":   lows[-recent_n+i],
             "close": closes[-recent_n+i],
             "vol":   vols[-recent_n+i],
-            "ma5":   ma5_arr[-recent_n+i],
-            "ma20":  ma20_arr[-recent_n+i],
+            "ma5":   round(sum(closes[max(0,-recent_n+i-4):-recent_n+i+1])/min(5,i+1),2) if i>=0 else closes[-recent_n+i],
+            "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
         } for i in range(recent_n)]
 
         return jsonify({
@@ -5585,6 +5544,106 @@ def reversal_page():
 # ══════════════════════════════════════════════════════
 # 儀表板 API
 # ══════════════════════════════════════════════════════
+
+@app.route("/api/dashboard/risk")
+def dashboard_risk():
+    """台股市場風險指數（0-100，越高越危險）
+    納入：加權指數vs均線(趨勢40%) + 波動度/振幅(30%) + 台灣50趨勢(30%)"""
+    fm_token = _get_finmind_token()
+    if not fm_token:
+        return jsonify({"error": "未設定 FinMind token", "score": None})
+
+    end_d   = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+    start_d = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=120)).strftime("%Y-%m-%d")
+
+    def _fetch_index(index_id):
+        try:
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockTotalReturnIndex","data_id":index_id,
+                        "start_date":start_d,"end_date":end_d},
+                headers={"Authorization":f"Bearer {fm_token}"}, timeout=12)
+            if r.status_code==200:
+                return [safe_float(x.get("price",0)) for x in r.json().get("data",[]) if safe_float(x.get("price",0))>0]
+        except Exception as e:
+            print(f"[risk/{index_id}] {e}")
+        return []
+
+    def _fetch_stock(code):
+        try:
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockPrice","data_id":code,
+                        "start_date":start_d,"end_date":end_d},
+                headers={"Authorization":f"Bearer {fm_token}"}, timeout=12)
+            if r.status_code==200:
+                return [safe_float(x.get("close",0)) for x in r.json().get("data",[]) if safe_float(x.get("close",0))>0]
+        except Exception as e:
+            print(f"[risk/{code}] {e}")
+        return []
+
+    def sma(arr, n):
+        return sum(arr[-n:])/min(n,len(arr)) if arr else 0
+
+    twii = _fetch_index("TAIEX")   # 加權指數
+    tw50 = _fetch_stock("0050")    # 台灣50
+
+    if len(twii) < 60:
+        return jsonify({"error": "資料不足", "score": None})
+
+    components = {}
+    risk = 0
+
+    # ── 1. 趨勢分（加權 vs 均線）40分 ──
+    cur = twii[-1]
+    ma20, ma60 = sma(twii,20), sma(twii,60)
+    trend_risk = 0
+    if cur < ma60:      trend_risk += 25      # 跌破季線：大扣分
+    elif cur < ma20:    trend_risk += 12      # 跌破月線
+    if ma20 < ma60:     trend_risk += 15      # 均線空頭排列
+    trend_risk = min(trend_risk, 40)
+    risk += trend_risk
+    trend_state = "空頭" if cur < ma60 else "偏弱" if cur < ma20 else "多頭"
+    components["趨勢"] = {"risk": trend_risk, "max": 40,
+        "detail": f"加權{round(cur)} vs 季線{round(ma60)}", "state": trend_state}
+
+    # ── 2. 波動度分（近20日振幅）30分 ──
+    recent = twii[-20:]
+    volatility = (max(recent)-min(recent))/min(recent)*100 if min(recent)>0 else 0
+    # 振幅 <5%→低風險, 5-10%→中, >10%→高
+    vol_risk = min(round(volatility/15*30), 30)
+    risk += vol_risk
+    vol_state = "劇烈" if volatility>10 else "偏大" if volatility>5 else "平穩"
+    components["波動度"] = {"risk": vol_risk, "max": 30,
+        "detail": f"近20日振幅 {round(volatility,1)}%", "state": vol_state}
+
+    # ── 3. 台灣50趨勢分 30分 ──
+    tw50_risk = 15  # 預設中性
+    tw50_state = "資料不足"
+    if len(tw50) >= 60:
+        t_cur, t_ma20, t_ma60 = tw50[-1], sma(tw50,20), sma(tw50,60)
+        tw50_risk = 0
+        if t_cur < t_ma60:   tw50_risk += 20
+        elif t_cur < t_ma20: tw50_risk += 10
+        if t_ma20 < t_ma60:  tw50_risk += 10
+        tw50_risk = min(tw50_risk, 30)
+        tw50_state = "空頭" if t_cur < t_ma60 else "偏弱" if t_cur < t_ma20 else "多頭"
+    risk += tw50_risk
+    components["台灣50"] = {"risk": tw50_risk, "max": 30,
+        "detail": f"0050 {round(tw50[-1],2) if tw50 else '—'}", "state": tw50_state}
+
+    risk = min(round(risk), 100)
+
+    # 市場狀態判定
+    if risk >= 70:   level, label, color = "high",   "高風險", "#ef5350"
+    elif risk >= 45: level, label, color = "medium", "中性偏空", "#f0b429"
+    elif risk >= 25: level, label, color = "low",    "偏多頭", "#8bc34a"
+    else:            level, label, color = "safe",   "強多頭", "#1bc47d"
+
+    return jsonify({
+        "score": risk, "level": level, "label": label, "color": color,
+        "components": components,
+        "updated": (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d %H:%M")
+    })
+
 
 @app.route("/api/dashboard/indices")
 def dashboard_indices():
