@@ -48,3 +48,19 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: python auto_analysis.py
+
+      - name: 計算 AI 選股實戰績效
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python performance.py
+
+      - name: 持倉賣出提醒（Telegram）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python sell_alert.py
