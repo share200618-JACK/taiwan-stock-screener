@@ -464,8 +464,8 @@ function renderCard(s) {
         </div>
       </div>
       <div class="stock-right">
-        ${ret !== null ? `<div class="return-badge" style="background:${ret>=0?'rgba(239,83,80,.1)':'rgba(27,196,125,.1)'};color:${retCol};">
-          ${ret>=0?'+':''}${ret}%
+        ${ret !== null ? `<div class="return-badge" style="background:${ret>=0?'rgba(239,83,80,.1)':'rgba(27,196,125,.1)'};color:${retCol};" title="相對買進價">
+          <span style="font-size:.55rem;opacity:.7;">vs買進 </span>${ret>=0?'+':''}${ret}%
         </div>` : ''}
         <div>
           <div class="price-now ${price?up?'up':'dn':''}">${price||'—'}</div>
@@ -476,7 +476,7 @@ function renderCard(s) {
     </div>
     <div class="buy-info">
       <div class="bi-item">買進價 <span class="bi-val">${s.add_price||'—'}</span></div>
-      ${price&&s.add_price?`<div class="bi-item">損益 <span class="bi-val" style="color:${retCol};">${ret>=0?'+':''}${Math.round((price-s.add_price)*100)/100}元</span></div>`:''}
+      ${price&&s.add_price?`<div class="bi-item">vs買進 <span class="bi-val" style="color:${retCol};">${ret>=0?'+':''}${ret}%</span> <span style="font-size:.6rem;color:var(--dim);">(每股${ret>=0?'+':''}${Math.round((price-s.add_price)*100)/100})</span></div>`:''}
       <div class="bi-item">備註 <span class="bi-val">${s.note||'—'}</span></div>
     </div>
     <div class="card-detail" id="detail_${s.code}">

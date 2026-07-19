@@ -5082,6 +5082,32 @@ def get_prices():
                 prices[code] = {"price":price,"change":chg,"chgPct":pct,"name":name}
     except Exception as e:
         print(f"[prices/TPEX] {e}")
+
+    # 第三層備援：快照沒抓到的股票，用 FinMind 補最近收盤價
+    missing = [code for code in codes if code not in prices]
+    if missing:
+        fm_token = _get_finmind_token()
+        if fm_token:
+            end_d = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+            start_d = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=10)).strftime("%Y-%m-%d")
+            for code in missing:
+                try:
+                    rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                        params={"dataset":"TaiwanStockPrice","data_id":code,
+                                "start_date":start_d,"end_date":end_d},
+                        headers={"Authorization":f"Bearer {fm_token}"}, timeout=10)
+                    if rf.status_code==200:
+                        data = rf.json().get("data",[])
+                        if len(data)>=1:
+                            cur = safe_float(data[-1].get("close",0))
+                            prv = safe_float(data[-2].get("close",0)) if len(data)>=2 else cur
+                            chg = round(cur-prv,2)
+                            pct = round(chg/prv*100,2) if prv>0 else 0
+                            if cur>0:
+                                prices[code] = {"price":cur,"change":chg,"chgPct":pct,"name":""}
+                except Exception as e:
+                    print(f"[prices/FinMind] {code}: {e}")
+
     return jsonify({"prices": prices, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
 
 # ── Keep-Alive（防止 Render 免費版休眠）────────────
