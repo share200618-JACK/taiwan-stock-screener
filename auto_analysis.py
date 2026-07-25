@@ -618,11 +618,11 @@ def analyze_stock(code, name, market_records):
 # ══════════════════════════════════════════════════
 
 def get_all_stocks():
+    stocks = []
     try:
         url  = "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL"
         resp = SESSION.get(url, timeout=15)
         resp.raise_for_status()
-        stocks = []
         for r in resp.json():
             code  = r.get("Code","")
             price = safe_float(r.get("ClosingPrice"))
@@ -638,10 +638,33 @@ def get_all_stocks():
             if pct   > FILTER["max_chg_pct"]: continue
             stocks.append({"code":code,"name":r.get("Name",""),
                            "price":price,"chg":chg,"pct":pct,"vol":vol})
-        return stocks
     except Exception as e:
-        print(f"取得股票失敗: {e}")
-        return []
+        print(f"[清單/TWSE] 取得失敗: {e}")
+
+    # ── 上櫃（TPEX）也一併納入 ──
+    try:
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        if r2.status_code == 200 and isinstance(r2.json(), list):
+            for r in r2.json():
+                code  = r.get("SecuritiesCompanyCode","") or r.get("code","")
+                price = safe_float(r.get("Close","") or r.get("close",""))
+                chg   = safe_float(r.get("Change","") or r.get("change",""))
+                vol   = round(safe_float(r.get("TradingShares","") or "0") / 1000)
+                if not (str(code).isdigit() and len(code)==4 and price>0): continue
+                prev = price - chg
+                pct  = round(chg/prev*100, 2) if prev > 0 else 0
+                if price < FILTER["min_price"]:   continue
+                if price > FILTER["max_price"]:   continue
+                if vol   < FILTER["min_vol_张"]:  continue
+                if pct   < FILTER["min_chg_pct"]: continue
+                if pct   > FILTER["max_chg_pct"]: continue
+                stocks.append({"code":code,"name":r.get("CompanyName","") or r.get("name",""),
+                               "price":price,"chg":chg,"pct":pct,"vol":vol})
+    except Exception as e:
+        print(f"[清單/TPEX] 取得失敗: {e}")
+
+    print(f"   股票清單共取得 {len(stocks)} 支（上市+上櫃）")
+    return stocks
 
 def save_result(data):
     """把分析結果存成 JSON 檔，供 server.py 讀取"""
@@ -667,8 +690,10 @@ def run():
     print(f"   篩選後 {len(stocks)} 支")
 
     if not stocks:
+        print("❌ 無法取得任何股票資料（TWSE/TPEX 都失敗），中止本次分析")
+        print("   不寫入 Supabase，避免產生「掃描0支」的無效紀錄")
         save_result({"error": "無法取得市場資料", "time": now_str})
-        return
+        return   # 直接返回，不呼叫 save_to_supabase
 
     # ── 方案3：智慧粗篩（取代隨機抽樣），兼顧 FinMind 呼叫量與品質 ──
     # 原本 random.shuffle 取 80 支會導致結果飄忽、漏掉強勢股。

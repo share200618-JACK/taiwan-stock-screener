@@ -90,7 +90,8 @@ def supabase_load_latest(date=None):
     try:
         url = f"{SUPABASE_URL}/rest/v1/analysis_results"
         params = {
-            "order": "created_at.desc",
+            # 依「資料日期」排序（而非寫入時間），避免補跑舊資料時抓錯最新
+            "order": "date.desc,created_at.desc",
             "limit": "1",
         }
         if date:
