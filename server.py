@@ -1883,6 +1883,83 @@ def fetch_institutional_finmind(code, start_date, end_date):
                                      result[date]["dealer_net"])
     return result
 
+def fetch_margin_finmind(code, start_date, end_date=""):
+    """
+    FinMind 個股融資融券
+    dataset: TaiwanStockMarginPurchaseShortSale
+    回傳: {date: {margin_bal, margin_prev, margin_limit, short_bal}}
+    """
+    rows = fetch_finmind("TaiwanStockMarginPurchaseShortSale", code, start_date, end_date)
+    result = {}
+    for row in rows:
+        date = row.get("date","")[:10]
+        result[date] = {
+            "margin_bal":   int(str(row.get("MarginPurchaseTodayBalance",0)).replace(",","") or 0),
+            "margin_prev":  int(str(row.get("MarginPurchaseYesterdayBalance",0)).replace(",","") or 0),
+            "margin_limit": int(str(row.get("MarginPurchaseLimit",0)).replace(",","") or 0),
+            "short_bal":    int(str(row.get("ShortSaleTodayBalance",0)).replace(",","") or 0),
+        }
+    return result
+
+
+def analyze_margin(code, closes_by_date, start_date, end_date=""):
+    """
+    融資分析（融資使用率 + 融資vs股價背離）
+    closes_by_date: {date: close} 用來算股價變化
+    回傳分析結果 dict，或 None（無資料）
+    """
+    margin = fetch_margin_finmind(code, start_date, end_date)
+    if not margin:
+        return None
+    dates = sorted(margin.keys())
+    if len(dates) < 5:
+        return None
+
+    latest = margin[dates[-1]]
+    bal   = latest["margin_bal"]
+    limit = latest["margin_limit"]
+
+    # 1. 融資使用率 = 融資餘額 / 融資限額
+    usage_pct = round(bal / limit * 100, 1) if limit > 0 else 0
+
+    # 2. 融資近5日增減
+    bal_5ago = margin[dates[-6]]["margin_bal"] if len(dates) >= 6 else margin[dates[0]]["margin_bal"]
+    margin_chg_5 = bal - bal_5ago
+    margin_chg_5_pct = round(margin_chg_5 / bal_5ago * 100, 1) if bal_5ago > 0 else 0
+
+    # 3. 融資 vs 股價背離（近5日）
+    signal = "無明顯訊號"
+    signal_type = "neutral"
+    if closes_by_date:
+        cd = sorted([d for d in closes_by_date if d <= dates[-1]])
+        if len(cd) >= 6:
+            price_now  = closes_by_date[cd[-1]]
+            price_5ago = closes_by_date[cd[-6]]
+            price_chg_pct = (price_now - price_5ago) / price_5ago * 100 if price_5ago > 0 else 0
+            # 背離判定
+            if margin_chg_5_pct > 5 and price_chg_pct < -2:
+                signal = "融資增but股價跌 → 散戶套牢加碼，籌碼沉重(偏空)"
+                signal_type = "bearish"
+            elif margin_chg_5_pct < -5 and price_chg_pct > 2:
+                signal = "融資減but股價漲 → 散戶洗出，籌碼沉澱(偏多)"
+                signal_type = "bullish"
+            elif margin_chg_5_pct > 8 and price_chg_pct > 5:
+                signal = "融資股價齊漲 → 散戶追高，短線過熱(留意)"
+                signal_type = "caution"
+            elif margin_chg_5_pct < -8 and price_chg_pct < -5:
+                signal = "融資股價齊跌 → 散戶停損殺出，或近底部"
+                signal_type = "washout"
+
+    return {
+        "usage_pct":       usage_pct,      # 融資使用率%
+        "margin_bal":      bal,            # 融資餘額(張)
+        "margin_chg_5":    margin_chg_5,   # 近5日增減(張)
+        "margin_chg_5_pct": margin_chg_5_pct,
+        "signal":          signal,
+        "signal_type":     signal_type,
+    }
+
+
 def fetch_per_finmind(code, start_date):
     """
     FinMind PER/PBR/殖利率
@@ -4699,10 +4776,20 @@ def stock_analysis(code):
             "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
         } for i in range(recent_n)]
 
+        # ── 融資分析（使用率 + 背離訊號）──
+        margin_analysis = None
+        try:
+            closes_by_date = {records[i]["date"]: closes[i] for i in range(len(records))}
+            margin_start = (datetime.today() - timedelta(days=40)).strftime("%Y-%m-%d")
+            margin_analysis = analyze_margin(code, closes_by_date, margin_start, end_dt)
+        except Exception as e:
+            print(f"[融資分析] {code}: {e}")
+
         return jsonify({
             "code":   code,
             "price":  cur,
             "date":   dates[-1],
+            "margin": margin_analysis,   # 融資分析（可能為 None）
             # 技術指標
             "indicators": {
                 "ma5":  ma5,  "ma10": ma10, "ma20": ma20,

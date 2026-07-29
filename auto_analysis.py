@@ -231,10 +231,38 @@ def get_market_data():
     return _market_cache
 
 # ══════════════════════════════════════════════════
+# ── 融資資料抓取（給模型當特徵）──────────────────
+def fetch_margin_data(code, records):
+    """抓最新融資，回傳 {usage_pct, margin_chg_5_pct}，失敗回 None"""
+    if not FINMIND_TOKEN:
+        return None
+    try:
+        end_d = datetime.now().strftime("%Y-%m-%d")
+        start_d = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+        r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+            params={"dataset":"TaiwanStockMarginPurchaseShortSale","data_id":code,
+                    "start_date":start_d,"end_date":end_d},
+            headers={"Authorization":f"Bearer {FINMIND_TOKEN}"}, timeout=12)
+        if r.status_code != 200:
+            return None
+        rows = r.json().get("data", [])
+        if len(rows) < 5:
+            return None
+        rows.sort(key=lambda x: x.get("date",""))
+        bal   = int(str(rows[-1].get("MarginPurchaseTodayBalance",0)).replace(",","") or 0)
+        limit = int(str(rows[-1].get("MarginPurchaseLimit",0)).replace(",","") or 0)
+        bal5  = int(str(rows[-6].get("MarginPurchaseTodayBalance",0)).replace(",","") or 0) if len(rows)>=6 else bal
+        return {
+            "usage_pct":        round(bal/limit*100,1) if limit>0 else 0,
+            "margin_chg_5_pct": round((bal-bal5)/bal5*100,1) if bal5>0 else 0,
+        }
+    except Exception as e:
+        return None
+
 # 特徵工程（28 個特徵）
 # ══════════════════════════════════════════════════
 
-def calc_features(records, market_records=None, inst_data=None):
+def calc_features(records, market_records=None, inst_data=None, margin_data=None):
     """
     計算 28 個技術 + 籌碼 + 大盤相對強弱特徵
     """
@@ -361,7 +389,14 @@ def calc_features(records, market_records=None, inst_data=None):
         f_trust_net   = inst_data.get("trust_net",   0) / max(avg5v, 1) * 100
         f_inst_total  = f_foreign_net + f_trust_net
 
-    # ── 組合成特徵向量（共 28 個）────────────────
+    # ── 融資特徵（新增）──────────────────────────
+    f_margin_usage = 0.0   # 融資使用率
+    f_margin_chg   = 0.0   # 近5日融資增減率
+    if margin_data:
+        f_margin_usage = margin_data.get("usage_pct", 0)
+        f_margin_chg   = margin_data.get("margin_chg_5_pct", 0)
+
+    # ── 組合成特徵向量（共 30 個）────────────────
     return [
         # 均線（6）
         f_ma5, f_ma20, f_ma60, f_ma120, f_ma5_20, f_ma20_60,
@@ -381,6 +416,8 @@ def calc_features(records, market_records=None, inst_data=None):
         f_rel_strength,
         # 籌碼（3）
         f_foreign_net, f_trust_net, f_inst_total,
+        # 融資（2）
+        f_margin_usage, f_margin_chg,
         # K值-D值差、RSI偏離50（2）
         k - d, rsi - 50,
     ]
@@ -549,6 +586,9 @@ def analyze_stock(code, name, market_records):
     inst_today = fetch_institutional(code)
     inst_data  = inst_today[0] if inst_today else None
 
+    # 抓今日融資（使用率 + 近5日增減）
+    margin_data = fetch_margin_data(code, records)
+
     X, y = build_training_data(records, market_records, PREDICT_DAYS, RISE_THRESHOLD)
     if len(X) < 50 or sum(y) < 8 or sum(1-v for v in y) < 8:
         return None
@@ -593,7 +633,7 @@ def analyze_stock(code, name, market_records):
     rf_final = RandomForest(n_trees=60, max_depth=7, n_features=10)
     rf_final.fit(X, y)
 
-    cur_feat = calc_features(records, market_records, inst_data)
+    cur_feat = calc_features(records, market_records, inst_data, margin_data)
     if cur_feat is None: return None
 
     rise_prob  = rf_final.predict_proba([cur_feat])[0]

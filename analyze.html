@@ -860,6 +860,36 @@ async function fetchStockAnalysis(code, name, price, sector) {
   }
 }
 
+function renderMarginBlock(m) {
+  if (!m) return '';  // 無融資資料就不顯示
+  const sigColors = {bearish:'var(--grn)', bullish:'var(--red)', caution:'#f0b429', washout:'#3d8bff', neutral:'#6a748f'};
+  const sigCol = sigColors[m.signal_type] || '#6a748f';
+  // 融資使用率條：越高代表散戶籌碼越重
+  const usageCol = m.usage_pct >= 60 ? 'var(--grn)' : m.usage_pct >= 30 ? '#f0b429' : 'var(--red)';
+  const chgCol = m.margin_chg_5 >= 0 ? 'var(--red)' : 'var(--grn)';
+  return `
+    <div style="margin-top:14px;background:rgba(168,85,247,.05);border:1px solid rgba(168,85,247,.15);border-radius:10px;padding:12px;">
+      <div style="font-size:.72rem;color:#c4a4f7;font-weight:700;margin-bottom:10px;">💰 融資籌碼分析</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;">
+        <div style="flex:1;min-width:120px;">
+          <div style="font-size:.65rem;color:#6a748f;margin-bottom:3px;">融資使用率</div>
+          <div style="font-size:1.1rem;font-weight:800;color:${usageCol};font-family:'JetBrains Mono',monospace;">${m.usage_pct}%</div>
+          <div style="height:4px;background:#1e2330;border-radius:2px;margin-top:3px;overflow:hidden;">
+            <div style="width:${Math.min(m.usage_pct,100)}%;height:100%;background:${usageCol};"></div>
+          </div>
+        </div>
+        <div style="flex:1;min-width:120px;">
+          <div style="font-size:.65rem;color:#6a748f;margin-bottom:3px;">近5日融資增減</div>
+          <div style="font-size:1.1rem;font-weight:800;color:${chgCol};font-family:'JetBrains Mono',monospace;">${m.margin_chg_5>=0?'+':''}${m.margin_chg_5.toLocaleString()}張</div>
+          <div style="font-size:.62rem;color:#6a748f;">${m.margin_chg_5_pct>=0?'+':''}${m.margin_chg_5_pct}% · 餘額${m.margin_bal.toLocaleString()}張</div>
+        </div>
+      </div>
+      <div style="font-size:.72rem;padding:8px 10px;background:rgba(0,0,0,.2);border-radius:6px;border-left:3px solid ${sigCol};color:${sigCol};">
+        ${m.signal}
+      </div>
+    </div>`;
+}
+
 function renderModalContent(tab) {
   const d   = _modalData;
   const ind = d.indicators;
@@ -904,7 +934,8 @@ function renderModalContent(tab) {
         <span style="background:#1e2330;border-radius:5px;padding:4px 9px;font-size:.72rem;">
           布林 ${ind.boll_pos}% ${ind.boll_pos>80?'⚠️接近上軌':ind.boll_pos<20?'✅接近下軌':'中軌'}
         </span>
-      </div>`;
+      </div>
+      ${renderMarginBlock(d.margin)}`;
     setTimeout(() => drawModalCharts(d), 50);
 
   } else if (tab === 'advice') {
