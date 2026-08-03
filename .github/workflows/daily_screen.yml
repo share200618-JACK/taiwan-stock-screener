@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: '30 6 * * 1-5'
   workflow_dispatch:
+  repository_dispatch:             # 外部 API 觸發（cron-job.org 用，可靠）
+    types: [daily-screen]
   push:
     branches: [main]
     paths:
