@@ -4874,15 +4874,22 @@ def get_latest_analysis():
     2. Supabase 資料庫（重啟後仍有資料）
     3. 本地 JSON 備用（本機開發）
     """
-    # 1. 記憶體快取
+    # 1. 讀 Supabase（權威來源，排程每天更新這裡）
     global _latest_analysis_result
+    sb_data = supabase_load_latest()
+
+    # 2. 比較記憶體快取與 Supabase，用「日期較新」的那個
+    #    （修正：手動分析會把舊結果存進記憶體，導致排程更新後網站仍顯示舊資料）
+    mem_date = (_latest_analysis_result or {}).get("date", "") if _latest_analysis_result else ""
+    sb_date  = (sb_data or {}).get("date", "") if sb_data else ""
+
+    if sb_data and sb_date >= mem_date:
+        _latest_analysis_result = sb_data  # 用 Supabase 的更新記憶體
+        return jsonify({**sb_data, "source": "database"})
     if _latest_analysis_result:
         return jsonify({**_latest_analysis_result, "source": "memory"})
-
-    # 2. Supabase 資料庫
-    sb_data = supabase_load_latest()
     if sb_data:
-        _latest_analysis_result = sb_data  # 同時回補記憶體
+        _latest_analysis_result = sb_data
         return jsonify({**sb_data, "source": "database"})
 
     # 3. 本地 JSON（本機開發備用）
