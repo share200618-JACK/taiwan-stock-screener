@@ -5821,19 +5821,27 @@ def dashboard_indices():
     except:
         result["tw50"] = {"name":"台灣50","value":0,"chg":0,"pct":0}
 
-    # 上櫃指數（TPEX OpenAPI）
+    # 上櫃指數（改用 FinMind TPEx，OpenAPI 的個股報價沒有指數欄位）
     try:
-        r3 = SESSION.get(
-            "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
-            headers={"User-Agent":"Mozilla/5.0"}, timeout=10)
-        d3 = r3.json()
-        for row in d3[:5]:
-            if "指數" in str(row.get("指數","")) or "index" in str(row).lower():
-                cur3 = safe_float(str(row.get("收盤","0")).replace(",",""))
-                if cur3 > 0:
-                    result["tpex"] = {"name":"上櫃指數","value":round(cur3,2),"chg":0,"pct":0}
-                    break
-    except: pass
+        fm_token = _get_finmind_token()
+        if fm_token:
+            end_d = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+            start_d = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=10)).strftime("%Y-%m-%d")
+            r3 = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockTotalReturnIndex","data_id":"TPEx",
+                        "start_date":start_d,"end_date":end_d},
+                headers={"Authorization":f"Bearer {fm_token}"}, timeout=12)
+            if r3.status_code==200:
+                data3 = r3.json().get("data",[])
+                if len(data3)>=2:
+                    cur3 = safe_float(data3[-1].get("price",0))
+                    prv3 = safe_float(data3[-2].get("price",0))
+                    chg3 = round(cur3-prv3,2)
+                    pct3 = round(chg3/prv3*100,2) if prv3>0 else 0
+                    if cur3>0:
+                        result["tpex"] = {"name":"上櫃指數","value":round(cur3,2),"chg":chg3,"pct":pct3}
+    except Exception as e:
+        print(f"[指數/TPEx] {e}")
 
     # fallback
     for k,n in [("twii","台灣加權"),("tpex","上櫃指數"),("tw50","台灣50"),
