@@ -29,22 +29,6 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: 執行三合一選股
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-          JACK_TOKEN: ${{ secrets.JACK_TOKEN }}
-        run: python run_screen.py trinity
-
-      - name: 執行遊牧民選股
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-          JACK_TOKEN: ${{ secrets.JACK_TOKEN }}
-        run: python run_screen.py nomad
-
       - name: 執行 AI 自動選股分析
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
