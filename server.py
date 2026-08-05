@@ -658,6 +658,34 @@ def fetch_history_range(code, start_date, end_date):
     start_dt    = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt      = datetime.strptime(end_date,   "%Y-%m-%d")
     fetch_start = start_dt - timedelta(days=90)
+
+    # ── 優先 FinMind（一次抓完、上市上櫃通吃、不被 TWSE 限流）──
+    fm_token = _get_finmind_token()
+    if fm_token:
+        try:
+            rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset": "TaiwanStockPrice", "data_id": code,
+                        "start_date": fetch_start.strftime("%Y-%m-%d"),
+                        "end_date": end_date},
+                headers={"Authorization": f"Bearer {fm_token}"}, timeout=15)
+            if rf.status_code == 200:
+                fm_recs = []
+                for row in rf.json().get("data", []):
+                    cl = safe_float(row.get("close", 0))
+                    if cl > 0:
+                        fm_recs.append({
+                            "date": row["date"], "open": safe_float(row.get("open",0)),
+                            "high": safe_float(row.get("max",0)), "low": safe_float(row.get("min",0)),
+                            "close": cl, "vol": round(safe_float(row.get("Trading_Volume",0))/1000),
+                            "change": safe_float(row.get("spread",0)),
+                        })
+                if len(fm_recs) >= 30:
+                    fm_recs.sort(key=lambda x: x["date"])
+                    _history_cache[cache_key] = fm_recs
+                    return fm_recs
+        except Exception as e:
+            print(f"[fetch_range/FinMind] {code}: {e}")
+
     cur = datetime(fetch_start.year, fetch_start.month, 1)
 
     # 查市場別（防呆：若查不到就兩個都試）
@@ -5919,6 +5947,37 @@ def api_stock_history():
     end_dt   = datetime.strptime(end,   "%Y-%m-%d") if end   else datetime.today()
 
     all_records = []
+
+    # ── 優先用 FinMind（一次抓整段、上市上櫃通吃、不會被 TWSE 限流）──
+    fm_token = _get_finmind_token()
+    if fm_token:
+        try:
+            rf = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset": "TaiwanStockPrice", "data_id": code,
+                        "start_date": start_dt.strftime("%Y-%m-%d"),
+                        "end_date": end_dt.strftime("%Y-%m-%d")},
+                headers={"Authorization": f"Bearer {fm_token}"}, timeout=15)
+            if rf.status_code == 200:
+                for row in rf.json().get("data", []):
+                    cl = safe_float(row.get("close", 0))
+                    if cl > 0:
+                        all_records.append({
+                            "date":  row["date"],
+                            "open":  safe_float(row.get("open", 0)),
+                            "high":  safe_float(row.get("max", 0)),
+                            "low":   safe_float(row.get("min", 0)),
+                            "close": cl,
+                            "vol":   round(safe_float(row.get("Trading_Volume", 0)) / 1000),
+                            "chg":   safe_float(row.get("spread", 0)),
+                        })
+        except Exception as e:
+            print(f"[hist/FinMind] {code}: {e}")
+
+    # FinMind 有抓到就直接回（省時、避免限流）
+    if all_records:
+        s_str, e_str = start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d")
+        recs = sorted([r for r in all_records if s_str <= r["date"] <= e_str], key=lambda x: x["date"])
+        return jsonify({"code": code, "records": recs, "source": "finmind"})
 
     # 按月抓 TWSE 歷史（每次一個月）
     cur = start_dt.replace(day=1)
