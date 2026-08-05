@@ -45,6 +45,7 @@ RESULT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "analysis
 # Supabase 設定（從環境變數讀取，GitHub Actions / Render 都適用）
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")  # 融資特徵用（GitHub Actions 有傳入）
 
 def _sb_headers():
     return {
