@@ -516,6 +516,11 @@ function loadCustomHistoryRecord(id) {
   document.getElementById('progressWrap').style.display = 'none';
   renderResults(fakeData);
   showToast(`已載入 ${rec.time} 的紀錄`);
+  // 自動捲動到結果區，避免使用者以為沒資料
+  setTimeout(() => {
+    const el = document.getElementById('results');
+    if (el) el.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 100);
 }
 
 function rerunCustomHistory(codesStr) {
