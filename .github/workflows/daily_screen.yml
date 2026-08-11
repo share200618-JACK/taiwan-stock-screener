@@ -1,8 +1,8 @@
 name: 每日選股排程
 
 on:
-  schedule:
-    - cron: '30 6 * * 1-5'
+  # 已移除 GitHub 原生排程（不可靠且會與 cron-job.org 重複觸發）
+  # 改由 cron-job.org 每交易日 14:35 透過 repository_dispatch 觸發
   workflow_dispatch:
   repository_dispatch:             # 外部 API 觸發（cron-job.org 用，可靠）
     types: [daily-screen]
