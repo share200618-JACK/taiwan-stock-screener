@@ -238,8 +238,8 @@ def fetch_margin_data(code, records):
     if not FINMIND_TOKEN:
         return None
     try:
-        end_d = datetime.now().strftime("%Y-%m-%d")
-        start_d = (datetime.now() - timedelta(days=40)).strftime("%Y-%m-%d")
+        end_d = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+        start_d = (datetime.utcnow()+timedelta(hours=8) - timedelta(days=40)).strftime("%Y-%m-%d")
         r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
             params={"dataset":"TaiwanStockMarginPurchaseShortSale","data_id":code,
                     "start_date":start_d,"end_date":end_d},
@@ -717,7 +717,7 @@ def save_result(data):
         print(f"  ❌ 存檔失敗: {e}")
 
 def run():
-    now_str = datetime.now().strftime("%Y/%m/%d %H:%M")
+    now_str = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y/%m/%d %H:%M")  # 台灣時間
     print(f"\n{'='*55}")
     print(f"  台股自動分析 v2.0  {now_str}")
     print(f"{'='*55}")
