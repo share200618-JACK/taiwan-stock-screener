@@ -1533,6 +1533,217 @@ def get_stocks():
     return jsonify({"error": "請使用 /api/stocks/start 非同步版本"}), 400
 
 # ══════════════════════════════════════════════════════
+# 因子實驗室（Factor Lab）— 通用因子預測力驗證
+# ══════════════════════════════════════════════════════
+import math as _math
+_factor_tasks = {}
+
+def _fl_safe(x, d=0.0):
+    try: return float(str(x).replace(",", ""))
+    except: return d
+
+def _fl_mean(xs): return sum(xs)/len(xs) if xs else 0
+def _fl_var(xs):
+    if len(xs) < 2: return 0
+    m = _fl_mean(xs); return sum((x-m)**2 for x in xs)/(len(xs)-1)
+def _fl_welch_t(a, b):
+    if len(a) < 2 or len(b) < 2: return 0, False
+    se = _math.sqrt(_fl_var(a)/len(a) + _fl_var(b)/len(b))
+    if se == 0: return 0, False
+    t = (_fl_mean(a) - _fl_mean(b)) / se
+    return round(t, 2), abs(t) > 1.96
+
+def _fl_load_recommendations(token):
+    if not SUPABASE_URL or not SUPABASE_KEY: return []
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_results",
+        params={"select":"date,stocks,created_at","order":"date.asc","limit":"500"},
+        headers=_sb_headers(), timeout=20)
+    if r.status_code != 200: return []
+    seen, out = set(), []
+    for row in sorted(r.json(), key=lambda x: x.get("created_at",""), reverse=True):
+        d = row.get("date")
+        if d in seen: continue
+        seen.add(d)
+        if isinstance(row.get("stocks"), str):
+            try: row["stocks"] = json.loads(row["stocks"])
+            except: row["stocks"] = []
+        out.append(row)
+    out.sort(key=lambda x: x.get("date",""))
+    return out
+
+_fl_price_cache = {}
+def _fl_forward_return(code, rec_date, entry, token, hold=20):
+    if code not in _fl_price_cache:
+        try:
+            end = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
+            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=5)).strftime("%Y-%m-%d")
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockPrice","data_id":code,"start_date":start,"end_date":end},
+                headers={"Authorization":f"Bearer {token}"}, timeout=15)
+            rows = r.json().get("data",[]) if r.status_code==200 else []
+            _fl_price_cache[code] = sorted([(x["date"],_fl_safe(x.get("close",0))) for x in rows if _fl_safe(x.get("close",0))>0])
+        except: _fl_price_cache[code] = []
+    closes = _fl_price_cache[code]
+    future = [(d,c) for d,c in closes if d >= rec_date]
+    if len(future) <= hold: return None
+    base = entry if entry>0 else future[0][1]
+    if base <= 0: return None
+    return round((future[hold][1]-base)/base*100, 2)
+
+# ── 各因子的取值函式：回傳該股在推薦日當下的因子值 ──
+_fl_factor_cache = {}
+def _fl_get_factor(factor, code, rec_date, token):
+    ckey = (factor, code)
+    if ckey not in _fl_factor_cache:
+        _fl_factor_cache[ckey] = _fl_compute_factor_series(factor, code, rec_date, token)
+    series = _fl_factor_cache[ckey]  # [(date, value), ...] 已排序
+    if not series: return None
+    # 毛利率用財報，需 -60 天公告時間差；其餘用當日
+    if factor == "gross_margin":
+        cutoff = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=60)).strftime("%Y-%m-%d")
+    else:
+        cutoff = rec_date
+    avail = [(d,v) for d,v in series if d <= cutoff]
+    return avail[-1][1] if avail else None
+
+def _fl_compute_factor_series(factor, code, rec_date, token):
+    try:
+        if factor == "gross_margin":
+            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=1095)).strftime("%Y-%m-%d")
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"FinancialStatements","data_id":code,"start_date":start,"end_date":rec_date},
+                headers={"Authorization":f"Bearer {token}"}, timeout=15)
+            rows = r.json().get("data",[]) if r.status_code==200 else []
+            byq = {}
+            for row in rows:
+                t, dt, val = row.get("type",""), row.get("date",""), _fl_safe(row.get("value",0))
+                if t == "GrossProfit": byq.setdefault(dt,{})["gp"] = val
+                elif t in ("Revenue","OperatingRevenue","TotalOperatingRevenue"): byq.setdefault(dt,{})["rev"] = val
+            out = []
+            for q, v in byq.items():
+                if v.get("gp") is not None and v.get("rev",0) > 0:
+                    out.append((q, round(v["gp"]/v["rev"]*100,2)))
+            return sorted(out)
+
+        elif factor == "margin_usage":  # 融資使用率
+            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=30)).strftime("%Y-%m-%d")
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockMarginPurchaseShortSale","data_id":code,"start_date":start,"end_date":rec_date},
+                headers={"Authorization":f"Bearer {token}"}, timeout=15)
+            rows = r.json().get("data",[]) if r.status_code==200 else []
+            out = []
+            for row in rows:
+                bal = _fl_safe(row.get("MarginPurchaseTodayBalance",0))
+                lim = _fl_safe(row.get("MarginPurchaseLimit",0))
+                if lim > 0: out.append((row.get("date","")[:10], round(bal/lim*100,2)))
+            return sorted(out)
+
+        elif factor == "foreign_net":  # 外資近5日買超（張）
+            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=15)).strftime("%Y-%m-%d")
+            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
+                params={"dataset":"TaiwanStockInstitutionalInvestorsBuySell","data_id":code,"start_date":start,"end_date":rec_date},
+                headers={"Authorization":f"Bearer {token}"}, timeout=15)
+            rows = r.json().get("data",[]) if r.status_code==200 else []
+            daily = {}
+            for row in rows:
+                if "Foreign" in row.get("name",""):
+                    d = row.get("date","")[:10]
+                    net = (_fl_safe(row.get("buy",0))-_fl_safe(row.get("sell",0)))/1000
+                    daily[d] = daily.get(d,0) + net
+                    out_key = d
+            # 累積近5日
+            ds = sorted(daily.keys())
+            out = []
+            for i in range(len(ds)):
+                window = ds[max(0,i-4):i+1]
+                out.append((ds[i], round(sum(daily[w] for w in window),1)))
+            return out
+    except Exception as e:
+        print(f"[factor/{factor}] {code}: {e}")
+    return []
+
+FACTOR_NAMES = {
+    "gross_margin": "毛利率",
+    "margin_usage": "融資使用率",
+    "foreign_net":  "外資近5日買超",
+}
+
+def _fl_run_validation(task_id, factor, hold, token):
+    prog = _factor_tasks[task_id]
+    try:
+        _fl_price_cache.clear(); _fl_factor_cache.clear()
+        prog.update({"pct":5,"msg":"讀取歷史推薦..."})
+        recs = _fl_load_recommendations(token)
+        if not recs:
+            prog.update({"done":True,"error":"無歷史推薦資料"}); return
+        # 收集所有樣本
+        pairs = []
+        for day in recs:
+            for s in day.get("stocks",[]):
+                pairs.append((day.get("date"), s.get("code",""), _fl_safe(s.get("price",0))))
+        total = len(pairs)
+        samples = []
+        for i,(d,code,entry) in enumerate(pairs):
+            if i % 10 == 0:
+                prog.update({"pct":5+int(i/total*85),"msg":f"分析 {i+1}/{total} 筆..."})
+            if not code: continue
+            fv = _fl_get_factor(factor, code, d, token)
+            if fv is None: continue
+            ret = _fl_forward_return(code, d, entry, token, hold)
+            if ret is None: continue
+            samples.append((fv, ret))
+
+        if len(samples) < 20:
+            prog.update({"done":True,"result":{"enough":False,"n":len(samples)}}); return
+
+        samples.sort(key=lambda x: x[0])
+        n = len(samples)
+        low, mid, high = samples[:n//3], samples[n//3:2*n//3], samples[2*n//3:]
+        def grp(g): 
+            rets=[r for _,r in g]
+            return {"n":len(g),"lo":round(g[0][0],1),"hi":round(g[-1][0],1),
+                    "avg":round(_fl_mean(rets),2),
+                    "win":round(len([r for r in rets if r>0])/len(rets)*100,0)}
+        gl, gm, gh = grp(low), grp(mid), grp(high)
+        t, sig = _fl_welch_t([r for _,r in high],[r for _,r in low])
+        diff = round(gh["avg"]-gl["avg"],2)
+        if sig and diff > 1: verdict = "add"
+        elif sig and diff < -1: verdict = "reverse"
+        else: verdict = "skip"
+        prog.update({"pct":100,"done":True,"result":{
+            "enough":True,"factor":factor,"factor_name":FACTOR_NAMES.get(factor,factor),
+            "hold":hold,"n":n,"low":gl,"mid":gm,"high":gh,
+            "t":t,"diff":diff,"verdict":verdict}})
+    except Exception as e:
+        prog.update({"done":True,"error":str(e)})
+
+@app.route("/api/factor/validate", methods=["POST"])
+def factor_validate():
+    import uuid
+    b = request.get_json() or {}
+    factor = b.get("factor","gross_margin")
+    hold   = int(b.get("hold",20))
+    if factor not in FACTOR_NAMES:
+        return jsonify({"error":"未知因子"}), 400
+    token = _get_finmind_token()
+    if not token:
+        return jsonify({"error":"未設定 FinMind token"}), 400
+    task_id = str(uuid.uuid4())[:8]
+    _factor_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
+    threading.Thread(target=_fl_run_validation, args=(task_id,factor,hold,token), daemon=True).start()
+    return jsonify({"task_id":task_id})
+
+@app.route("/api/factor/progress/<task_id>")
+def factor_progress(task_id):
+    prog = _factor_tasks.get(task_id)
+    if not prog: return jsonify({"error":"找不到任務"}), 404
+    return jsonify(prog)
+
+@app.route("/factor-lab")
+def factor_lab_page():
+    return send_from_directory(".", "factor_lab.html")
+
+# ══════════════════════════════════════════════════════
 # API 路由 - 單股回測
 # ══════════════════════════════════════════════════════
 

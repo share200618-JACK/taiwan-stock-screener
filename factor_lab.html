@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>因子實驗室</title>
+<style>
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',system-ui,sans-serif;padding-bottom:40px;}
+.w{max-width:900px;margin:0 auto;padding:0 14px;}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 0;flex-wrap:wrap;}
+.tlogo{display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--txt);}
+.tlogo-icon{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#a855f7,#7c3aed);display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
+.tlogo-text{font-size:1rem;font-weight:800;}
+.nav-links{display:flex;gap:4px;flex-wrap:wrap;}
+.nav-link{padding:5px 10px;border-radius:6px;font-size:.7rem;font-weight:600;text-decoration:none;color:var(--dim);}
+.nav-link:hover{color:#fff;background:rgba(255,255,255,.07);}
+.nav-link.active{color:#fff;background:rgba(168,85,247,.25);}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:16px;}
+.title{font-size:1.05rem;font-weight:800;margin-bottom:6px;}
+.sub{font-size:.78rem;color:var(--dim);line-height:1.6;margin-bottom:14px;}
+label{font-size:.75rem;color:var(--dim);display:block;margin-bottom:6px;}
+select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);border-radius:9px;color:var(--txt);font-size:.9rem;}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+.row>div{flex:1;min-width:140px;}
+.run-btn{width:100%;padding:13px;border:none;border-radius:10px;background:linear-gradient(135deg,#a855f7,#7c3aed);color:#fff;font-size:.95rem;font-weight:700;cursor:pointer;}
+.run-btn:disabled{opacity:.5;cursor:not-allowed;}
+.prog-wrap{display:none;margin-top:14px;}
+.prog-bar{height:8px;background:var(--s3);border-radius:4px;overflow:hidden;}
+.prog-fill{height:100%;background:linear-gradient(90deg,#a855f7,#3d8bff);width:0;transition:width .3s;}
+.prog-msg{font-size:.72rem;color:var(--dim);margin-top:6px;text-align:center;}
+.grp{display:flex;gap:10px;margin:14px 0;}
+.grp-card{flex:1;background:var(--s2);border:1px solid var(--bd);border-radius:11px;padding:14px;text-align:center;}
+.grp-lbl{font-size:.7rem;color:var(--dim);margin-bottom:6px;}
+.grp-ret{font-size:1.35rem;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.grp-meta{font-size:.62rem;color:var(--dim);margin-top:6px;}
+.verdict{border-radius:11px;padding:14px;margin-top:14px;font-size:.85rem;line-height:1.6;}
+.v-add{background:rgba(27,196,125,.1);border:1px solid rgba(27,196,125,.3);color:var(--grn);}
+.v-skip{background:rgba(255,77,94,.08);border:1px solid rgba(255,77,94,.25);color:var(--red);}
+.v-reverse{background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.25);color:var(--gold);}
+.stat-line{font-size:.75rem;color:var(--dim);text-align:center;margin-top:10px;font-family:'JetBrains Mono',monospace;}
+</style>
+</head>
+<body>
+<div class="w">
+<div class="topbar">
+  <a href="/" class="tlogo"><div class="tlogo-icon">🧪</div><span class="tlogo-text">因子實驗室</span></a>
+  <nav class="nav-links">
+    <a href="/" class="nav-link">📊 儀表板</a>
+    <a href="/analyze" class="nav-link">🤖 AI分析</a>
+    <a href="/backtest" class="nav-link">📈 回測</a>
+    <a href="/watchlist" class="nav-link">👁️ 追蹤</a>
+    <a href="/factor-lab" class="nav-link active">🧪 因子實驗室</a>
+  </nav>
+</div>
+
+<div class="card">
+  <div class="title">🧪 因子預測力驗證</div>
+  <div class="sub">
+    用你的歷史 AI 推薦資料，驗證某個因子（如毛利率）到底有沒有預測力，再決定要不要加進模型。<br>
+    做法：把推薦過的股票依因子值分「高/中/低」三組，比較各組推薦後的實際報酬，並做統計檢定。<br>
+    <strong style="color:var(--gold);">先驗證、有效再加</strong>，避免加入無效特徵造成模型過度擬合。
+  </div>
+
+  <div class="row">
+    <div>
+      <label>選擇因子</label>
+      <select id="factor">
+        <option value="gross_margin">毛利率（季報）</option>
+        <option value="margin_usage">融資使用率</option>
+        <option value="foreign_net">外資近5日買超</option>
+      </select>
+    </div>
+    <div>
+      <label>持有天數</label>
+      <select id="hold">
+        <option value="5">5 個交易日</option>
+        <option value="10">10 個交易日</option>
+        <option value="20" selected>20 個交易日</option>
+      </select>
+    </div>
+  </div>
+
+  <button class="run-btn" id="runBtn" onclick="startValidation()">🔬 開始驗證</button>
+
+  <div class="prog-wrap" id="progWrap">
+    <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
+    <div class="prog-msg" id="progMsg">準備中...</div>
+  </div>
+</div>
+
+<div class="card" id="resultCard" style="display:none;">
+  <div class="title" id="resultTitle"></div>
+  <div class="grp">
+    <div class="grp-card">
+      <div class="grp-lbl">低組</div>
+      <div class="grp-ret" id="gLowRet"></div>
+      <div class="grp-meta" id="gLowMeta"></div>
+    </div>
+    <div class="grp-card">
+      <div class="grp-lbl">中組</div>
+      <div class="grp-ret" id="gMidRet"></div>
+      <div class="grp-meta" id="gMidMeta"></div>
+    </div>
+    <div class="grp-card">
+      <div class="grp-lbl">高組</div>
+      <div class="grp-ret" id="gHighRet"></div>
+      <div class="grp-meta" id="gHighMeta"></div>
+    </div>
+  </div>
+  <div class="stat-line" id="statLine"></div>
+  <div class="verdict" id="verdict"></div>
+</div>
+
+</div>
+
+<script>
+const API = location.hostname==='localhost' ? 'http://localhost:5000' : '';
+
+async function startValidation() {
+  const factor = document.getElementById('factor').value;
+  const hold   = document.getElementById('hold').value;
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.textContent = '⏳ 驗證中...';
+  document.getElementById('progWrap').style.display = 'block';
+  document.getElementById('resultCard').style.display = 'none';
+  setProg(0, '啟動驗證...');
+
+  try {
+    const r = await fetch(`${API}/api/factor/validate`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({factor, hold:parseInt(hold)})
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    pollProgress(d.task_id);
+  } catch(e) {
+    setProg(0, '❌ ' + e.message);
+    resetBtn();
+  }
+}
+
+async function pollProgress(taskId) {
+  try {
+    const r = await fetch(`${API}/api/factor/progress/${taskId}`);
+    const d = await r.json();
+    setProg(d.pct || 0, d.msg || '處理中...');
+    if (d.done) {
+      resetBtn();
+      if (d.error) { setProg(0, '❌ ' + d.error); return; }
+      renderResult(d.result);
+      return;
+    }
+    setTimeout(() => pollProgress(taskId), 1500);
+  } catch(e) {
+    setTimeout(() => pollProgress(taskId), 2000);
+  }
+}
+
+function setProg(pct, msg) {
+  document.getElementById('progFill').style.width = pct + '%';
+  document.getElementById('progMsg').textContent = msg;
+}
+function resetBtn() {
+  const btn = document.getElementById('runBtn');
+  btn.disabled = false; btn.textContent = '🔬 開始驗證';
+}
+
+function renderResult(res) {
+  const card = document.getElementById('resultCard');
+  card.style.display = 'block';
+  document.getElementById('progWrap').style.display = 'none';
+
+  if (!res.enough) {
+    document.getElementById('resultTitle').textContent = '樣本不足';
+    document.querySelector('.grp').style.display = 'none';
+    document.getElementById('statLine').textContent = '';
+    const v = document.getElementById('verdict');
+    v.className = 'verdict v-skip';
+    v.innerHTML = `⚠️ 有效樣本只有 ${res.n} 筆（需至少 20 筆）<br>結論不可靠，請累積更多每日推薦資料後再驗證。`;
+    return;
+  }
+
+  document.querySelector('.grp').style.display = 'flex';
+  document.getElementById('resultTitle').textContent =
+    `${res.factor_name} — 持有 ${res.hold} 日（樣本 ${res.n} 筆）`;
+
+  const fill = (pre, g) => {
+    const col = g.avg >= 0 ? 'var(--red)' : 'var(--grn)';
+    document.getElementById(pre+'Ret').textContent = (g.avg>=0?'+':'') + g.avg + '%';
+    document.getElementById(pre+'Ret').style.color = col;
+    document.getElementById(pre+'Meta').innerHTML = `${g.lo}~${g.hi}<br>勝率${g.win}% · n=${g.n}`;
+  };
+  fill('gLow', res.low); fill('gMid', res.mid); fill('gHigh', res.high);
+
+  document.getElementById('statLine').textContent =
+    `高組 vs 低組報酬差異 ${res.diff>=0?'+':''}${res.diff}%   |   t值 ${res.t}   |   ${Math.abs(res.t)>1.96?'統計顯著 ✓':'不顯著 ✗'}`;
+
+  const v = document.getElementById('verdict');
+  if (res.verdict === 'add') {
+    v.className = 'verdict v-add';
+    v.innerHTML = `✅ <strong>建議加入</strong><br>高${res.factor_name}組報酬顯著高於低組（統計顯著），此因子具預測力，加進模型有意義。`;
+  } else if (res.verdict === 'reverse') {
+    v.className = 'verdict v-reverse';
+    v.innerHTML = `⚠️ <strong>反向訊號</strong><br>低${res.factor_name}組報酬反而較高（統計顯著）。可考慮反向使用，或此因子在你的推薦池中呈反向關係。`;
+  } else {
+    v.className = 'verdict v-skip';
+    v.innerHTML = `❌ <strong>不建議加入</strong><br>高低組報酬差異不顯著，${res.factor_name}在目前樣本中沒有明顯預測力，加入恐增加雜訊。<br><span style="color:var(--dim);font-size:.72rem;">可能原因：樣本太少、或推薦池已偏向特定族群。</span>`;
+  }
+}
+</script>
+</body>
+</html>
