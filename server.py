@@ -1668,19 +1668,54 @@ FACTOR_NAMES = {
     "foreign_net":  "外資近5日買超",
 }
 
-def _fl_run_validation(task_id, factor, hold, token):
+def _fl_market_sample(token, sample_n=250):
+    """全市場取樣：抓 STOCK_DAY_ALL + TPEX，隨機取 sample_n 支
+    回傳 [(回看日期, code, 該日收盤價), ...]，回看日期固定為 60 個交易日前"""
+    import random
+    codes = []
+    try:
+        r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
+        if r.status_code == 200:
+            for row in r.json():
+                code = row.get("Code","")
+                if str(code).isdigit() and len(code)==4:
+                    codes.append(code)
+    except Exception as e:
+        print(f"[market/TWSE] {e}")
+    try:
+        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        if r2.status_code == 200:
+            for row in r2.json():
+                code = row.get("SecuritiesCompanyCode","") or row.get("code","")
+                if str(code).isdigit() and len(code)==4:
+                    codes.append(code)
+    except Exception as e:
+        print(f"[market/TPEX] {e}")
+    codes = list(set(codes))
+    random.shuffle(codes)
+    codes = codes[:sample_n]
+    # 回看日期：60 個交易日前（約 3 個月），確保有後續報酬可算
+    lookback_date = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=90)).strftime("%Y-%m-%d")
+    return [(lookback_date, code, 0) for code in codes]
+
+def _fl_run_validation(task_id, factor, hold, token, scope="portfolio", mode="quantile"):
     prog = _factor_tasks[task_id]
     try:
         _fl_price_cache.clear(); _fl_factor_cache.clear()
-        prog.update({"pct":5,"msg":"讀取歷史推薦..."})
-        recs = _fl_load_recommendations(token)
-        if not recs:
-            prog.update({"done":True,"error":"無歷史推薦資料"}); return
-        # 收集所有樣本
-        pairs = []
-        for day in recs:
-            for s in day.get("stocks",[]):
-                pairs.append((day.get("date"), s.get("code",""), _fl_safe(s.get("price",0))))
+        if scope == "market":
+            prog.update({"pct":5,"msg":"抓取全市場股票清單..."})
+            pairs = _fl_market_sample(token, 250)
+            if not pairs:
+                prog.update({"done":True,"error":"無法取得市場清單"}); return
+        else:
+            prog.update({"pct":5,"msg":"讀取歷史推薦..."})
+            recs = _fl_load_recommendations(token)
+            if not recs:
+                prog.update({"done":True,"error":"無歷史推薦資料"}); return
+            pairs = []
+            for day in recs:
+                for s in day.get("stocks",[]):
+                    pairs.append((day.get("date"), s.get("code",""), _fl_safe(s.get("price",0))))
         total = len(pairs)
         samples = []
         for i,(d,code,entry) in enumerate(pairs):
@@ -1698,6 +1733,34 @@ def _fl_run_validation(task_id, factor, hold, token):
 
         samples.sort(key=lambda x: x[0])
         n = len(samples)
+
+        if mode == "winrate":
+            # ── 勝率對照：依因子中位數分「符合(高) vs 不符合(低)」兩組，比勝率 ──
+            median_fv = samples[n//2][0]
+            pass_grp = [r for fv, r in samples if fv >= median_fv]   # 符合（因子值高）
+            fail_grp = [r for fv, r in samples if fv < median_fv]    # 不符合（因子值低）
+            if not pass_grp or not fail_grp:
+                prog.update({"done":True,"result":{"enough":False,"n":n}}); return
+            pass_win = round(len([r for r in pass_grp if r>0])/len(pass_grp)*100, 1)
+            fail_win = round(len([r for r in fail_grp if r>0])/len(fail_grp)*100, 1)
+            all_win  = round(len([r for _,r in samples if r>0])/n*100, 1)
+            win_lift = round(pass_win - all_win, 1)   # 用因子篩選後 vs 整體 的勝率提升
+            t, sig = _fl_welch_t(pass_grp, fail_grp)
+            # 判定：符合組勝率顯著高於不符合、且比整體有提升
+            if sig and win_lift > 3:  verdict = "improve"
+            elif sig and win_lift < -3: verdict = "worsen"
+            else: verdict = "noeffect"
+            prog.update({"pct":100,"done":True,"result":{
+                "enough":True,"mode":"winrate",
+                "factor":factor,"factor_name":FACTOR_NAMES.get(factor,factor),
+                "hold":hold,"n":n,"scope":scope,
+                "median":round(median_fv,2),
+                "pass_n":len(pass_grp),"pass_win":pass_win,"pass_avg":round(_fl_mean(pass_grp),2),
+                "fail_n":len(fail_grp),"fail_win":fail_win,"fail_avg":round(_fl_mean(fail_grp),2),
+                "all_win":all_win,"win_lift":win_lift,"t":t,"verdict":verdict}})
+            return
+
+        # ── 原本的分位數模式（三組報酬對比）──
         low, mid, high = samples[:n//3], samples[n//3:2*n//3], samples[2*n//3:]
         def grp(g): 
             rets=[r for _,r in g]
@@ -1711,9 +1774,9 @@ def _fl_run_validation(task_id, factor, hold, token):
         elif sig and diff < -1: verdict = "reverse"
         else: verdict = "skip"
         prog.update({"pct":100,"done":True,"result":{
-            "enough":True,"factor":factor,"factor_name":FACTOR_NAMES.get(factor,factor),
+            "enough":True,"mode":"quantile","factor":factor,"factor_name":FACTOR_NAMES.get(factor,factor),
             "hold":hold,"n":n,"low":gl,"mid":gm,"high":gh,
-            "t":t,"diff":diff,"verdict":verdict}})
+            "t":t,"diff":diff,"verdict":verdict,"scope":scope}})
     except Exception as e:
         prog.update({"done":True,"error":str(e)})
 
@@ -1723,6 +1786,8 @@ def factor_validate():
     b = request.get_json() or {}
     factor = b.get("factor","gross_margin")
     hold   = int(b.get("hold",20))
+    scope  = b.get("scope","portfolio")  # portfolio=我的推薦 / market=全市場
+    mode   = b.get("mode","quantile")    # quantile=三組報酬 / winrate=勝率對照
     if factor not in FACTOR_NAMES:
         return jsonify({"error":"未知因子"}), 400
     token = _get_finmind_token()
@@ -1730,7 +1795,7 @@ def factor_validate():
         return jsonify({"error":"未設定 FinMind token"}), 400
     task_id = str(uuid.uuid4())[:8]
     _factor_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
-    threading.Thread(target=_fl_run_validation, args=(task_id,factor,hold,token), daemon=True).start()
+    threading.Thread(target=_fl_run_validation, args=(task_id,factor,hold,token,scope,mode), daemon=True).start()
     return jsonify({"task_id":task_id})
 
 @app.route("/api/factor/progress/<task_id>")

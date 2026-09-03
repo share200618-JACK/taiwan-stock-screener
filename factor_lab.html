@@ -87,6 +87,32 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
     </div>
   </div>
 
+  <div class="row">
+    <div>
+      <label>驗證範圍</label>
+      <select id="scope" onchange="onScopeChange()">
+        <option value="portfolio">我的 AI 推薦股（對焦選股優化）</option>
+        <option value="market">全市場取樣（樣本大但較慢）</option>
+      </select>
+      <div id="scopeHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;">
+        用你推薦過的股票驗證，直接回答「這因子能否優化我的選股」。
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div>
+      <label>驗證模式</label>
+      <select id="mode" onchange="onModeChange()">
+        <option value="winrate">勝率對照（用因子篩選，勝率能否提高）</option>
+        <option value="quantile">報酬對比（高/中/低三組報酬）</option>
+      </select>
+      <div id="modeHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;">
+        依因子中位數分「符合/不符合」兩組，比較勝率——直接回答「用這因子篩選能否調高勝率」。
+      </div>
+    </div>
+  </div>
+
   <button class="run-btn" id="runBtn" onclick="startValidation()">🔬 開始驗證</button>
 
   <div class="prog-wrap" id="progWrap">
@@ -123,9 +149,31 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
 <script>
 const API = location.hostname==='localhost' ? 'http://localhost:5000' : '';
 
+function onModeChange() {
+  const mode = document.getElementById('mode').value;
+  const hint = document.getElementById('modeHint');
+  if (mode === 'winrate') {
+    hint.textContent = '依因子中位數分「符合/不符合」兩組，比較勝率——直接回答「用這因子篩選能否調高勝率」。';
+  } else {
+    hint.textContent = '把股票依因子值分高/中/低三組，比較報酬——回答「因子本身有沒有預測力」。';
+  }
+}
+
+function onScopeChange() {
+  const scope = document.getElementById('scope').value;
+  const hint = document.getElementById('scopeHint');
+  if (scope === 'market') {
+    hint.innerHTML = '用全市場隨機取樣250支驗證，結論更普遍，但需抓大量財報約 <strong style="color:var(--gold);">3-8 分鐘</strong>，請耐心等候不要關頁面。';
+  } else {
+    hint.textContent = '用你推薦過的股票驗證，直接回答「這因子能否優化我的選股」。';
+  }
+}
+
 async function startValidation() {
   const factor = document.getElementById('factor').value;
   const hold   = document.getElementById('hold').value;
+  const scope  = document.getElementById('scope').value;
+  const mode   = document.getElementById('mode').value;
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = '⏳ 驗證中...';
   document.getElementById('progWrap').style.display = 'block';
@@ -135,7 +183,7 @@ async function startValidation() {
   try {
     const r = await fetch(`${API}/api/factor/validate`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({factor, hold:parseInt(hold)})
+      body: JSON.stringify({factor, hold:parseInt(hold), scope, mode})
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error);
@@ -172,7 +220,47 @@ function resetBtn() {
   btn.disabled = false; btn.textContent = '🔬 開始驗證';
 }
 
+function renderWinrate(res) {
+  const card = document.getElementById('resultCard');
+  card.style.display = 'block';
+  document.getElementById('progWrap').style.display = 'none';
+  const scopeLabel = res.scope === 'market' ? '全市場' : '我的推薦';
+  document.getElementById('resultTitle').textContent =
+    `${res.factor_name} 勝率對照 — 持有 ${res.hold} 日 · ${scopeLabel}（樣本 ${res.n} 筆）`;
+
+  // 用兩組卡片顯示（符合 vs 不符合）+ 整體基準
+  const grpDiv = document.querySelector('.grp');
+  const passCol = res.pass_win >= res.all_win ? 'var(--grn)' : 'var(--red)';
+  grpDiv.innerHTML = `
+    <div class="grp-card" style="border-color:rgba(27,196,125,.4);">
+      <div class="grp-lbl">✅ 符合因子（高於中位數）</div>
+      <div class="grp-ret" style="color:var(--grn);">${res.pass_win}%</div>
+      <div class="grp-meta">勝率 · 平均報酬${res.pass_avg>=0?'+':''}${res.pass_avg}% · n=${res.pass_n}</div>
+    </div>
+    <div class="grp-card" style="border-color:rgba(255,77,94,.4);">
+      <div class="grp-lbl">❌ 不符合（低於中位數）</div>
+      <div class="grp-ret" style="color:var(--red);">${res.fail_win}%</div>
+      <div class="grp-meta">勝率 · 平均報酬${res.fail_avg>=0?'+':''}${res.fail_avg}% · n=${res.fail_n}</div>
+    </div>`;
+
+  document.getElementById('statLine').innerHTML =
+    `整體勝率 ${res.all_win}% → 用因子篩選後 <strong style="color:${res.win_lift>=0?'var(--grn)':'var(--red)'}">${res.pass_win}%</strong>（${res.win_lift>=0?'+':''}${res.win_lift}%）　|　t值 ${res.t}　|　${Math.abs(res.t)>1.96?'顯著 ✓':'不顯著 ✗'}`;
+
+  const v = document.getElementById('verdict');
+  if (res.verdict === 'improve') {
+    v.className = 'verdict v-add';
+    v.innerHTML = `✅ <strong>能提高勝率</strong><br>用「${res.factor_name}高於中位數」當篩選條件，勝率從整體 ${res.all_win}% 提升到 ${res.pass_win}%（+${res.win_lift}%），且統計顯著。<br>建議把此因子當作額外篩選條件加進選股。`;
+  } else if (res.verdict === 'worsen') {
+    v.className = 'verdict v-reverse';
+    v.innerHTML = `⚠️ <strong>反而降低勝率</strong><br>高${res.factor_name}組勝率反而較低。可考慮「反向」使用（篩低因子值的股票），或此因子不適合當篩選條件。`;
+  } else {
+    v.className = 'verdict v-skip';
+    v.innerHTML = `❌ <strong>對勝率沒明顯幫助</strong><br>符合與不符合兩組勝率差異不顯著（${res.pass_win}% vs ${res.fail_win}%）。用這因子篩選無法有效提高勝率。<br><span style="color:var(--dim);font-size:.72rem;">可能原因：樣本不足、或此因子與勝率無關。</span>`;
+  }
+}
+
 function renderResult(res) {
+  if (res.enough && res.mode === 'winrate') { renderWinrate(res); return; }
   const card = document.getElementById('resultCard');
   card.style.display = 'block';
   document.getElementById('progWrap').style.display = 'none';
@@ -188,8 +276,9 @@ function renderResult(res) {
   }
 
   document.querySelector('.grp').style.display = 'flex';
+  const scopeLabel = res.scope === 'market' ? '全市場' : '我的推薦';
   document.getElementById('resultTitle').textContent =
-    `${res.factor_name} — 持有 ${res.hold} 日（樣本 ${res.n} 筆）`;
+    `${res.factor_name} — 持有 ${res.hold} 日 · ${scopeLabel}（樣本 ${res.n} 筆）`;
 
   const fill = (pre, g) => {
     const col = g.avg >= 0 ? 'var(--red)' : 'var(--grn)';
