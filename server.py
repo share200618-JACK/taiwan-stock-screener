@@ -1611,14 +1611,14 @@ def _fl_compute_factor_series(factor, code, rec_date, token):
         if factor == "gross_margin":
             start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=1095)).strftime("%Y-%m-%d")
             r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset":"FinancialStatements","data_id":code,"start_date":start,"end_date":rec_date},
+                params={"dataset":"TaiwanStockFinancialStatements","data_id":code,"start_date":start,"end_date":rec_date},
                 headers={"Authorization":f"Bearer {token}"}, timeout=15)
             rows = r.json().get("data",[]) if r.status_code==200 else []
             byq = {}
             for row in rows:
-                t, dt, val = row.get("type",""), row.get("date",""), _fl_safe(row.get("value",0))
+                t, dt, val = row.get("type",""), row.get("date","")[:10], _fl_safe(row.get("value",0))
                 if t == "GrossProfit": byq.setdefault(dt,{})["gp"] = val
-                elif t in ("Revenue","OperatingRevenue","TotalOperatingRevenue"): byq.setdefault(dt,{})["rev"] = val
+                elif t == "Revenue": byq.setdefault(dt,{})["rev"] = val
             out = []
             for q, v in byq.items():
                 if v.get("gp") is not None and v.get("rev",0) > 0:
