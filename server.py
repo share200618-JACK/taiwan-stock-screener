@@ -1668,7 +1668,7 @@ FACTOR_NAMES = {
     "foreign_net":  "外資近5日買超",
 }
 
-def _fl_market_sample(token, sample_n=250):
+def _fl_market_sample(token, sample_n=60):
     """全市場取樣：抓 STOCK_DAY_ALL + TPEX，隨機取 sample_n 支
     回傳 [(回看日期, code, 該日收盤價), ...]，回看日期固定為 60 個交易日前"""
     import random
@@ -1704,7 +1704,7 @@ def _fl_run_validation(task_id, factor, hold, token, scope="portfolio", mode="qu
         _fl_price_cache.clear(); _fl_factor_cache.clear()
         if scope == "market":
             prog.update({"pct":5,"msg":"抓取全市場股票清單..."})
-            pairs = _fl_market_sample(token, 250)
+            pairs = _fl_market_sample(token, 60)
             if not pairs:
                 prog.update({"done":True,"error":"無法取得市場清單"}); return
         else:
@@ -1717,14 +1717,19 @@ def _fl_run_validation(task_id, factor, hold, token, scope="portfolio", mode="qu
                 for s in day.get("stocks",[]):
                     pairs.append((day.get("date"), s.get("code",""), _fl_safe(s.get("price",0))))
         total = len(pairs)
+        import time as _time
         samples = []
+        # 全市場模式呼叫量大，加延遲避免 FinMind 限流
+        delay = 0.6 if scope == "market" else 0.15
         for i,(d,code,entry) in enumerate(pairs):
-            if i % 10 == 0:
-                prog.update({"pct":5+int(i/total*85),"msg":f"分析 {i+1}/{total} 筆..."})
+            if i % 5 == 0:
+                prog.update({"pct":5+int(i/total*85),"msg":f"分析 {i+1}/{total} 筆（避免限流，較慢請稍候）..."})
             if not code: continue
             fv = _fl_get_factor(factor, code, d, token)
-            if fv is None: continue
+            if fv is None:
+                _time.sleep(delay); continue
             ret = _fl_forward_return(code, d, entry, token, hold)
+            _time.sleep(delay)   # 每支之間延遲
             if ret is None: continue
             samples.append((fv, ret))
 

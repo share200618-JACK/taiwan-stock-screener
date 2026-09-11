@@ -163,7 +163,7 @@ function onScopeChange() {
   const scope = document.getElementById('scope').value;
   const hint = document.getElementById('scopeHint');
   if (scope === 'market') {
-    hint.innerHTML = '用全市場隨機取樣250支驗證，結論更普遍，但需抓大量財報約 <strong style="color:var(--gold);">3-8 分鐘</strong>，請耐心等候不要關頁面。';
+    hint.innerHTML = '用全市場隨機取樣60支驗證（為避免資料源限流已降量並加延遲），約需 <strong style="color:var(--gold);">2-4 分鐘</strong>，請耐心等候不要關頁面。';
   } else {
     hint.textContent = '用你推薦過的股票驗證，直接回答「這因子能否優化我的選股」。';
   }
