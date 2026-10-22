@@ -7,7 +7,7 @@ v2.0 改進：
   ✅ 加入大盤相對強弱
   ✅ 加入量價型態（連漲天數、紅K比例、價格位置）
   ✅ 特徵從 16 個增加到 28 個
-  ✅ 除權息日過濾（避免資料污染）
+  ✅ 還原權值（保留漲跌停日）、驗證隔離帶、勝率優勢門檻
   ✅ 加入不平衡資料處理
   ✅ 結果存成 JSON，供網頁顯示（不需要 Telegram）
 
@@ -130,8 +130,114 @@ def send_telegram(message):
 # 資料抓取
 # ══════════════════════════════════════════════════
 
+import time as _time
+import bisect as _bisect
+
+# ── FinMind 共用呼叫：節流 + 額度用盡自動改走備援 ──────────────
+# 免費帶 token 約 600 次/小時；預設每次間隔 7 秒（≈514 次/小時），留額度給網站本身
+FINMIND_MIN_INTERVAL = float(os.environ.get("FINMIND_MIN_INTERVAL", "7"))
+_fm_state = {"last": 0.0, "calls": 0, "disabled": False}
+
+def finmind_get(dataset, data_id, start_date, end_date=None):
+    """回傳 data list；未設 token / 額度用盡 / 失敗 → None（呼叫端改走備援）"""
+    if not FINMIND_TOKEN or _fm_state["disabled"]:
+        return None
+    wait = FINMIND_MIN_INTERVAL - (_time.time() - _fm_state["last"])
+    if wait > 0:
+        _time.sleep(wait)
+    _fm_state["last"] = _time.time()
+    _fm_state["calls"] += 1
+    params = {"dataset": dataset, "data_id": data_id, "start_date": start_date}
+    if end_date:
+        params["end_date"] = end_date
+    try:
+        r = SESSION.get("https://api.finmindtrade.com/api/v4/data", params=params,
+                        headers={"Authorization": f"Bearer {FINMIND_TOKEN}"}, timeout=20)
+        body = {}
+        try: body = r.json()
+        except Exception: pass
+        if r.status_code in (402, 429) or body.get("status") in (402, 429):
+            _fm_state["disabled"] = True
+            print(f"\n   ⚠️ FinMind 額度用盡（{r.status_code}），之後改用 TWSE 備援", end=" ")
+            return None
+        if r.status_code != 200:
+            return None
+        return body.get("data", []) or []
+    except Exception:
+        return None
+
+
+def _tw_today():
+    return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+
+def back_adjust(records):
+    """
+    還原權值（取代舊版「單日 >9.5% 整天刪除」）。
+    舊做法會把漲停/跌停日一起刪掉，最強的訊號日消失、序列也出現斷層。
+    新做法：參考價 = 收盤 − 漲跌價差；若參考價 ≠ 前一日收盤，代表除權息/減資，
+    把之前所有價格等比例調整，讓報酬率連續正確。
+    records 需含 chg（漲跌價差；未知時為 None），依日期排序。
+    """
+    n = len(records)
+    out = [dict(r) for r in records]
+    cum = 1.0
+    for t in range(n - 1, -1, -1):
+        if cum != 1.0:
+            for k in ("open", "high", "low", "close"):
+                out[t][k] = round(out[t][k] * cum, 4)
+        if t == 0:
+            break
+        cur, prev = records[t], records[t - 1]
+        chg = cur.get("chg")
+        if chg is None or prev["close"] <= 0:
+            continue
+        try:
+            gap = (datetime.strptime(cur["date"], "%Y-%m-%d") -
+                   datetime.strptime(prev["date"], "%Y-%m-%d")).days
+        except Exception:
+            gap = 1
+        if gap > 10:          # 資料缺口，無法判斷，不調整
+            continue
+        ref = cur["close"] - chg
+        if ref <= 0:
+            continue
+        f = ref / prev["close"]
+        if abs(f - 1) > 0.001 and 0.2 < f < 5:
+            cum *= f
+    return out
+
+
 def fetch_history(code, months=24):
-    """抓取個股近 N 個月每日歷史資料（含除權息過濾）"""
+    """
+    個股日線（原始價 + 漲跌價差，尚未還原）。
+    優先 FinMind（一次抓完、上市上櫃都有）；失敗才用 TWSE 逐月（只有上市）。
+    """
+    start = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    rows = finmind_get("TaiwanStockPrice", code, start)
+    records = []
+    if rows:
+        for r in rows:
+            c = safe_float(r.get("close"))
+            if c <= 0:
+                continue
+            records.append({
+                "date":  r.get("date", "")[:10],
+                "open":  safe_float(r.get("open"), c),
+                "high":  safe_float(r.get("max"), c),
+                "low":   safe_float(r.get("min"), c),
+                "close": c,
+                "vol":   round(safe_float(r.get("Trading_Volume")) / 1000),
+                "chg":   safe_float(r.get("spread")),
+            })
+    if len(records) < 80:
+        records = _fetch_history_twse(code, months)
+    records.sort(key=lambda x: x["date"])
+    return records
+
+
+def _fetch_history_twse(code, months=24):
+    """TWSE 逐月備援（僅上市）。除權息日 TWSE 會標 X，價差不可信 → chg=None 不調整"""
     records = []
     today = datetime.today()
     for i in range(months, -1, -1):
@@ -140,63 +246,107 @@ def fetch_history(code, months=24):
         try:
             url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
                    f"?response=json&date={ym}&stockNo={code}")
-            r = SESSION.get(url, timeout=10)
-            data = r.json()
+            data = SESSION.get(url, timeout=10).json()
             if data.get("stat") != "OK" or not data.get("data"):
                 continue
             for row in data["data"]:
                 parts = row[0].split("/")
-                if len(parts) != 3: continue
+                if len(parts) != 3:
+                    continue
                 try:
-                    dt = datetime(int(parts[0])+1911, int(parts[1]), int(parts[2]))
-                except: continue
+                    dt = datetime(int(parts[0]) + 1911, int(parts[1]), int(parts[2]))
+                except Exception:
+                    continue
                 c = safe_float(row[6])
-                h = safe_float(row[4])
-                l = safe_float(row[5])
-                o = safe_float(row[3])
-                v = round(safe_float(row[1]) / 1000)
-                chg = safe_float(row[7])
-                if c <= 0: continue
-                prev = c - chg
-                pct  = abs(chg / prev * 100) if prev > 0 else 0
-                # 過濾除權息日（單日波動超過 9.5% 視為異常）
-                if pct > 9.5: continue
+                if c <= 0:
+                    continue
+                raw = str(row[7])
+                chg = None if "X" in raw.upper() else safe_float(raw.replace("+", ""), None)
                 records.append({
-                    "date":  dt.strftime("%Y-%m-%d"),
-                    "open":  o, "high": h, "low": l,
-                    "close": c, "vol":  v, "chg": chg,
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "open": safe_float(row[3], c), "high": safe_float(row[4], c),
+                    "low":  safe_float(row[5], c), "close": c,
+                    "vol":  round(safe_float(row[1]) / 1000), "chg": chg,
                 })
-        except: pass
-    return sorted(records, key=lambda x: x["date"])
+        except Exception:
+            pass
+    seen, uniq = set(), []
+    for r in sorted(records, key=lambda x: x["date"]):
+        if r["date"] not in seen:
+            seen.add(r["date"]); uniq.append(r)
+    return uniq
 
-def fetch_institutional(code, days=60):
+
+def fetch_inst_history(code, start_date):
     """
-    抓取外資 + 投信近 N 日買賣超
-    回傳 list of {date, foreign_net, trust_net}
+    外資/投信每日買賣超（張），整段歷史一次抓，讓「訓練」與「預測」用同一份籌碼資料。
+    回傳 (排序日期list, {date: (外資, 投信)})；抓不到回 None。
     """
-    result = []
+    rows = finmind_get("TaiwanStockInstitutionalInvestorsBuySell", code, start_date)
+    if not rows:
+        return None
+    daily = {}
+    for r in rows:
+        d = r.get("date", "")[:10]
+        name = r.get("name", "")
+        net = (safe_float(r.get("buy")) - safe_float(r.get("sell"))) / 1000
+        f, t = daily.get(d, (0.0, 0.0))
+        if name.startswith("Foreign"):
+            f += net
+        elif name == "Investment_Trust":
+            t += net
+        daily[d] = (f, t)
+    if not daily:
+        return None
+    return sorted(daily), daily
+
+
+def fetch_margin_history(code, start_date):
+    """融資餘額/限額每日歷史。回傳 (排序日期list, {date: (餘額, 限額)})"""
+    rows = finmind_get("TaiwanStockMarginPurchaseShortSale", code, start_date)
+    if not rows:
+        return None
+    daily = {}
+    for r in rows:
+        d = r.get("date", "")[:10]
+        daily[d] = (safe_float(r.get("MarginPurchaseTodayBalance")),
+                    safe_float(r.get("MarginPurchaseLimit")))
+    if not daily:
+        return None
+    return sorted(daily), daily
+
+
+def _lagged_index(dates, cur_date, max_stale_days=10):
+    """
+    回傳 cur_date「之前」最近一筆的索引（嚴格小於，落後一日）。
+    原因：排程收盤後就跑，當天的法人(約15~17點)與融資(約21點)資料還沒公布，
+    訓練與預測都用「前一個交易日」才一致，避免偷看未來。
+    """
+    idx = _bisect.bisect_left(dates, cur_date) - 1
+    if idx < 0:
+        return None
     try:
-        url = (f"https://www.twse.com.tw/fund/T86"
-               f"?response=json&date={datetime.today().strftime('%Y%m%d')}"
-               f"&selectType=ALLBUT0999")
-        r = SESSION.get(url, timeout=10)
-        data = r.json()
-        if data.get("stat") != "OK" or not data.get("data"):
-            return []
-        for row in data["data"]:
-            if row[0] != code: continue
-            foreign_net = safe_float(str(row[4]).replace(",",""))  # 外資買賣超（千股）
-            trust_net   = safe_float(str(row[10]).replace(",","")) # 投信買賣超（千股）
-            result.append({
-                "foreign_net": round(foreign_net / 1000),   # 換算張
-                "trust_net":   round(trust_net   / 1000),
-            })
-            break
-    except: pass
-    return result
+        gap = (datetime.strptime(cur_date, "%Y-%m-%d") -
+               datetime.strptime(dates[idx], "%Y-%m-%d")).days
+        if gap > max_stale_days:
+            return None
+    except Exception:
+        pass
+    return idx
+
 
 def fetch_market_index(months=24):
-    """抓取加權指數歷史（用於計算相對強弱）"""
+    """加權指數（相對強弱用）：優先 FinMind，失敗用 TWSE"""
+    start = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=months * 31)).strftime("%Y-%m-%d")
+    rows = finmind_get("TaiwanStockTotalReturnIndex", "TAIEX", start)
+    records = []
+    if rows:
+        for r in rows:
+            p = safe_float(r.get("price"))
+            if p > 0:
+                records.append({"date": r.get("date", "")[:10], "close": p})
+    if len(records) >= 60:
+        return sorted(records, key=lambda x: x["date"])
     records = []
     today = datetime.today()
     for i in range(months, -1, -1):
@@ -205,65 +355,50 @@ def fetch_market_index(months=24):
         try:
             url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
                    f"?response=json&date={ym}&stockNo=Y9999")
-            r = SESSION.get(url, timeout=10)
-            data = r.json()
-            if data.get("stat") != "OK" or not data.get("data"): continue
+            data = SESSION.get(url, timeout=10).json()
+            if data.get("stat") != "OK" or not data.get("data"):
+                continue
             for row in data["data"]:
                 parts = row[0].split("/")
-                if len(parts) != 3: continue
+                if len(parts) != 3:
+                    continue
                 try:
-                    dt = datetime(int(parts[0])+1911, int(parts[1]), int(parts[2]))
-                except: continue
+                    dt = datetime(int(parts[0]) + 1911, int(parts[1]), int(parts[2]))
+                except Exception:
+                    continue
                 c = safe_float(row[6])
                 if c > 0:
                     records.append({"date": dt.strftime("%Y-%m-%d"), "close": c})
-        except: pass
+        except Exception:
+            pass
     return sorted(records, key=lambda x: x["date"])
 
-# 全域快取大盤資料（避免每支股票都重抓）
+
 _market_cache = None
+_market_index = {}   # id(market_records) → (dates, closes)，避免每個樣本都重新排序
 
 def get_market_data():
     global _market_cache
     if _market_cache is None:
-        print("   抓取大盤指數資料...")
+        print("   抓取大盤加權指數...")
         _market_cache = fetch_market_index(HISTORY_MONTHS)
         print(f"   大盤資料：{len(_market_cache)} 筆")
     return _market_cache
 
-# ══════════════════════════════════════════════════
-# ── 融資資料抓取（給模型當特徵）──────────────────
-def fetch_margin_data(code, records):
-    """抓最新融資，回傳 {usage_pct, margin_chg_5_pct}，失敗回 None"""
-    if not FINMIND_TOKEN:
-        return None
-    try:
-        end_d = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
-        start_d = (datetime.utcnow()+timedelta(hours=8) - timedelta(days=40)).strftime("%Y-%m-%d")
-        r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-            params={"dataset":"TaiwanStockMarginPurchaseShortSale","data_id":code,
-                    "start_date":start_d,"end_date":end_d},
-            headers={"Authorization":f"Bearer {FINMIND_TOKEN}"}, timeout=12)
-        if r.status_code != 200:
-            return None
-        rows = r.json().get("data", [])
-        if len(rows) < 5:
-            return None
-        rows.sort(key=lambda x: x.get("date",""))
-        bal   = int(str(rows[-1].get("MarginPurchaseTodayBalance",0)).replace(",","") or 0)
-        limit = int(str(rows[-1].get("MarginPurchaseLimit",0)).replace(",","") or 0)
-        bal5  = int(str(rows[-6].get("MarginPurchaseTodayBalance",0)).replace(",","") or 0) if len(rows)>=6 else bal
-        return {
-            "usage_pct":        round(bal/limit*100,1) if limit>0 else 0,
-            "margin_chg_5_pct": round((bal-bal5)/bal5*100,1) if bal5>0 else 0,
-        }
-    except Exception as e:
-        return None
 
+def _market_lookup(market_records):
+    key = id(market_records)
+    if key not in _market_index:
+        _market_index[key] = ([r["date"] for r in market_records],
+                              [r["close"] for r in market_records])
+    return _market_index[key]
+
+# ══════════════════════════════════════════════════
 # 特徵工程（28 個特徵）
 # ══════════════════════════════════════════════════
 
-def calc_features(records, market_records=None, inst_data=None, margin_data=None):
+def calc_features(records, market_records=None, inst_data=None, margin_data=None,
+                  inst_hist=None, margin_hist=None):
     """
     計算 28 個技術 + 籌碼 + 大盤相對強弱特徵
     """
@@ -358,42 +493,47 @@ def calc_features(records, market_records=None, inst_data=None, margin_data=None
     lo60 = min(lows[-60:])   if len(lows)  >= 60  else min(lows)
     price_pos = (c - lo60) / (hi60 - lo60 + 0.001)
 
-    # ── 大盤相對強弱（新增）──────────────────────
+    # ── 大盤相對強弱 ──────────────────────────────
     f_rel_strength = 0.0
     if market_records and len(market_records) >= 11:
-        # 找對應日期的大盤資料
-        stock_dates = {r["date"]: r["close"] for r in records}
-        mkt_dates   = {r["date"]: r["close"] for r in market_records}
-        today_date  = records[-1]["date"]
+        mdates, mcloses = _market_lookup(market_records)
+        mi = _bisect.bisect_right(mdates, records[-1]["date"]) - 1   # 當日（含）以前最近一筆
+        if mi >= 10 and mcloses[mi-10] > 0:
+            mkt_ret10 = (mcloses[mi]/mcloses[mi-10]-1)*100
+            f_rel_strength = ret10 - mkt_ret10
 
-        # 找到相近的大盤日期
-        mkt_sorted = sorted(mkt_dates.keys())
-        mkt_today  = None
-        for d in reversed(mkt_sorted):
-            if d <= today_date:
-                mkt_today = d
-                break
-
-        if mkt_today:
-            mkt_closes = [mkt_dates[d] for d in mkt_sorted if d <= mkt_today]
-            if len(mkt_closes) >= 11:
-                mkt_ret10 = (mkt_closes[-1]/mkt_closes[-11]-1)*100 if mkt_closes[-11] > 0 else 0
-                # 股票相對大盤的超額報酬
-                f_rel_strength = ret10 - mkt_ret10
-
-    # ── 籌碼特徵（新增）──────────────────────────
+    # ── 籌碼特徵（外資/投信，落後一日以免偷看未來）──
     f_foreign_net = 0.0
     f_trust_net   = 0.0
     f_inst_total  = 0.0
-    if inst_data:
+    cur_date = records[-1]["date"]
+    if inst_hist:
+        idates, idata = inst_hist
+        ii = _lagged_index(idates, cur_date)
+        if ii is not None:
+            fn, tn = idata[idates[ii]]
+            f_foreign_net = fn / max(avg5v, 1) * 100
+            f_trust_net   = tn / max(avg5v, 1) * 100
+            s5 = sum(sum(idata[idates[j]]) for j in range(max(0, ii-4), ii+1))
+            f_inst_total  = s5 / max(avg5v, 1) * 100 / 5       # 近5日法人平均買超強度
+    elif inst_data:
         f_foreign_net = inst_data.get("foreign_net", 0) / max(avg5v, 1) * 100
         f_trust_net   = inst_data.get("trust_net",   0) / max(avg5v, 1) * 100
         f_inst_total  = f_foreign_net + f_trust_net
 
-    # ── 融資特徵（新增）──────────────────────────
-    f_margin_usage = 0.0   # 融資使用率
-    f_margin_chg   = 0.0   # 近5日融資增減率
-    if margin_data:
+    # ── 融資特徵（使用率、近5日增減率；落後一日）──
+    f_margin_usage = 0.0
+    f_margin_chg   = 0.0
+    if margin_hist:
+        mdts, mdat = margin_hist
+        mi2 = _lagged_index(mdts, cur_date)
+        if mi2 is not None:
+            bal, lim = mdat[mdts[mi2]]
+            f_margin_usage = bal / lim * 100 if lim > 0 else 0
+            if mi2 >= 5:
+                bal5 = mdat[mdts[mi2-5]][0]
+                f_margin_chg = (bal - bal5) / bal5 * 100 if bal5 > 0 else 0
+    elif margin_data:
         f_margin_usage = margin_data.get("usage_pct", 0)
         f_margin_chg   = margin_data.get("margin_chg_5_pct", 0)
 
@@ -565,11 +705,13 @@ class RandomForest:
 # 訓練資料建立 & 分析
 # ══════════════════════════════════════════════════
 
-def build_training_data(records, market_records, predict_days, rise_threshold):
+def build_training_data(records, market_records, predict_days, rise_threshold,
+                        inst_hist=None, margin_hist=None):
     X, y = [], []
     closes = [r["close"] for r in records]
     for i in range(40, len(records) - predict_days):
-        feats = calc_features(records[:i+1], market_records)
+        feats = calc_features(records[:i+1], market_records,
+                              inst_hist=inst_hist, margin_hist=margin_hist)
         if feats is None: continue
         future  = closes[i + predict_days]
         current = closes[i]
@@ -578,79 +720,108 @@ def build_training_data(records, market_records, predict_days, rise_threshold):
         y.append(label)
     return X, y
 
-def analyze_stock(code, name, market_records):
-    records = fetch_history(code, HISTORY_MONTHS)
-    if len(records) < 80:
+
+def _append_today_bar(records, snap):
+    """
+    收盤後 FinMind 可能還沒更新今日 K 棒 → 用當日快照補上，讓預測用到「今天」。
+    快照若仍是昨天的資料（收盤價、漲跌都和最後一筆相同）就不補，避免重複。
+    """
+    if not snap or not records:
+        return records
+    today = _tw_today()
+    last = records[-1]
+    if last["date"] >= today or datetime.strptime(today, "%Y-%m-%d").weekday() >= 5:
+        return records
+    price, chg = snap.get("price", 0), snap.get("chg", 0)
+    if price <= 0 or (abs(price - last["close"]) < 1e-9 and abs(chg - (last.get("chg") or 0)) < 1e-9):
+        return records
+    return records + [{
+        "date": today, "open": snap.get("open") or price, "high": snap.get("high") or price,
+        "low": snap.get("low") or price, "close": price,
+        "vol": snap.get("vol", 0), "chg": chg,
+    }]
+
+
+def analyze_stock(code, name, market_records, snap=None):
+    raw = fetch_history(code, HISTORY_MONTHS)
+    raw = _append_today_bar(raw, snap)
+    if len(raw) < 80:
         return None
+    records = back_adjust(raw)   # 還原權值，保留漲跌停日
 
-    # 抓今日籌碼
-    inst_today = fetch_institutional(code)
-    inst_data  = inst_today[0] if inst_today else None
+    # 籌碼、融資：整段歷史各抓一次，訓練與預測用同一份（以前訓練時全是 0，模型學不到）
+    start = records[0]["date"]
+    inst_hist   = fetch_inst_history(code, start)
+    margin_hist = fetch_margin_history(code, start)
 
-    # 抓今日融資（使用率 + 近5日增減）
-    margin_data = fetch_margin_data(code, records)
-
-    X, y = build_training_data(records, market_records, PREDICT_DAYS, RISE_THRESHOLD)
+    X, y = build_training_data(records, market_records, PREDICT_DAYS, RISE_THRESHOLD,
+                               inst_hist, margin_hist)
     if len(X) < 50 or sum(y) < 8 or sum(1-v for v in y) < 8:
         return None
 
-    # 5 折交叉驗證（時間序列分割，避免未來資料洩漏）
+    # 時間序列 5 折驗證 + 「隔離帶」：
+    # 標籤看未來 PREDICT_DAYS 天，若訓練集緊貼驗證集，訓練標籤會用到驗證期股價 → 準確率灌水
     n    = len(X)
     fold = n // 5
-    accs, precs, recalls = [], [], []
-
+    gap  = PREDICT_DAYS
+    tot = {"n": 0, "correct": 0, "tp": 0, "fp": 0, "fn": 0, "pos": 0}
     for k in range(5):
         val_start = k * fold
-        val_end   = min((k+1)*fold, n)
-        # 只用 val_start 之前的資料訓練（時間序列嚴格切割）
-        if val_start < 30: continue
-        train_X = X[:val_start]
-        train_y = y[:val_start]
-        val_X   = X[val_start:val_end]
-        val_y   = y[val_start:val_end]
-
+        val_end   = min((k+1)*fold, n) if k < 4 else n
+        train_end = val_start - gap
+        if train_end < 30: continue
+        train_y = y[:train_end]
+        if sum(train_y) < 3 or sum(1-v for v in train_y) < 3: continue
         rf = RandomForest(n_trees=40, max_depth=6, n_features=10)
-        rf.fit(train_X, train_y)
-        probs = rf.predict_proba(val_X)
-        preds = [1 if p >= 0.5 else 0 for p in probs]
+        rf.fit(X[:train_end], train_y)
+        probs = rf.predict_proba(X[val_start:val_end])
+        val_y = y[val_start:val_end]
+        for p, t in zip(probs, val_y):
+            pred = 1 if p >= 0.5 else 0
+            tot["n"] += 1
+            tot["correct"] += (pred == t)
+            tot["pos"] += t
+            if pred == 1 and t == 1: tot["tp"] += 1
+            elif pred == 1 and t == 0: tot["fp"] += 1
+            elif pred == 0 and t == 1: tot["fn"] += 1
 
-        acc = sum(preds[i] == val_y[i] for i in range(len(val_y))) / len(val_y)
-        tp  = sum(1 for i in range(len(val_y)) if preds[i]==1 and val_y[i]==1)
-        fp  = sum(1 for i in range(len(val_y)) if preds[i]==1 and val_y[i]==0)
-        fn  = sum(1 for i in range(len(val_y)) if preds[i]==0 and val_y[i]==1)
-        prec   = tp/(tp+fp) if (tp+fp) > 0 else 0
-        recall = tp/(tp+fn) if (tp+fn) > 0 else 0
+    if tot["n"] == 0: return None
+    accuracy  = tot["correct"] / tot["n"]
+    support   = tot["tp"] + tot["fp"]                     # 驗證期「模型說會漲」的次數
+    precision = tot["tp"] / support if support else 0     # 說會漲時的實際勝率
+    recall_v  = tot["tp"] / (tot["tp"] + tot["fn"]) if (tot["tp"] + tot["fn"]) else 0
+    base_rate = tot["pos"] / tot["n"]                     # 不靠模型、隨便買的上漲機率
+    edge      = precision - base_rate                     # 模型帶來的勝率優勢
 
-        accs.append(acc)
-        precs.append(prec)
-        recalls.append(recall)
-
-    if not accs: return None
-    accuracy  = sum(accs)    / len(accs)
-    precision = sum(precs)   / len(precs)
-    recall_v  = sum(recalls) / len(recalls)
-
-    # 用全部資料訓練，預測當前
     rf_final = RandomForest(n_trees=60, max_depth=7, n_features=10)
     rf_final.fit(X, y)
-
-    cur_feat = calc_features(records, market_records, inst_data, margin_data)
+    cur_feat = calc_features(records, market_records, inst_hist=inst_hist, margin_hist=margin_hist)
     if cur_feat is None: return None
 
     rise_prob  = rf_final.predict_proba([cur_feat])[0]
     confidence = accuracy * abs(rise_prob - 0.5) * 2
+
+    # 顯示用：最新一筆已公布的法人買賣超（張）
+    inst_f = inst_t = 0
+    if inst_hist:
+        inst_f, inst_t = (round(v) for v in inst_hist[1][inst_hist[0][-1]])
 
     return {
         "rise_prob":     round(rise_prob  * 100, 1),
         "accuracy":      round(accuracy   * 100, 1),
         "precision":     round(precision  * 100, 1),
         "recall":        round(recall_v   * 100, 1),
+        "base_rate":     round(base_rate  * 100, 1),
+        "edge":          round(edge       * 100, 1),
+        "support":       support,
         "confidence":    round(confidence * 100, 1),
-        "current_price": records[-1]["close"],
-        "recent_chg":    round((records[-1]["close"]/records[-2]["close"]-1)*100, 2)
-                         if len(records) >= 2 else 0,
-        "inst_foreign":  inst_data.get("foreign_net", 0) if inst_data else 0,
-        "inst_trust":    inst_data.get("trust_net",   0) if inst_data else 0,
+        "current_price": raw[-1]["close"],
+        "recent_chg":    round((raw[-1]["close"]/raw[-2]["close"]-1)*100, 2)
+                         if len(raw) >= 2 and raw[-2]["close"] > 0 else 0,
+        "inst_foreign":  inst_f,
+        "inst_trust":    inst_t,
+        "has_inst":      bool(inst_hist),
+        "has_margin":    bool(margin_hist),
         "data_years":    round(len(records)/250, 1),
     }
 
@@ -678,7 +849,10 @@ def get_all_stocks():
             if pct   < FILTER["min_chg_pct"]: continue
             if pct   > FILTER["max_chg_pct"]: continue
             stocks.append({"code":code,"name":r.get("Name",""),
-                           "price":price,"chg":chg,"pct":pct,"vol":vol})
+                           "price":price,"chg":chg,"pct":pct,"vol":vol,
+                           "open":safe_float(r.get("OpeningPrice"),price),
+                           "high":safe_float(r.get("HighestPrice"),price),
+                           "low":safe_float(r.get("LowestPrice"),price)})
     except Exception as e:
         print(f"[清單/TWSE] 取得失敗: {e}")
 
@@ -700,7 +874,10 @@ def get_all_stocks():
                 if pct   < FILTER["min_chg_pct"]: continue
                 if pct   > FILTER["max_chg_pct"]: continue
                 stocks.append({"code":code,"name":r.get("CompanyName","") or r.get("name",""),
-                               "price":price,"chg":chg,"pct":pct,"vol":vol})
+                               "price":price,"chg":chg,"pct":pct,"vol":vol,
+                               "open":safe_float(r.get("Open"),price),
+                               "high":safe_float(r.get("High"),price),
+                               "low":safe_float(r.get("Low"),price)})
     except Exception as e:
         print(f"[清單/TPEX] 取得失敗: {e}")
 
@@ -756,11 +933,11 @@ def run():
     for i, s in enumerate(stocks):
         print(f"   [{i+1:3d}/{len(stocks)}] {s['code']} {s['name']:<8}", end=" ")
         try:
-            r = analyze_stock(s["code"], s["name"], market_data)
+            r = analyze_stock(s["code"], s["name"], market_data, s)
             if r and r["confidence"] > 5:
                 r.update(s)
                 results.append(r)
-                print(f"✅ 漲:{r['rise_prob']}% 準:{r['accuracy']}% 信:{r['confidence']}%")
+                print(f"✅ 漲:{r['rise_prob']}% 勝率:{r['precision']}%(基準{r['base_rate']}%) 優勢:{r['edge']:+}")
             else:
                 print("略過")
         except Exception as e:
@@ -773,7 +950,16 @@ def run():
 
     # 排序：綜合信心度 + 漲機率
     results.sort(key=lambda x: x["rise_prob"] * 0.6 + x["confidence"] * 0.4, reverse=True)
-    top = results[:TOP_N]
+    # 勝率門檻：只推薦「歷史上說會漲時，勝率確實高於隨便買」的股票
+    #   edge > 0：精確率 > 基準上漲率；support ≥ 5：驗證期至少喊漲過 5 次，數字才有意義
+    qualified = [r for r in results
+                 if r["rise_prob"] >= 50 and r.get("edge", 0) > 0 and r.get("support", 0) >= 5]
+    edge_filter = len(qualified) > 0
+    if not edge_filter:
+        print("\n   ⚠️ 沒有股票通過勝率優勢門檻，退回原本排序")
+    top = (qualified if edge_filter else results)[:TOP_N]
+    print(f"\n   通過勝率門檻 {len(qualified)}/{len(results)} 支；FinMind 呼叫 {_fm_state['calls']} 次"
+          f"{'（額度用盡，部分改用備援）' if _fm_state['disabled'] else ''}")
 
     # 統計摘要
     avg_acc = round(sum(r["accuracy"] for r in results) / len(results), 1)
@@ -785,7 +971,8 @@ def run():
     # 整理輸出資料
     output = {
         "time":           now_str,
-        "model_ver":      "v2.0",
+        "model_ver":      "v2",
+        "edge_filter":    edge_filter,
         "total_scanned":  len(stocks),
         "total_analyzed": len(results),
         "avg_accuracy":   avg_acc,
@@ -800,6 +987,9 @@ def run():
             "accuracy":    r["accuracy"],
             "precision":   r.get("precision", 0),
             "recall":      r.get("recall", 0),
+            "base_rate":   r.get("base_rate", 0),
+            "edge":        r.get("edge", 0),
+            "support":     r.get("support", 0),
             "price":       r["price"],
             "chg_pct":     r.get("pct", 0),
             "vol":         r.get("vol", 0),

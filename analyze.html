@@ -216,8 +216,8 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
       <button class="run-btn" id="runBtn" onclick="startAnalysis()">🤖 開始 AI 分析</button>
     </div>
     <div class="note">
-      <strong>v2.0 強化版：</strong>45 個特徵｜2 年訓練資料｜<span style="color:var(--red)">🔥 月營收年增率</span>｜<span style="color:var(--gold)">🚀 突破前高偵測</span>｜<span style="color:var(--blu)">💎 法人連續買超</span>｜<span style="color:var(--grn)">💰 EPS 季報年增</span>｜<span style="color:var(--pur)">🏆 產業輪動</span>｜時間序列驗證｜預期準確率 75~80%<br>
-      <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標｜預期準確率 55~62%<br>
+      <strong>v2.0 強化版：</strong>45 個特徵｜2 年訓練資料｜<span style="color:var(--red)">🔥 月營收年增率</span>｜<span style="color:var(--gold)">🚀 突破前高偵測</span>｜<span style="color:var(--blu)">💎 法人連續買超</span>｜<span style="color:var(--grn)">💰 EPS 季報年增</span>｜<span style="color:var(--pur)">🏆 產業輪動</span>｜時間序列驗證｜實際勝率請看「回測」頁的實戰績效<br>
+      <strong>v1.0 基礎版：</strong>16 個特徵｜8 個月訓練資料｜純技術指標<br>
       <div id="v3note" style="display:none;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:8px 12px;margin-top:8px;">
         <strong style="color:var(--gold)">🏰 v3.0 護城河選股：</strong>低基期 + 月營收年增≥10% + EPS改善（允許轉型初期低EPS）+ 毛利率≥15%且趨勢向上 + 法人淨買超 + 類股動能加分<br>
         <span style="color:var(--dim);font-size:.72rem;">適合找「還沒被市場發現的成長股」，類似 3167 飆漲前的型態・約 30~60 分鐘</span>
@@ -281,7 +281,7 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
     <div>
       <div style="font-size:.88rem;font-weight:700;color:var(--pur);">📅 每日自動分析結果（v2.0）</div>
-      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">由伺服器每天 22:00 自動執行・全上市櫃掃描・結果永久儲存不消失</div>
+      <div style="font-size:.74rem;color:var(--dim);margin-top:3px;">每個交易日收盤後自動執行・上市櫃量能前 250 支・結果永久保存</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="run-btn" style="padding:8px 18px;font-size:.82rem;background:linear-gradient(135deg,#6b21a8,#a855f7);" onclick="loadLatestResult()">📂 最新結果</button>
@@ -586,7 +586,7 @@ async function checkAutoResultStatus() {
     const data = await r.json();
     if (data.error) {
       iconEl.textContent = '⚠️';
-      textEl.textContent = '尚無分析結果，請點「開始 AI 分析」或等待 22:00 自動執行';
+      textEl.textContent = '尚無分析結果，請點「開始 AI 分析」或等待收盤後自動執行';
       textEl.style.color = 'var(--gold)';
     } else {
       const stk = (data.stocks||[]).length;
@@ -1289,7 +1289,8 @@ async function deleteHistoryRecord(date, btn) {
 
 function renderResults(data) {
   const stocks = data.stocks || [];
-  const ver    = data.model_ver || 'v2';   // 預設 v2（系統實際預設模型），避免誤標成 v1
+  // 每日排程存的是 "v2.0"，統一成 "v2"（舊版直接比對 'v2' 會誤標成 v1.0 基礎版）
+  const ver    = String(data.model_ver || 'v2').replace(/\.0$/, '');
   const isV3   = (ver === 'v3');
   window._lastCustomResult = data;
   window._lastRenderData   = data;  // 供彈出面板的 AI 評估頁籤使用
@@ -1481,8 +1482,12 @@ function renderResults(data) {
         </div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
           <span class="card-chg ${chgCls}">${chgTxt}</span>
+          ${s.base_rate !== undefined ? `
+          <span class="acc-badge" title="驗證期模型喊漲時，15日內真的漲≥3%的比例">歷史勝率 ${prec}%</span>
+          <span class="acc-badge" title="不靠模型隨便買的上漲比例；勝率要高於它才有意義" style="background:rgba(255,255,255,.05);color:var(--dim);">基準 ${s.base_rate}%</span>
+          <span class="acc-badge" style="background:${s.edge>0?'rgba(39,217,129,.12)':'rgba(255,77,94,.12)'};color:${s.edge>0?'var(--grn)':'var(--red)'};border-color:transparent;">優勢 ${s.edge>0?'+':''}${s.edge}%</span>` : `
           <span class="acc-badge">準確率 ${acc}%</span>
-          ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
+          ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}`}
         </div>
       </div>
 

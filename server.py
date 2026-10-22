@@ -5073,16 +5073,26 @@ def stock_analysis(code):
         hist_win_rate = round(win_count / total_count * 100, 1) if total_count > 0 else 50.0
 
         # ── 近250日 K線資料（前端繪圖用，支援1年視角）──
+        # 先算完整移動平均陣列（舊寫法用負索引切片，會把整段歷史加總，造成 MA 爆到幾百）
+        def _rolling_ma(arr, n):
+            out, s = [], 0.0
+            for idx, v in enumerate(arr):
+                s += v
+                if idx >= n: s -= arr[idx-n]
+                out.append(round(s / min(idx+1, n), 2))
+            return out
+        _ma5_all, _ma20_all = _rolling_ma(closes, 5), _rolling_ma(closes, 20)
         recent_n = min(250, len(records))
+        base     = len(records) - recent_n
         candles  = [{
-            "date":  records[-recent_n+i]["date"],
-            "open":  records[-recent_n+i].get("open", closes[-recent_n+i]),
-            "high":  highs[-recent_n+i],
-            "low":   lows[-recent_n+i],
-            "close": closes[-recent_n+i],
-            "vol":   vols[-recent_n+i],
-            "ma5":   round(sum(closes[max(0,-recent_n+i-4):-recent_n+i+1])/min(5,i+1),2) if i>=0 else closes[-recent_n+i],
-            "ma20":  round(sum(closes[max(0,-recent_n+i-19):-recent_n+i+1])/min(20,i+1),2) if i>=0 else closes[-recent_n+i],
+            "date":  records[base+i]["date"],
+            "open":  records[base+i].get("open", closes[base+i]),
+            "high":  highs[base+i],
+            "low":   lows[base+i],
+            "close": closes[base+i],
+            "vol":   vols[base+i],
+            "ma5":   _ma5_all[base+i],
+            "ma20":  _ma20_all[base+i],
         } for i in range(recent_n)]
 
         # ── 融資分析（使用率 + 背離訊號）──
