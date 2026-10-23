@@ -179,12 +179,49 @@ tr:hover td{background:rgba(255,255,255,.015);}
   </div>
   <div id="perfCards" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div>
   <div id="perfProb" style="margin-top:14px;"></div>
+  <div id="perfModel" style="margin-top:14px;"></div>
   <div id="perfEmpty" style="display:none;font-size:.8rem;color:var(--dim);text-align:center;padding:14px;">
     尚無績效資料 — 需先累積數天 AI 推薦，並由排程跑 performance.py 後才會顯示
   </div>
 </div>
 
 <script>
+function renderModelCompare(s) {
+  const el = document.getElementById('perfModel');
+  const o = s.by_model.old || {}, n = s.by_model.new || {};
+  const D = s.model_days || 15;
+  const pct = v => (v === null || v === undefined) ? '—' : (v >= 0 ? '+' : '') + v + '%';
+  const col = v => (v === null || v === undefined) ? 'var(--dim)' : (v >= 0 ? '#f0436d' : '#27d981');
+  const card = (title, st) => `
+    <div style="flex:1;min-width:140px;background:rgba(0,0,0,.22);border-radius:10px;padding:12px;">
+      <div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;">${title}</div>
+      ${st.n ? `
+      <div style="font-size:.66rem;color:var(--dim);">命中率（${D}日漲≥3%）</div>
+      <div style="font-size:1.2rem;font-weight:800;font-family:'JetBrains Mono',monospace;">${st.hit_rate}%</div>
+      <div style="font-size:.66rem;color:var(--dim);margin-top:6px;">平均超額報酬 vs 0050</div>
+      <div style="font-size:1rem;font-weight:700;color:${col(st.avg_excess)};font-family:'JetBrains Mono',monospace;">${pct(st.avg_excess)}</div>
+      <div style="font-size:.62rem;color:var(--dim);margin-top:6px;">贏過0050 ${st.beat_bench ?? '—'}% · 到期 ${st.n} 筆${st.pending ? ` · 待到期 ${st.pending}` : ''}</div>`
+      : `<div style="font-size:.78rem;color:var(--dim);line-height:1.6;">${st.total ? `已推薦 ${st.total} 筆，需持有滿 ${D} 個交易日才能評分` : '尚無推薦'}</div>`}
+    </div>`;
+
+  let verdict;
+  if (!n.n || n.n < 30) {
+    verdict = `⏳ 新模型樣本累積中（到期 ${n.n || 0} 筆，至少 30 筆才判斷）。每天 20 支推薦，約 ${D} 個交易日後開始有數字，再 1～2 週可初步比較。`;
+  } else if (n.avg_excess !== null && o.avg_excess !== null) {
+    const diff = Math.round((n.avg_excess - o.avg_excess) * 100) / 100;
+    verdict = diff > 0.5 ? `✅ 新模型目前較好：超額報酬多 ${diff}%、命中率 ${n.hit_rate}% vs ${o.hit_rate}%`
+            : diff < -0.5 ? `⚠️ 新模型目前較差：超額報酬少 ${Math.abs(diff)}%，需要再調整`
+            : `➖ 新舊模型差不多（超額報酬差 ${diff}%），再累積看看`;
+  } else {
+    verdict = '資料不足以比較';
+  }
+  el.innerHTML = `
+    <div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;">🆚 新舊模型實戰對比（持有${D}日，已扣除大盤漲跌）：</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">${card('舊模型（10/22 以前）', o)}${card('新模型（10/23 起）', n)}</div>
+    <div style="font-size:.72rem;margin-top:10px;line-height:1.6;">${verdict}</div>
+    ${s.incomplete ? '<div style="font-size:.62rem;color:#f0b429;margin-top:6px;">⚠️ 本次 FinMind 額度用盡，部分樣本未計入</div>' : ''}`;
+}
+
 (async function loadPerformance(){
   const meta = document.getElementById('perfMeta');
   const cards = document.getElementById('perfCards');
@@ -232,6 +269,9 @@ tr:hover td{background:rgba(255,255,255,.015);}
       ph += '<div style="font-size:.62rem;color:var(--dim);margin-top:8px;">↑ 若「高機率」組的報酬明顯高於「低機率」組，代表模型有預測力；若差不多甚至相反，代表機率分數需要重新校準。</div>';
       probEl.innerHTML = ph;
     }
+
+    // 新舊模型對比（10/23 起的新模型 vs 之前的舊模型）
+    if (s.by_model) renderModelCompare(s);
   } catch(e) {
     meta.textContent = '';
     cards.style.display = 'none';
