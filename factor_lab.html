@@ -26,6 +26,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',system-ui,
 .title{font-size:1.05rem;font-weight:800;margin-bottom:6px;}
 .sub{font-size:.78rem;color:var(--dim);line-height:1.6;margin-bottom:14px;}
 label{font-size:.75rem;color:var(--dim);display:block;margin-bottom:6px;}
+select:disabled{opacity:.55;}
 select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);border-radius:9px;color:var(--txt);font-size:.9rem;}
 .row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
 .row>div{flex:1;min-width:140px;}
@@ -63,26 +64,37 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
 <div class="card">
   <div class="title">🧪 因子預測力驗證</div>
   <div class="sub">
-    用你的歷史 AI 推薦資料，驗證某個因子（如毛利率）到底有沒有預測力，再決定要不要加進模型。<br>
-    做法：把推薦過的股票依因子值分「高/中/低」三組，比較各組推薦後的實際報酬，並做統計檢定。<br>
-    <strong style="color:var(--gold);">先驗證、有效再加</strong>，避免加入無效特徵造成模型過度擬合。
+    驗證某個因子或整套選股規則到底有沒有預測力，再決定要不要相信它、加進模型。<br>
+    因子值一律用「當天收盤拿得到的資料」（法人/融資用前一交易日、財報等公告後），不偷看未來。<br>
+    <strong style="color:var(--gold);">先驗證、有效再用</strong>：「籌碼左側」目前標示為觀察中，就是等這裡和實盤追蹤的結果。
   </div>
 
   <div class="row">
     <div>
       <label>選擇因子</label>
-      <select id="factor">
-        <option value="gross_margin">毛利率（季報）</option>
-        <option value="margin_usage">融資使用率</option>
-        <option value="foreign_net">外資近5日買超</option>
+      <select id="factor" onchange="onFactorChange()">
+        <optgroup label="左側交易">
+          <option value="left_chip" selected>籌碼左側（整套規則）</option>
+          <option value="bias20">MA20 乖離率</option>
+          <option value="rsi6">RSI(6)</option>
+          <option value="margin_chg10">融資10日變化</option>
+          <option value="inst_in_decline">跌勢中法人買超</option>
+        </optgroup>
+        <optgroup label="其他">
+          <option value="foreign_net">外資近5日買超</option>
+          <option value="margin_usage">融資使用率</option>
+          <option value="gross_margin">毛利率（季報）</option>
+        </optgroup>
       </select>
+      <div id="factorHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;"></div>
     </div>
     <div>
       <label>持有天數</label>
       <select id="hold">
         <option value="5">5 個交易日</option>
         <option value="10">10 個交易日</option>
-        <option value="20" selected>20 個交易日</option>
+        <option value="15">15 個交易日（AI 模型預測天數）</option>
+        <option value="20" selected>20 個交易日（左側時間停損）</option>
       </select>
     </div>
   </div>
@@ -91,11 +103,12 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
     <div>
       <label>驗證範圍</label>
       <select id="scope" onchange="onScopeChange()">
+        <option value="market" selected>全市場面板（80 支 × 約 2 年，樣本大）</option>
         <option value="portfolio">我的 AI 推薦股（對焦選股優化）</option>
-        <option value="market">全市場取樣（樣本大但較慢）</option>
       </select>
-      <div id="scopeHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;">
-        用你推薦過的股票驗證，直接回答「這因子能否優化我的選股」。
+      <div id="scopeHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;"></div>
+      <div id="timeWarn" style="display:none;font-size:.68rem;color:var(--gold);margin-top:6px;line-height:1.5;">
+        ⚠️ 現在是每日排程時段（約 14:30~17:30），排程正在用 FinMind 額度，驗證可能中途額度不足，建議晚點再跑。
       </div>
     </div>
   </div>
@@ -107,9 +120,7 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
         <option value="winrate">勝率對照（用因子篩選，勝率能否提高）</option>
         <option value="quantile">報酬對比（高/中/低三組報酬）</option>
       </select>
-      <div id="modeHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;">
-        依因子中位數分「符合/不符合」兩組，比較勝率——直接回答「用這因子篩選能否調高勝率」。
-      </div>
+      <div id="modeHint" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.5;"></div>
     </div>
   </div>
 
@@ -123,6 +134,7 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
 
 <div class="card" id="resultCard" style="display:none;">
   <div class="title" id="resultTitle"></div>
+  <div class="sub" id="resultNote" style="margin-bottom:0;"></div>
   <div class="grp">
     <div class="grp-card">
       <div class="grp-lbl">低組</div>
@@ -148,12 +160,36 @@ select{width:100%;padding:11px;background:var(--s3);border:1px solid var(--bd);b
 
 <script>
 const API = location.hostname==='localhost' ? 'http://localhost:5000' : '';
+const RULE_FACTORS = ['left_chip'];
+const FACTOR_HINT = {
+  left_chip: '近20日跌≥10%、融資10日減≥10%、法人10日買超且≥5天、仍在MA60下、日均量≥300張。比較「符合條件」與「不符合」之後的報酬。',
+  bias20: '收盤離 MA20 多遠（%）。負得越多＝跌得越超過。左側看法：低組應該較會反彈。',
+  rsi6: '6 日 RSI。低於 20 常被視為超賣。左側看法：低組應該較會反彈。',
+  margin_chg10: '融資餘額 10 日變化（%）。負＝散戶退場、籌碼沉澱。左側看法：低組較好。',
+  inst_in_decline: '只看近20日跌≥5%的股票：法人10日買超佔成交量比例（%）。左側看法：高組較好。',
+  foreign_net: '外資近5日買超（張，取前一交易日）。',
+  margin_usage: '融資使用率（%，取前一交易日）。',
+  gross_margin: '最近一季已公布的毛利率（%）。',
+};
+
+function isRule() { return RULE_FACTORS.includes(document.getElementById('factor').value); }
+
+function onFactorChange() {
+  const f = document.getElementById('factor').value;
+  document.getElementById('factorHint').textContent = FACTOR_HINT[f] || '';
+  const mode = document.getElementById('mode');
+  if (isRule()) { mode.value = 'winrate'; mode.disabled = true; }
+  else mode.disabled = false;
+  onModeChange();
+}
 
 function onModeChange() {
   const mode = document.getElementById('mode').value;
   const hint = document.getElementById('modeHint');
-  if (mode === 'winrate') {
-    hint.textContent = '依因子中位數分「符合/不符合」兩組，比較勝率——直接回答「用這因子篩選能否調高勝率」。';
+  if (isRule()) {
+    hint.textContent = '整套規則只有「符合／不符合」兩種，固定用勝率對照。';
+  } else if (mode === 'winrate') {
+    hint.textContent = '依因子中位數分「高於／低於」兩組，比較勝率——回答「用這因子篩選能否調高勝率」。';
   } else {
     hint.textContent = '把股票依因子值分高/中/低三組，比較報酬——回答「因子本身有沒有預測力」。';
   }
@@ -163,17 +199,24 @@ function onScopeChange() {
   const scope = document.getElementById('scope').value;
   const hint = document.getElementById('scopeHint');
   if (scope === 'market') {
-    hint.innerHTML = '用全市場隨機取樣60支驗證（為避免資料源限流已降量並加延遲），約需 <strong style="color:var(--gold);">2-4 分鐘</strong>，請耐心等候不要關頁面。';
+    hint.innerHTML = '全市場隨機 80 支（同一天固定同一批）× 約 2 年，每檔每隔「持有天數」取一個不重疊的決策點；報酬扣掉同期所有樣本的平均（去掉大盤漲跌），已排除日均量 &lt; 300 張的冷門股。<br>首次約需 <strong style="color:var(--gold);">3-6 分鐘</strong>（每支要抓 1~3 種資料），同一天再跑其他因子會快很多。';
   } else {
-    hint.textContent = '用你推薦過的股票驗證，直接回答「這因子能否優化我的選股」。';
+    hint.textContent = '用你推薦過的股票（推薦日收盤進場）驗證，直接回答「這因子能否幫我的推薦再篩一次」。報酬為原始報酬。';
   }
+}
+
+function checkTimeWarn() {
+  const tw = new Date(Date.now() + (new Date().getTimezoneOffset() + 480) * 60000);
+  const m = tw.getHours() * 60 + tw.getMinutes(), wd = tw.getDay();
+  document.getElementById('timeWarn').style.display =
+    (wd >= 1 && wd <= 5 && m >= 14*60+30 && m <= 17*60+30) ? 'block' : 'none';
 }
 
 async function startValidation() {
   const factor = document.getElementById('factor').value;
   const hold   = document.getElementById('hold').value;
   const scope  = document.getElementById('scope').value;
-  const mode   = document.getElementById('mode').value;
+  const mode   = isRule() ? 'winrate' : document.getElementById('mode').value;
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.textContent = '⏳ 驗證中...';
   document.getElementById('progWrap').style.display = 'block';
@@ -198,6 +241,7 @@ async function pollProgress(taskId) {
   try {
     const r = await fetch(`${API}/api/factor/progress/${taskId}`);
     const d = await r.json();
+    if (r.status === 404) { setProg(0, '❌ 任務不見了（伺服器可能重啟），請重新驗證'); resetBtn(); return; }
     setProg(d.pct || 0, d.msg || '處理中...');
     if (d.done) {
       resetBtn();
@@ -219,90 +263,119 @@ function resetBtn() {
   const btn = document.getElementById('runBtn');
   btn.disabled = false; btn.textContent = '🔬 開始驗證';
 }
+const sg = v => (v >= 0 ? '+' : '') + v;
+
+function headerFor(res, extra) {
+  const scopeLabel = res.scope === 'market' ? '全市場面板' : '我的推薦';
+  document.getElementById('resultTitle').textContent =
+    `${res.factor_name}${extra||''} — 持有 ${res.hold} 日 · ${scopeLabel}（樣本 ${res.n} 筆）`;
+  const notes = [];
+  if (res.demeaned) notes.push('報酬為「超額報酬」＝該股報酬 − 同一天所有樣本的平均報酬；勝率＝跑贏同期平均的比例。');
+  if (res.stocks_used != null) notes.push(`實際用到 ${res.stocks_used}/${res.stocks_planned} 支股票。`);
+  if (res.quota_hit) notes.push('<span style="color:var(--gold);">⚠️ 途中 FinMind 額度用完，只用已抓到的部分計算，結論參考就好。</span>');
+  document.getElementById('resultNote').innerHTML = notes.join('<br>');
+}
 
 function renderWinrate(res) {
   const card = document.getElementById('resultCard');
   card.style.display = 'block';
   document.getElementById('progWrap').style.display = 'none';
-  const scopeLabel = res.scope === 'market' ? '全市場' : '我的推薦';
-  document.getElementById('resultTitle').textContent =
-    `${res.factor_name} 勝率對照 — 持有 ${res.hold} 日 · ${scopeLabel}（樣本 ${res.n} 筆）`;
-
-  // 用兩組卡片顯示（符合 vs 不符合）+ 整體基準
+  headerFor(res, ' 勝率對照');
+  const passLbl = res.is_rule ? '✅ 符合策略條件' : `✅ 高於中位數（≥${res.median}）`;
+  const failLbl = res.is_rule ? '❌ 不符合' : `❌ 低於中位數`;
+  const rawNote = g => res.demeaned ? `<br>原始報酬 ${sg(res[g+'_raw'])}%` : '';
   const grpDiv = document.querySelector('.grp');
-  const passCol = res.pass_win >= res.all_win ? 'var(--grn)' : 'var(--red)';
+  grpDiv.style.display = 'flex';
   grpDiv.innerHTML = `
     <div class="grp-card" style="border-color:rgba(27,196,125,.4);">
-      <div class="grp-lbl">✅ 符合因子（高於中位數）</div>
-      <div class="grp-ret" style="color:var(--grn);">${res.pass_win}%</div>
-      <div class="grp-meta">勝率 · 平均報酬${res.pass_avg>=0?'+':''}${res.pass_avg}% · n=${res.pass_n}</div>
+      <div class="grp-lbl">${passLbl}</div>
+      <div class="grp-ret" style="color:${res.pass_win>=res.fail_win?'var(--grn)':'var(--red)'};">${res.pass_win}%</div>
+      <div class="grp-meta">勝率 · 平均${res.demeaned?'超額':''}報酬 ${sg(res.pass_avg)}% · n=${res.pass_n}${rawNote('pass')}</div>
     </div>
     <div class="grp-card" style="border-color:rgba(255,77,94,.4);">
-      <div class="grp-lbl">❌ 不符合（低於中位數）</div>
-      <div class="grp-ret" style="color:var(--red);">${res.fail_win}%</div>
-      <div class="grp-meta">勝率 · 平均報酬${res.fail_avg>=0?'+':''}${res.fail_avg}% · n=${res.fail_n}</div>
+      <div class="grp-lbl">${failLbl}</div>
+      <div class="grp-ret">${res.fail_win}%</div>
+      <div class="grp-meta">勝率 · 平均${res.demeaned?'超額':''}報酬 ${sg(res.fail_avg)}% · n=${res.fail_n}${rawNote('fail')}</div>
     </div>`;
 
   document.getElementById('statLine').innerHTML =
-    `整體勝率 ${res.all_win}% → 用因子篩選後 <strong style="color:${res.win_lift>=0?'var(--grn)':'var(--red)'}">${res.pass_win}%</strong>（${res.win_lift>=0?'+':''}${res.win_lift}%）　|　t值 ${res.t}　|　${Math.abs(res.t)>1.96?'顯著 ✓':'不顯著 ✗'}`;
+    `整體勝率 ${res.all_win}% → ${res.is_rule?'符合條件':'篩選後'} <strong style="color:${res.win_lift>=0?'var(--grn)':'var(--red)'}">${res.pass_win}%</strong>（${sg(res.win_lift)}%）　|　t值 ${res.t}　|　${Math.abs(res.t)>1.96?'顯著 ✓':'不顯著 ✗'}`;
 
   const v = document.getElementById('verdict');
+  const what = res.is_rule ? `符合「${res.factor_name}」條件` : `「${res.factor_name}高於中位數」`;
   if (res.verdict === 'improve') {
     v.className = 'verdict v-add';
-    v.innerHTML = `✅ <strong>能提高勝率</strong><br>用「${res.factor_name}高於中位數」當篩選條件，勝率從整體 ${res.all_win}% 提升到 ${res.pass_win}%（+${res.win_lift}%），且統計顯著。<br>建議把此因子當作額外篩選條件加進選股。`;
+    v.innerHTML = `✅ <strong>有效</strong><br>${what}的股票，持有 ${res.hold} 日勝率 ${res.pass_win}%，比整體 ${res.all_win}% 高 ${res.win_lift}%，且統計顯著。` +
+      (res.is_rule ? `<br>可以開始參考 AI 分析頁的左側名單，但仍建議看實盤追蹤（回測頁）累積到 30 筆以上再加碼使用。` : `<br>可考慮當作額外篩選條件。`);
   } else if (res.verdict === 'worsen') {
     v.className = 'verdict v-reverse';
-    v.innerHTML = `⚠️ <strong>反而降低勝率</strong><br>高${res.factor_name}組勝率反而較低。可考慮「反向」使用（篩低因子值的股票），或此因子不適合當篩選條件。`;
+    v.innerHTML = `⚠️ <strong>反而較差</strong><br>${what}的股票表現比不符合的還差（統計顯著）。` +
+      (res.is_rule ? '這代表目前「跌深＋籌碼」的條件在這段期間抓到的多半還沒跌完，左側名單請先不要照做。' : '可考慮反向使用，或不要用這因子篩選。');
   } else {
     v.className = 'verdict v-skip';
-    v.innerHTML = `❌ <strong>對勝率沒明顯幫助</strong><br>符合與不符合兩組勝率差異不顯著（${res.pass_win}% vs ${res.fail_win}%）。用這因子篩選無法有效提高勝率。<br><span style="color:var(--dim);font-size:.72rem;">可能原因：樣本不足、或此因子與勝率無關。</span>`;
+    v.innerHTML = `❌ <strong>沒有明顯差別</strong><br>兩組差異不顯著（${res.pass_win}% vs ${res.fail_win}%）。` +
+      (res.is_rule ? '目前證據不足以說明這套左側條件有優勢，名單繼續標「觀察中」。' : '用這因子篩選無法有效提高勝率。') +
+      `<br><span style="color:var(--dim);font-size:.72rem;">可換不同持有天數、或過一陣子樣本變多再驗證。</span>`;
   }
 }
+
+const QUANT_HTML = `
+    <div class="grp-card"><div class="grp-lbl">低組</div><div class="grp-ret" id="gLowRet"></div><div class="grp-meta" id="gLowMeta"></div></div>
+    <div class="grp-card"><div class="grp-lbl">中組</div><div class="grp-ret" id="gMidRet"></div><div class="grp-meta" id="gMidMeta"></div></div>
+    <div class="grp-card"><div class="grp-lbl">高組</div><div class="grp-ret" id="gHighRet"></div><div class="grp-meta" id="gHighMeta"></div></div>`;
 
 function renderResult(res) {
   if (res.enough && res.mode === 'winrate') { renderWinrate(res); return; }
   const card = document.getElementById('resultCard');
   card.style.display = 'block';
   document.getElementById('progWrap').style.display = 'none';
+  const grpDiv = document.querySelector('.grp');
 
   if (!res.enough) {
     document.getElementById('resultTitle').textContent = '樣本不足';
-    document.querySelector('.grp').style.display = 'none';
+    document.getElementById('resultNote').innerHTML = '';
+    grpDiv.style.display = 'none';
     document.getElementById('statLine').textContent = '';
     const v = document.getElementById('verdict');
     v.className = 'verdict v-skip';
-    v.innerHTML = `⚠️ 有效樣本只有 ${res.n} 筆（需至少 20 筆）<br>結論不可靠，請累積更多每日推薦資料後再驗證。`;
+    if (res.is_rule && res.n >= 20) {
+      v.innerHTML = `⚠️ 共 ${res.n} 個決策點，但符合「${res.factor_name}」條件的只有 ${res.pass_n||0} 筆（需至少 15 筆）。<br>條件很嚴格、這段期間觸發次數太少，結論不可靠。可改用「全市場面板」或換持有天數再試。`;
+    } else {
+      v.innerHTML = `⚠️ 有效樣本只有 ${res.n} 筆（需至少 20 筆）<br>結論不可靠，請改用全市場面板，或累積更多每日推薦資料後再驗證。`;
+    }
     return;
   }
 
-  document.querySelector('.grp').style.display = 'flex';
-  const scopeLabel = res.scope === 'market' ? '全市場' : '我的推薦';
-  document.getElementById('resultTitle').textContent =
-    `${res.factor_name} — 持有 ${res.hold} 日 · ${scopeLabel}（樣本 ${res.n} 筆）`;
+  grpDiv.style.display = 'flex';
+  grpDiv.innerHTML = QUANT_HTML;
+  headerFor(res, '');
 
   const fill = (pre, g) => {
     const col = g.avg >= 0 ? 'var(--red)' : 'var(--grn)';
-    document.getElementById(pre+'Ret').textContent = (g.avg>=0?'+':'') + g.avg + '%';
+    document.getElementById(pre+'Ret').textContent = sg(g.avg) + '%';
     document.getElementById(pre+'Ret').style.color = col;
-    document.getElementById(pre+'Meta').innerHTML = `${g.lo}~${g.hi}<br>勝率${g.win}% · n=${g.n}`;
+    document.getElementById(pre+'Meta').innerHTML = `${g.lo}~${g.hi}<br>勝率${g.win}% · n=${g.n}` + (res.demeaned ? `<br>原始 ${sg(g.raw)}%` : '');
   };
   fill('gLow', res.low); fill('gMid', res.mid); fill('gHigh', res.high);
 
   document.getElementById('statLine').textContent =
-    `高組 vs 低組報酬差異 ${res.diff>=0?'+':''}${res.diff}%   |   t值 ${res.t}   |   ${Math.abs(res.t)>1.96?'統計顯著 ✓':'不顯著 ✗'}`;
+    `高組 vs 低組${res.demeaned?'超額':''}報酬差異 ${sg(res.diff)}%   |   t值 ${res.t}   |   ${Math.abs(res.t)>1.96?'統計顯著 ✓':'不顯著 ✗'}`;
 
   const v = document.getElementById('verdict');
   if (res.verdict === 'add') {
     v.className = 'verdict v-add';
-    v.innerHTML = `✅ <strong>建議加入</strong><br>高${res.factor_name}組報酬顯著高於低組（統計顯著），此因子具預測力，加進模型有意義。`;
+    v.innerHTML = `✅ <strong>高組較好</strong><br>${res.factor_name}越高，之後報酬越好（統計顯著），此因子有預測力。`;
   } else if (res.verdict === 'reverse') {
     v.className = 'verdict v-reverse';
-    v.innerHTML = `⚠️ <strong>反向訊號</strong><br>低${res.factor_name}組報酬反而較高（統計顯著）。可考慮反向使用，或此因子在你的推薦池中呈反向關係。`;
+    v.innerHTML = `⚠️ <strong>低組較好（反向）</strong><br>${res.factor_name}越低，之後報酬反而越好（統計顯著）。` +
+      (['bias20','rsi6','margin_chg10'].includes(res.factor) ? '這正是左側交易的看法（跌越深／散戶退越多越會反彈）。' : '可考慮反向使用。');
   } else {
     v.className = 'verdict v-skip';
-    v.innerHTML = `❌ <strong>不建議加入</strong><br>高低組報酬差異不顯著，${res.factor_name}在目前樣本中沒有明顯預測力，加入恐增加雜訊。<br><span style="color:var(--dim);font-size:.72rem;">可能原因：樣本太少、或推薦池已偏向特定族群。</span>`;
+    v.innerHTML = `❌ <strong>沒有明顯預測力</strong><br>高低組報酬差異不顯著，${res.factor_name}在這批樣本中看不出效果，加入恐增加雜訊。`;
   }
 }
+
+onFactorChange(); onScopeChange(); checkTimeWarn();
 </script>
 </body>
 </html>

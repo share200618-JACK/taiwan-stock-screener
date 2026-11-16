@@ -94,6 +94,12 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
 .card.bull::before{background:linear-gradient(90deg,var(--red),#ff8c69);}
 .card.bear::before{background:linear-gradient(90deg,var(--grn),#5eead4);}
 .card.neutral::before{background:linear-gradient(90deg,var(--dim),#8899bb);}
+.card.left::before{background:linear-gradient(90deg,var(--blu),#7cc4ff);}
+.obs-badge{display:inline-block;font-size:.62rem;font-weight:700;padding:1px 7px;border-radius:10px;vertical-align:middle;
+  background:rgba(240,180,41,.12);color:var(--gold);border:1px solid rgba(240,180,41,.35);font-family:'Noto Sans TC',sans-serif;}
+.lcell{background:rgba(255,255,255,.04);border-radius:6px;padding:6px 8px;}
+.lcell-l{color:var(--dim);margin-bottom:2px;}
+.lcell-v{font-weight:700;font-family:'JetBrains Mono',monospace;}
 
 .card-rank{position:absolute;top:14px;right:14px;font-family:'JetBrains Mono',monospace;font-size:.72rem;color:var(--dim);}
 .card-code{font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--dim);margin-bottom:2px;}
@@ -293,6 +299,18 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
     <span id="autoStatusIcon">⏳</span>
     <span id="autoStatusText">檢查中...</span>
   </div>
+</div>
+
+<!-- 籌碼左側名單（每日排程產生，觀察中） -->
+<div id="leftPanel" style="background:var(--s1);border:1px solid rgba(61,139,255,.3);border-radius:12px;padding:16px 18px;margin-bottom:18px;">
+  <div style="font-size:.88rem;font-weight:700;color:var(--blu);">🪃 籌碼左側名單 <span class="obs-badge">觀察中</span></div>
+  <div style="font-size:.74rem;color:var(--dim);margin-top:3px;line-height:1.6;">
+    近20日跌 ≥10%・融資10日減 ≥10%（散戶退場）・法人10日買超且 ≥5 天（承接）・仍在季線下。
+    屬於逆勢接刀，<strong style="color:var(--gold);">尚未經實盤驗證</strong>，建議先追蹤或小量；成效看
+    <a href="/factor-lab" style="color:var(--pur);">因子實驗室</a>與<a href="/backtest" style="color:var(--pur);">回測頁</a>。
+  </div>
+  <div id="leftStatus" style="margin-top:10px;font-size:.76rem;color:var(--dim);">載入中…</div>
+  <div class="cards" id="leftGrid" style="margin-top:12px;display:none;"></div>
 </div>
 
 <!-- 歷史紀錄面板 -->
@@ -693,7 +711,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // 先執行頁面功能，背景驗證登入
   checkAutoResultStatus();
   updateCustomHistoryCount();
-  loadWatchingCodes();
+  loadWatchingCodes().then(loadLeftSide);
 
   // 已移除登入，固定顯示 Jack
   const avatar = document.getElementById('userAvatar');
@@ -1176,7 +1194,7 @@ function isWatching(code) {
   return _watchingCodes.has(code);
 }
 
-async function toggleWatch(code, name, price, sector, btn) {
+async function toggleWatch(code, name, price, sector, btn, note) {
   if (btn) { btn.disabled = true; btn.textContent = '...'; }
   try {
     if (isWatching(code)) {
@@ -1201,6 +1219,7 @@ async function toggleWatch(code, name, price, sector, btn) {
           add_price:  price,
           add_time:   new Date().toLocaleString('zh-TW', {hour12:false}),
           sector:     sector || '',
+          note:       note || 'AI推薦',   // 交易日誌依備註判斷來源（AI推薦 / 左側）
           user_token: 'default',
         })
       });
@@ -1222,6 +1241,73 @@ async function toggleWatch(code, name, price, sector, btn) {
       el.style.color = watching ? 'var(--pur)' : 'var(--grn)';
     });
   }
+}
+
+// ══════════════════════════════════════════════════════
+// 籌碼左側名單
+// ══════════════════════════════════════════════════════
+const _esc = v => String(v ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
+const _sg  = v => v == null ? '—' : (v >= 0 ? '+' : '') + v;
+
+async function loadLeftSide() {
+  const st = document.getElementById('leftStatus'), grid = document.getElementById('leftGrid');
+  try {
+    const r = await fetch(`${API}/api/left/latest`);
+    const d = await r.json();
+    if (d.missing_table) {
+      st.innerHTML = '⚠️ Supabase 還沒有 <code>left_side_results</code> 資料表，執行一次建表 SQL 後，下次排程就會出現名單。';
+      return;
+    }
+    if (!d.date) {
+      st.textContent = d.error ? `左側名單讀取失敗：${d.error}` : '尚無資料，每日排程（約 14:35 開始）跑完後會出現。';
+      return;
+    }
+    const stocks = d.stocks || [];
+    const head = `${d.date} ${d.time || ''}・檢查 ${d.total_scanned || 0} 支・只差一個條件 ${d.near_miss || 0} 支`;
+    if (!stocks.length) {
+      grid.style.display = 'none';
+      st.innerHTML = `${head}<br>今天沒有完全符合的股票（條件刻意嚴格，空手是常態）。`;
+      return;
+    }
+    st.innerHTML = `${head}・符合 <strong style="color:var(--blu);">${stocks.length}</strong> 支（依法人買超佔成交量排序）`;
+    grid.style.display = 'grid';
+    grid.innerHTML = stocks.map((s, i) => leftCard(s, i, d.exit || {})).join('');
+  } catch (e) {
+    st.textContent = `左側名單讀取失敗：${e.message}`;
+  }
+}
+
+function leftCard(s, i, ex) {
+  const days = s.time_stop_days || ex.time_stop_days || 20;
+  const up = (s.target && s.price) ? ((s.target / s.price - 1) * 100).toFixed(1) : null;
+  const note = `左側｜停損 ${s.stop}｜目標MA20 ${s.target}｜最長${days}日`;
+  const w = isWatching(s.code);
+  const cell = (l, v, c) => `<div class="lcell"><div class="lcell-l">${l}</div><div class="lcell-v" style="color:${c || 'var(--txt)'};">${v}</div></div>`;
+  return `<div class="card left" style="cursor:pointer;" onclick="openStockPanel('${_esc(s.code)}','${_esc(s.name)}',${s.price || 0},'')">
+    <div class="card-rank">#${i + 1}</div>
+    <div class="card-code">${s.code} <span class="obs-badge">觀察中</span></div>
+    <div class="card-name">${s.name}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px 0;font-size:.73rem;">
+      ${cell('近20日漲跌', _sg(s.ret20) + '%', 'var(--grn)')}
+      ${cell('融資10日變化', _sg(s.margin_chg10) + '%', 'var(--grn)')}
+      ${cell('法人10日買超', `${_sg(s.inst_sum10)} 張・${s.inst_days10}/10天`, 'var(--red)')}
+      ${cell('MA20乖離 / RSI6', `${_sg(s.bias20)}% / ${s.rsi6 ?? '—'}`)}
+    </div>
+    <div style="font-size:.72rem;color:var(--dim);line-height:1.75;">
+      🛑 停損 <b style="color:var(--grn);">${s.stop}</b>（−${ex.stop_pct || 8}%）<br>
+      🎯 回到 MA20 <b style="color:var(--red);">${s.target}</b>${up !== null ? `（${_sg(Number(up))}%）先出一半` : ''}<br>
+      ⏱ 持有滿 ${days} 個交易日沒反彈就出場
+    </div>
+    <div class="card-footer">
+      <div class="card-price">${s.price} 元</div>
+      <button data-watch-code="${_esc(s.code)}"
+        onclick="event.stopPropagation();toggleWatch('${_esc(s.code)}','${_esc(s.name)}',${s.price || 0},'',this,'${_esc(note)}')"
+        style="border:1px solid rgba(39,217,129,.3);border-radius:7px;padding:4px 12px;font-size:.74rem;cursor:pointer;
+               background:${w ? 'rgba(168,85,247,.2)' : 'rgba(39,217,129,.15)'};color:${w ? 'var(--pur)' : 'var(--grn)'};">
+        ${w ? '✓ 追蹤中' : '+ 追蹤'}
+      </button>
+    </div>
+  </div>`;
 }
 
 // ══════════════════════════════════════════════════════

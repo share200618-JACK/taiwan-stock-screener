@@ -11,11 +11,12 @@ on:
     paths:
       - 'run_screen.py'
       - 'auto_analysis.py'
+      - 'left_side.py'
 
 jobs:
   screen:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 300   # AI 分析＋左側選股補抓，FinMind 免費額度需較長時間
 
     steps:
       - name: Checkout
@@ -36,14 +37,8 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python auto_analysis.py
 
-      - name: 計算 AI 選股實戰績效
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
-        run: python performance.py
-
       - name: 持倉賣出提醒（Telegram）
+        if: ${{ !cancelled() }}   # 前一步失敗也照跑
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -51,3 +46,11 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python sell_alert.py
+
+      - name: 計算 AI／左側選股實戰績效（最後跑，不影響賣出提醒）
+        if: ${{ !cancelled() }}   # 前一步失敗也照跑
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python performance.py

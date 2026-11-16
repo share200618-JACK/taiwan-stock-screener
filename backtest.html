@@ -219,7 +219,42 @@ function renderModelCompare(s) {
     <div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;">🆚 新舊模型實戰對比（持有${D}日，已扣除大盤漲跌）：</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">${card('舊模型（10/22 以前）', o)}${card('新模型（10/23 起）', n)}</div>
     <div style="font-size:.72rem;margin-top:10px;line-height:1.6;">${verdict}</div>
+    ${renderLeftTrack(s.by_model.left, pct, col)}
     ${s.incomplete ? '<div style="font-size:.62rem;color:#f0b429;margin-top:6px;">⚠️ 本次 FinMind 額度用盡，部分樣本未計入</div>' : ''}`;
+}
+
+// 籌碼左側名單的實戰追蹤（持有 20 日＝時間停損；另算套用 −8% 停損）
+function renderLeftTrack(L, pct, col) {
+  if (!L || !(L.total || L.n)) return '';
+  const LD = L.days || 20;
+  const box = (lbl, val, c, sub) => `
+    <div style="flex:1;min-width:96px;background:rgba(0,0,0,.22);border-radius:10px;padding:10px;text-align:center;">
+      <div style="font-size:.64rem;color:var(--dim);margin-bottom:4px;">${lbl}</div>
+      <div style="font-size:1.05rem;font-weight:800;color:${c || 'var(--txt)'};font-family:'JetBrains Mono',monospace;">${val}</div>
+      ${sub ? `<div style="font-size:.6rem;color:var(--dim);margin-top:3px;">${sub}</div>` : ''}
+    </div>`;
+  let body, v;
+  if (!L.n) {
+    body = `<div style="font-size:.78rem;color:var(--dim);">已選出 ${L.total} 筆，需持有滿 ${LD} 個交易日才能評分。</div>`;
+    v = '';
+  } else {
+    body = `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+      ${box('勝率', L.win_rate + '%', L.win_rate >= 50 ? '#f0436d' : '#27d981')}
+      ${box('平均報酬', pct(L.avg_return), col(L.avg_return))}
+      ${box('超額 vs 0050', pct(L.avg_excess), col(L.avg_excess), `贏過0050 ${L.beat_bench ?? '—'}%`)}
+      ${box('照停損規則', pct(L.rule_avg), col(L.rule_avg), `觸發停損 ${L.stopped || 0} 筆`)}
+    </div>`;
+    if (L.n < 30) v = `⏳ 到期 ${L.n} 筆${L.pending ? `、待到期 ${L.pending} 筆` : ''}，至少 30 筆才判斷，名單維持「觀察中」。`;
+    else if (L.avg_excess !== null && L.avg_excess > 0.5 && L.beat_bench >= 50) v = `✅ 到期 ${L.n} 筆，平均跑贏 0050 ${pct(L.avg_excess)}，可考慮拿掉「觀察中」、小量照做。`;
+    else if (L.avg_excess !== null && L.avg_excess < -0.5) v = `⚠️ 到期 ${L.n} 筆，平均輸給 0050 ${pct(L.avg_excess)}，左側名單先不要照做。`;
+    else v = `➖ 到期 ${L.n} 筆，跟 0050 差不多，再累積看看。`;
+  }
+  return `
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06);">
+      <div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;">🪃 籌碼左側名單實戰（持有 ${LD} 日；「照停損規則」＝收盤跌破 −8% 當天出場）：</div>
+      ${body}
+      ${v ? `<div style="font-size:.72rem;margin-top:10px;line-height:1.6;">${v}</div>` : ''}
+    </div>`;
 }
 
 (async function loadPerformance(){
