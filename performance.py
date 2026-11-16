@@ -125,8 +125,44 @@ def load_left_recommendations():
 # ── 抓某股票一段期間的收盤價 ──────────────────────────
 import time as _time
 FINMIND_MIN_INTERVAL = float(os.environ.get("FINMIND_MIN_INTERVAL", "7"))
-_fm = {"last": 0.0, "calls": 0, "quota_out": False}
+_fm = {"last": 0.0, "calls": 0, "quota_out": False, "reused": 0}
 _price_cache = {}
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+# auto_analysis.py 同一個排程工作裡剛抓過的日K（今天的），能重用就不再向 FinMind 抓
+PRICE_CACHE_FILE = os.environ.get("PRICE_CACHE_FILE", os.path.join(_HERE, "price_cache.json"))
+# 已到期樣本的報酬不會再變，存起來（GitHub Actions cache 跨天保存），每天只算還沒到期的
+PERF_CACHE_FILE  = os.environ.get("PERF_CACHE_FILE", os.path.join(_HERE, "perf_cache.json"))
+_shared = {"prices": None}
+
+
+def _shared_prices():
+    if _shared["prices"] is None:
+        _shared["prices"] = {}
+        try:
+            with open(PRICE_CACHE_FILE, encoding="utf-8") as f:
+                j = json.load(f)
+            today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+            if j.get("date") == today:
+                _shared["prices"] = j.get("prices") or {}
+                log(f"讀到今日股價快取 {len(_shared['prices'])} 支（AI 分析時抓的）")
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log(f"⚠️ 股價快取讀取失敗: {e}")
+    return _shared["prices"]
+
+
+def _from_shared(code, start, end):
+    rows = _shared_prices().get(code)
+    if not rows or rows[0][0] > start:          # 快取沒涵蓋到起始日 → 照舊向 FinMind 抓
+        return None
+    out = []
+    for d, cl, sp in rows:
+        if start <= d <= end and cl and cl > 0:
+            ref = (cl - sp) if sp is not None else None
+            out.append((d, cl, ref if ref and ref > 0 else None))
+    return out
 
 def fetch_closes(code, start, end):
     """
@@ -137,6 +173,11 @@ def fetch_closes(code, start, end):
     key = (code, start, end)
     if key in _price_cache:
         return _price_cache[key]
+    shared = _from_shared(code, start, end)
+    if shared:
+        _fm["reused"] += 1
+        _price_cache[key] = shared
+        return shared
     if _fm["quota_out"] or not FINMIND_TOKEN:
         return []
     wait = FINMIND_MIN_INTERVAL - (_time.time() - _fm["last"])
@@ -193,6 +234,54 @@ def compute_forward_returns(code, rec_date, entry_price, closes_sorted, horizons
     return rets
 
 
+# ── 已到期樣本快取 ────────────────────────────────────
+def _skey(smp):
+    return f"{smp['model']}|{smp['date']}|{smp['code']}|{smp['entry']}"
+
+
+def _is_final(entry, model, horizons):
+    """報酬已經不會再變的樣本（所有持有天數都到期、也算出對 0050 的超額報酬）"""
+    rets = entry.get("returns") or {}
+    if "excess" not in entry:
+        return False
+    if model == "left":
+        return LEFT_DAYS in rets and "rule_ret" in entry
+    return all(h in rets for h in horizons)
+
+
+def load_perf_cache():
+    try:
+        with open(PERF_CACHE_FILE, encoding="utf-8") as f:
+            raw = json.load(f).get("samples", {})
+        out = {}
+        for k, v in raw.items():
+            v = dict(v)
+            v["returns"] = {int(h): r for h, r in (v.get("returns") or {}).items()}
+            out[k] = v
+        return out
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        log(f"⚠️ 績效快取讀取失敗（改成全部重算）: {e}")
+        return {}
+
+
+def save_perf_cache(done_samples, horizons):
+    keep = {}
+    for smp in done_samples:
+        if _is_final(smp, smp["model"], horizons):
+            e = {"returns": smp["returns"], "excess": smp["excess"]}
+            if "rule_ret" in smp:
+                e["rule_ret"] = smp["rule_ret"]
+            keep[_skey(smp)] = e
+    try:
+        with open(PERF_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"saved": datetime.utcnow().isoformat(), "samples": keep}, f)
+        log(f"已到期樣本快取 {len(keep)} 筆（明天不用重抓）")
+    except Exception as e:
+        log(f"⚠️ 績效快取存檔失敗: {e}")
+
+
 # ── 主流程 ──────────────────────────────────────────
 def run():
     recs = load_all_recommendations()
@@ -231,20 +320,35 @@ def run():
     if not samples and not left_samples:
         log(f"近 {WINDOW_DAYS} 天沒有推薦紀錄")
         return
-    log(f"共 {len(samples)} 筆 AI 推薦、{len(left_samples)} 筆左側樣本，開始抓後續股價...")
+    log(f"共 {len(samples)} 筆 AI 推薦、{len(left_samples)} 筆左側樣本")
+
+    horizons = sorted(set(HOLD_DAYS) | {MODEL_DAYS})
+    left_h = list(range(1, LEFT_DAYS + 1))         # 左側要逐日路徑才能判斷停損
+
+    # 已到期的樣本直接沿用，只抓還沒到期的
+    cache = load_perf_cache()
+    results, left_results, pending = [], [], []
+    for smp in samples + left_samples:
+        c = cache.get(_skey(smp))
+        if c and _is_final(c, smp["model"], horizons):
+            smp.update(c)
+            (left_results if smp["model"] == "left" else results).append(smp)
+        else:
+            pending.append(smp)
 
     # 為每筆抓後續價格並算報酬（同一檔的 AI 與左側樣本共用一次抓價）
     by_code = defaultdict(list)
-    for smp in samples + left_samples:
+    for smp in pending:
         by_code[smp["code"]].append(smp)
+    log(f"已到期沿用快取 {len(samples) + len(left_samples) - len(pending)} 筆；"
+        f"需計算 {len(pending)} 筆（{len(by_code)} 檔），開始抓後續股價...")
 
     # 基準：同一天買 0050，持有同樣天數（扣掉大盤漲跌，新舊模型才能公平比較）
-    horizons = sorted(set(HOLD_DAYS) | {MODEL_DAYS})
-    left_h = list(range(1, LEFT_DAYS + 1))         # 左側要逐日路徑才能判斷停損
-    first = min(s["date"] for s in samples + left_samples)
-    bench = fetch_closes("0050", (datetime.strptime(first, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d"), today)
+    bench = []
+    if pending:
+        first = min(s["date"] for s in pending)
+        bench = fetch_closes("0050", (datetime.strptime(first, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d"), today)
 
-    results, left_results = [], []
     for ci, (code, smps) in enumerate(by_code.items()):
         if ci % 20 == 0:
             log(f"  進度 {ci+1}/{len(by_code)} 檔")
@@ -280,6 +384,7 @@ def run():
     log(f"成功計算 AI {len(results)} 筆、左側 {len(left_results)} 筆（其餘因資料不足或非交易日略過）")
     if not results and not left_results:
         return
+    save_perf_cache(results + left_results, horizons)
 
     # ── 彙總統計 ──
     summary = {"generated": today, "sample_count": len(results), "by_hold": {}}
@@ -382,7 +487,8 @@ def run():
             f"平均{lt['avg_return']}% | 超額{lt['avg_excess']}% | 照停損規則平均{lt['rule_avg']}%（停損 {lt['stopped']} 筆）")
     else:
         log(f"──── 籌碼左側：尚無到期樣本（待到期 {lt['pending']} 筆）")
-    log(f"  FinMind 呼叫 {_fm['calls']} 次{'（額度用盡，結果不完整）' if _fm['quota_out'] else ''}")
+    log(f"  FinMind 呼叫 {_fm['calls']} 次、重用 AI 已抓股價 {_fm['reused']} 檔"
+        f"{'（額度用盡，結果不完整）' if _fm['quota_out'] else ''}")
 
     # ── 寫回 Supabase performance_summary ──
     save_summary(summary, today)

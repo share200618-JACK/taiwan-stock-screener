@@ -13,10 +13,17 @@ on:
       - 'auto_analysis.py'
       - 'left_side.py'
 
+# 同一時間只跑一個排程：上傳程式（push）觸發的和 14:35 的不會同時搶 FinMind 額度
+concurrency:
+  group: daily-screen
+  cancel-in-progress: false
+
 jobs:
   screen:
     runs-on: ubuntu-latest
     timeout-minutes: 300   # AI 分析＋左側選股補抓，FinMind 免費額度需較長時間
+    env:
+      PYTHONUNBUFFERED: "1"   # 紀錄即時輸出，時間戳才準（之前整批印出，看不出哪裡慢）
 
     steps:
       - name: Checkout
@@ -47,6 +54,14 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python sell_alert.py
 
+      - name: 還原績效快取（已到期的樣本不用重抓）
+        if: ${{ !cancelled() }}
+        uses: actions/cache/restore@v4
+        with:
+          path: perf_cache.json
+          key: perf-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: perf-cache-
+
       - name: 計算 AI／左側選股實戰績效（最後跑，不影響賣出提醒）
         if: ${{ !cancelled() }}   # 前一步失敗也照跑
         env:
@@ -54,3 +69,10 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python performance.py
+
+      - name: 保存績效快取
+        if: ${{ !cancelled() && hashFiles('perf_cache.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: perf_cache.json
+          key: perf-cache-${{ github.run_id }}-${{ github.run_attempt }}

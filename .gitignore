@@ -1,0 +1,5 @@
+# 排程執行時產生的暫存檔
+price_cache.json
+perf_cache.json
+analysis_result.json
+__pycache__/
