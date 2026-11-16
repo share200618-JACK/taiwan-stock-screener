@@ -137,6 +137,8 @@ def send_telegram(message):
 
 import time as _time
 import bisect as _bisect
+import threading as _threading
+import queue as _queue
 
 # ── FinMind 共用呼叫：節流 + 額度用盡自動改走備援 ──────────────
 # 免費帶 token 約 600 次/小時；預設每次間隔 7 秒（≈514 次/小時），留額度給網站本身
@@ -166,10 +168,20 @@ def finmind_get(dataset, data_id, start_date, end_date=None):
             print(f"\n   ⚠️ FinMind 額度用盡（{r.status_code}），之後改用 TWSE 備援", end=" ")
             return None
         if r.status_code != 200:
+            _fm_warn(dataset, f"HTTP {r.status_code} {str(body.get('msg', ''))[:80]}")
             return None
         return body.get("data", []) or []
-    except Exception:
+    except Exception as e:
+        _fm_warn(dataset, str(e)[:80])
         return None
+
+
+_fm_warned = set()
+def _fm_warn(dataset, msg):
+    """同一資料集只印第一次失敗原因（之前失敗都靜默，大盤資料壞掉好幾週都沒發現）"""
+    if dataset not in _fm_warned:
+        _fm_warned.add(dataset)
+        print(f"\n   ⚠️ FinMind {dataset} 失敗：{msg}", flush=True)
 
 
 def _tw_today():
@@ -341,42 +353,68 @@ def _lagged_index(dates, cur_date, max_stale_days=10):
 
 
 def fetch_market_index(months=24):
-    """加權指數（相對強弱用）：優先 FinMind，失敗用 TWSE"""
+    """
+    大盤序列（相對強弱用）。依序嘗試，取第一個拿到 ≥60 筆的來源：
+      1. FinMind 加權報酬指數  2. FinMind 加權指數日K  3. FinMind 0050（還原權值，追蹤大盤）
+      4. TWSE 每月大盤統計（FMTQIK）
+    舊版只有 1 和一個錯誤的 TWSE 網址，實際上每天都拿到 0 筆，相對強弱特徵一直是 0。
+    """
     start = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=months * 31)).strftime("%Y-%m-%d")
-    rows = finmind_get("TaiwanStockTotalReturnIndex", "TAIEX", start)
+
+    def ok(recs, src):
+        recs = sorted(recs, key=lambda x: x["date"])
+        if len(recs) >= 60:
+            print(f"   大盤來源：{src}", flush=True)
+            return recs
+        return None
+
+    rows = finmind_get("TaiwanStockTotalReturnIndex", "TAIEX", start) or []
+    got = ok([{"date": r.get("date", "")[:10], "close": safe_float(r.get("price"))}
+              for r in rows if safe_float(r.get("price")) > 0], "FinMind 加權報酬指數")
+    if got: return got
+
+    rows = finmind_get("TaiwanStockPrice", "TAIEX", start) or []
+    got = ok([{"date": r.get("date", "")[:10], "close": safe_float(r.get("close"))}
+              for r in rows if safe_float(r.get("close")) > 0], "FinMind 加權指數")
+    if got: return got
+
+    rows = finmind_get("TaiwanStockPrice", "0050", start) or []
+    recs = [{"date": r.get("date", "")[:10], "open": safe_float(r.get("close")),
+             "high": safe_float(r.get("close")), "low": safe_float(r.get("close")),
+             "close": safe_float(r.get("close")), "chg": safe_float(r.get("spread"))}
+            for r in rows if safe_float(r.get("close")) > 0]
+    recs.sort(key=lambda x: x["date"])
+    got = ok([{"date": r["date"], "close": r["close"]} for r in back_adjust(recs)],
+             "FinMind 0050（還原權值）")
+    if got: return got
+
     records = []
-    if rows:
-        for r in rows:
-            p = safe_float(r.get("price"))
-            if p > 0:
-                records.append({"date": r.get("date", "")[:10], "close": p})
-    if len(records) >= 60:
-        return sorted(records, key=lambda x: x["date"])
-    records = []
-    today = datetime.today()
+    today = datetime.utcnow() + timedelta(hours=8)
     for i in range(months, -1, -1):
         d = today - timedelta(days=i * 31)
         ym = f"{d.year}{d.month:02d}01"
         try:
-            url = (f"https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-                   f"?response=json&date={ym}&stockNo=Y9999")
+            url = f"https://www.twse.com.tw/exchangeReport/FMTQIK?response=json&date={ym}"
             data = SESSION.get(url, timeout=10).json()
             if data.get("stat") != "OK" or not data.get("data"):
                 continue
             for row in data["data"]:
-                parts = row[0].split("/")
+                parts = str(row[0]).split("/")
                 if len(parts) != 3:
                     continue
                 try:
                     dt = datetime(int(parts[0]) + 1911, int(parts[1]), int(parts[2]))
                 except Exception:
                     continue
-                c = safe_float(row[6])
+                c = safe_float(row[4])          # 發行量加權股價指數
                 if c > 0:
                     records.append({"date": dt.strftime("%Y-%m-%d"), "close": c})
         except Exception:
             pass
-    return sorted(records, key=lambda x: x["date"])
+    got = ok(records, "TWSE FMTQIK")
+    if got: return got
+    print("   ⚠️ 大盤資料所有來源都失敗，相對強弱特徵本次為 0", flush=True)
+    return []
 
 
 _market_cache = None
@@ -747,17 +785,72 @@ def _append_today_bar(records, snap):
     }]
 
 
-def analyze_stock(code, name, market_records, snap=None, collect=None):
+_price_dump = {}   # code → 原始日K（給 performance.py 重用，不必再向 FinMind 抓一次）
+PRICE_CACHE_FILE = os.environ.get("PRICE_CACHE_FILE",
+                                  os.path.join(os.path.dirname(os.path.abspath(__file__)), "price_cache.json"))
+
+
+def fetch_stock_data(code, snap=None):
+    """抓一支股票訓練/預測所需的資料（日K、法人、融資）。只做網路，不做運算。"""
     raw = fetch_history(code, HISTORY_MONTHS)
     raw = _append_today_bar(raw, snap)
     if len(raw) < 80:
         return None
+    _price_dump[code] = raw
     records = back_adjust(raw)   # 還原權值，保留漲跌停日
-
     # 籌碼、融資：整段歷史各抓一次，訓練與預測用同一份（以前訓練時全是 0，模型學不到）
     start = records[0]["date"]
     inst_hist   = fetch_inst_history(code, start)
     margin_hist = fetch_margin_history(code, start)
+    return raw, records, inst_hist, margin_hist
+
+
+def prefetch(stocks, ahead=3):
+    """
+    背景執行緒先抓下一支的資料，主執行緒同時訓練模型。
+    以前「等 FinMind（每次 7 秒）→ 訓練」一支接一支，兩段時間相加；現在重疊進行。
+    逐筆產出 (stock, data 或 Exception)。
+    """
+    q = _queue.Queue(maxsize=ahead)
+
+    def worker():
+        for s in stocks:
+            try:
+                d = fetch_stock_data(s["code"], s)
+            except Exception as e:
+                d = e
+            q.put((s, d))
+        q.put(None)
+
+    _threading.Thread(target=worker, daemon=True).start()
+    while True:
+        item = q.get()
+        if item is None:
+            return
+        yield item
+
+
+def dump_price_cache(keep_days=200):
+    """把今天抓過的原始日K存檔（同一個 GitHub Actions 工作的下一步 performance.py 會讀）"""
+    if not _price_dump:
+        return
+    cut = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+    out = {code: [[r["date"], r["close"], r.get("chg")] for r in raw if r["date"] >= cut]
+           for code, raw in _price_dump.items()}
+    try:
+        with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"date": _tw_today(), "prices": out}, f)
+        print(f"   股價快取已存 {len(out)} 支（給績效計算重用）", flush=True)
+    except Exception as e:
+        print(f"   ⚠️ 股價快取存檔失敗: {e}", flush=True)
+
+
+def analyze_stock(code, name, market_records, snap=None, collect=None, data=None):
+    if data is None:
+        data = fetch_stock_data(code, snap)
+    if data is None:
+        return None
+    raw, records, inst_hist, margin_hist = data
     if collect is not None:
         collect[code] = (records, inst_hist, margin_hist)
 
@@ -865,7 +958,12 @@ def get_all_stocks():
 
     # ── 上櫃（TPEX）也一併納入 ──
     try:
-        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        try:
+            r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=20)
+        except requests.exceptions.RequestException:
+            print("   [清單/TPEX] 第一次逾時，重試一次...", flush=True)
+            _time.sleep(5)
+            r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=40)
         if r2.status_code == 200 and isinstance(r2.json(), list):
             for r in r2.json():
                 code  = r.get("SecuritiesCompanyCode","") or r.get("code","")
@@ -938,6 +1036,7 @@ def run_left_side(all_stocks, collected, now_str):
             raw = _append_today_bar(fetch_history(s["code"], 5), s)   # 只需約 100 個交易日
             if len(raw) <= left_side.WARMUP + 1:
                 continue
+            _price_dump.setdefault(s["code"], raw)
             recs = back_adjust(raw)
             start = recs[0]["date"]
             collected[s["code"]] = (recs, fetch_inst_history(s["code"], start),
@@ -974,7 +1073,7 @@ def run_left_side(all_stocks, collected, now_str):
 def run():
     now_str = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y/%m/%d %H:%M")  # 台灣時間
     print(f"\n{'='*55}")
-    print(f"  台股自動分析 v2.0  {now_str}")
+    print(f"  台股自動分析 v2.1  {now_str}")
     print(f"{'='*55}")
 
     # 取得大盤資料
@@ -1010,10 +1109,13 @@ def run():
     # 逐支分析
     print(f"\n② 隨機森林分析（{len(stocks)} 支）...")
     results = []
-    for i, s in enumerate(stocks):
+    t0 = _time.time()
+    for i, (s, data) in enumerate(prefetch(stocks)):
         print(f"   [{i+1:3d}/{len(stocks)}] {s['code']} {s['name']:<8}", end=" ")
         try:
-            r = analyze_stock(s["code"], s["name"], market_data, s, collected)
+            if isinstance(data, Exception):
+                raise data
+            r = analyze_stock(s["code"], s["name"], market_data, s, collected, data=data)
             if r and r["confidence"] > 5:
                 r.update(s)
                 results.append(r)
@@ -1023,6 +1125,8 @@ def run():
         except Exception as e:
             print(f"錯誤:{e}")
 
+    print(f"   分析耗時 {(_time.time() - t0) / 60:.0f} 分鐘", flush=True)
+
     if not results:
         save_result({"error": "本次分析無有效推薦", "time": now_str,
                      "stocks": [], "total_scanned": len(stocks), "total_analyzed": 0})
@@ -1030,6 +1134,7 @@ def run():
             run_left_side(all_stocks, collected, now_str)
         except Exception as e:
             print(f"\n⚠️ 左側選股失敗: {e}")
+        dump_price_cache()
         return
 
     # 排序：綜合信心度 + 漲機率
@@ -1055,7 +1160,7 @@ def run():
     # 整理輸出資料
     output = {
         "time":           now_str,
-        "model_ver":      "v2",
+        "model_ver":      "v2.1",   # v2.1：大盤相對強弱特徵修好（之前大盤資料一直是 0 筆）
         "edge_filter":    edge_filter,
         "total_scanned":  len(stocks),
         "total_analyzed": len(results),
@@ -1091,6 +1196,7 @@ def run():
         run_left_side(all_stocks, collected, now_str)
     except Exception as e:
         print(f"\n⚠️ 左側選股失敗（不影響 AI 推薦）: {e}")
+    dump_price_cache()
 
     print(f"\n✅ 完成！前3名：" +
           "、".join(f"{r['code']}{r['name']}" for r in top[:3]))

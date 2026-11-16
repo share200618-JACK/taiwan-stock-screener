@@ -1376,7 +1376,8 @@ async function deleteHistoryRecord(date, btn) {
 function renderResults(data) {
   const stocks = data.stocks || [];
   // 每日排程存的是 "v2.0"，統一成 "v2"（舊版直接比對 'v2' 會誤標成 v1.0 基礎版）
-  const ver    = String(data.model_ver || 'v2').replace(/\.0$/, '');
+  const verFull = String(data.model_ver || 'v2').replace(/\.0$/, '');
+  const ver    = verFull.split('.')[0];          // v2.1 → v2（小版本只影響顯示）
   const isV3   = (ver === 'v3');
   window._lastCustomResult = data;
   window._lastRenderData   = data;  // 供彈出面板的 AI 評估頁籤使用
@@ -1384,7 +1385,7 @@ function renderResults(data) {
   renderSectorSummary(stocks);
 
   const verLabel = ver==='v3' ? '🏰 v3.0 護城河選股'
-                : ver==='v2' ? 'v2.0 強化版 ⭐'
+                : ver==='v2' ? `${verFull === 'v2' ? 'v2.0' : verFull} 強化版 ⭐`
                 : 'v1.0 基礎版';
   document.getElementById('resultTitle').textContent =
     `${isV3 ? '🏰 低基期護城河' : 'AI 推薦'} ${stocks.length} 支股票（${verLabel}）`;
