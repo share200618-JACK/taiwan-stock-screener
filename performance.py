@@ -5,6 +5,8 @@
 抓推薦後的實際股價，計算：
   - 各持有期（5/10/20 日）的平均報酬、勝率、最大回撤
   - 依「上漲機率(rise_prob)」分組，驗證機率高的是否真的報酬高
+另外追蹤「籌碼左側」名單（left_side_results）：持有 20 日（＝時間停損）報酬、
+對 0050 的超額報酬，以及套用 −8% 停損後的報酬。左側樣本不混進 AI 的統計。
 結果寫回 Supabase performance_summary 表，供回測頁面顯示。
 
 使用方式：
@@ -29,6 +31,8 @@ FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
 HOLD_DAYS   = [5, 10, 20]   # 預設評估的持有交易日數
 MODEL_DAYS  = 15            # 模型預測的天數（auto_analysis PREDICT_DAYS）
 WINDOW_DAYS = 120           # 只評估近 120 天的推薦，控制 FinMind 呼叫量
+LEFT_DAYS   = 20            # 左側：時間停損天數（left_side.EXIT）
+LEFT_STOP   = -8.0          # 左側：停損 %
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
@@ -87,6 +91,35 @@ def load_all_recommendations():
     deduped.sort(key=lambda x: x.get("date", ""))
     log(f"讀到 {len(deduped)} 天的推薦紀錄")
     return deduped
+
+
+def load_left_recommendations():
+    """籌碼左側每日名單；還沒建表就回空 list（不影響 AI 績效）"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        r = SESSION.get(f"{SUPABASE_URL}/rest/v1/left_side_results",
+            params={"select": "date,stocks,created_at", "order": "date.asc", "limit": "500"},
+            headers=sb_headers(), timeout=20)
+    except Exception as e:
+        log(f"⚠️ 讀取左側名單失敗: {e}")
+        return []
+    if r.status_code != 200:
+        log(f"ℹ️ 讀不到 left_side_results（{r.status_code}），略過左側追蹤")
+        return []
+    seen, out = set(), []
+    for row in sorted(r.json(), key=lambda x: x.get("created_at", ""), reverse=True):
+        d = row.get("date")
+        if d in seen:
+            continue
+        seen.add(d)
+        if isinstance(row.get("stocks"), str):
+            try: row["stocks"] = json.loads(row["stocks"])
+            except Exception: row["stocks"] = []
+        out.append(row)
+    out.sort(key=lambda x: x.get("date", ""))
+    log(f"讀到 {len(out)} 天的左側名單")
+    return out
 
 
 # ── 抓某股票一段期間的收盤價 ──────────────────────────
@@ -163,7 +196,8 @@ def compute_forward_returns(code, rec_date, entry_price, closes_sorted, horizons
 # ── 主流程 ──────────────────────────────────────────
 def run():
     recs = load_all_recommendations()
-    if not recs:
+    left_recs = load_left_recommendations()
+    if not recs and not left_recs:
         log("無資料可分析")
         return
 
@@ -172,6 +206,7 @@ def run():
     # 只評估近 WINDOW_DAYS 天的推薦：控制 FinMind 呼叫量（每檔一次），排程時間才不會越跑越久
     cutoff = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=WINDOW_DAYS)).strftime("%Y-%m-%d")
     recs = [r for r in recs if (r.get("date") or "") >= cutoff]
+    left_recs = [r for r in left_recs if (r.get("date") or "") >= cutoff]
 
     # 收集每一筆 (推薦日, code, entry_price, rise_prob, 新/舊模型)
     # 新模型（10/23 起）的推薦帶有 edge 欄位，以此區分
@@ -187,22 +222,29 @@ def run():
                 "rise_prob": safe_float(s.get("rise_prob", 0)),
                 "model":     "new" if "edge" in s else "old",
             })
-    if not samples:
+    left_samples = []
+    for day in left_recs:
+        for s in day.get("stocks", []):
+            left_samples.append({"date": day.get("date"), "code": s.get("code", ""),
+                                 "name": s.get("name", ""), "entry": safe_float(s.get("price", 0)),
+                                 "rise_prob": 0, "model": "left"})
+    if not samples and not left_samples:
         log(f"近 {WINDOW_DAYS} 天沒有推薦紀錄")
         return
-    log(f"共 {len(samples)} 筆推薦樣本，開始抓後續股價...")
+    log(f"共 {len(samples)} 筆 AI 推薦、{len(left_samples)} 筆左側樣本，開始抓後續股價...")
 
-    # 為每筆抓後續價格並算報酬
+    # 為每筆抓後續價格並算報酬（同一檔的 AI 與左側樣本共用一次抓價）
     by_code = defaultdict(list)
-    for smp in samples:
+    for smp in samples + left_samples:
         by_code[smp["code"]].append(smp)
 
     # 基準：同一天買 0050，持有同樣天數（扣掉大盤漲跌，新舊模型才能公平比較）
     horizons = sorted(set(HOLD_DAYS) | {MODEL_DAYS})
-    first = min(s["date"] for s in samples)
+    left_h = list(range(1, LEFT_DAYS + 1))         # 左側要逐日路徑才能判斷停損
+    first = min(s["date"] for s in samples + left_samples)
     bench = fetch_closes("0050", (datetime.strptime(first, "%Y-%m-%d") - timedelta(days=5)).strftime("%Y-%m-%d"), today)
 
-    results = []
+    results, left_results = [], []
     for ci, (code, smps) in enumerate(by_code.items()):
         if ci % 20 == 0:
             log(f"  進度 {ci+1}/{len(by_code)} 檔")
@@ -212,6 +254,20 @@ def run():
         if not closes:
             continue
         for smp in smps:
+            if smp["model"] == "left":
+                path = compute_forward_returns(code, smp["date"], smp["entry"], closes, left_h)
+                if path:
+                    smp["returns"] = path
+                    if LEFT_DAYS in path:
+                        # 照規則：收盤跌破 −8% 那天出場，否則持有到第 20 日
+                        hit = next((path[t] for t in left_h if t in path and path[t] <= LEFT_STOP), None)
+                        smp["rule_ret"] = hit if hit is not None else path[LEFT_DAYS]
+                        if bench:
+                            b = compute_forward_returns("0050", smp["date"], 0, bench, [LEFT_DAYS])
+                            if LEFT_DAYS in b:
+                                smp["excess"] = round(path[LEFT_DAYS] - b[LEFT_DAYS], 2)
+                    left_results.append(smp)
+                continue
             rets = compute_forward_returns(code, smp["date"], smp["entry"], closes, horizons)
             if rets:
                 smp["returns"] = rets
@@ -221,8 +277,8 @@ def run():
                         smp["excess"] = round(rets[MODEL_DAYS] - b[MODEL_DAYS], 2)
                 results.append(smp)
 
-    log(f"成功計算 {len(results)} 筆（其餘因資料不足或非交易日略過）")
-    if not results:
+    log(f"成功計算 AI {len(results)} 筆、左側 {len(left_results)} 筆（其餘因資料不足或非交易日略過）")
+    if not results and not left_results:
         return
 
     # ── 彙總統計 ──
@@ -278,6 +334,26 @@ def run():
                 "beat_bench": round(len([v for v in exc if v > 0]) / len(exc) * 100, 1) if exc else None,
             })
         by_model[m] = st
+
+    # ── 籌碼左側（持有 20 日；另算套用 −8% 停損的報酬）──
+    done = [r for r in left_results if LEFT_DAYS in r["returns"]]
+    exc = [r["excess"] for r in done if "excess" in r]
+    st = {"total": len(left_samples), "n": len(done), "pending": len(left_samples) - len(done),
+          "first_date": min((s["date"] for s in left_samples), default=""), "days": LEFT_DAYS}
+    if done:
+        r20 = [r["returns"][LEFT_DAYS] for r in done]
+        rule = [r["rule_ret"] for r in done]
+        st.update({
+            "hit_rate":   round(len([v for v in r20 if v >= 3]) / len(r20) * 100, 1),
+            "win_rate":   round(len([v for v in r20 if v > 0]) / len(r20) * 100, 1),
+            "avg_return": round(sum(r20) / len(r20), 2),
+            "avg_excess": round(sum(exc) / len(exc), 2) if exc else None,
+            "beat_bench": round(len([v for v in exc if v > 0]) / len(exc) * 100, 1) if exc else None,
+            "rule_avg":   round(sum(rule) / len(rule), 2),
+            "rule_win":   round(len([v for v in rule if v > 0]) / len(rule) * 100, 1),
+            "stopped":    len([r for r in done if r["rule_ret"] != r["returns"][LEFT_DAYS]]),
+        })
+    by_model["left"] = st
     summary["by_model"]   = by_model
     summary["model_days"] = MODEL_DAYS
     summary["window_days"] = WINDOW_DAYS
@@ -293,11 +369,19 @@ def run():
         log(f"  {k}: 樣本{st['n']} | 勝率{st['win_rate']}% | 平均報酬{st['avg_return']}%")
     log(f"──── 新舊模型對比（持有{MODEL_DAYS}日，基準 0050）────")
     for m, st in by_model.items():
+        if m == "left":
+            continue
         if st["n"]:
             log(f"  {'新' if m=='new' else '舊'}模型: 到期{st['n']}筆 待到期{st['pending']}筆 | 命中(≥3%){st['hit_rate']}% | "
                 f"平均報酬{st['avg_return']}% | 超額報酬{st['avg_excess']}% | 贏過0050 {st['beat_bench']}%")
         else:
             log(f"  {'新' if m=='new' else '舊'}模型: 尚無到期樣本（待到期 {st['pending']} 筆）")
+    lt = by_model["left"]
+    if lt["n"]:
+        log(f"──── 籌碼左側（持有{LEFT_DAYS}日）：到期{lt['n']}筆 待到期{lt['pending']}筆 | 勝率{lt['win_rate']}% | "
+            f"平均{lt['avg_return']}% | 超額{lt['avg_excess']}% | 照停損規則平均{lt['rule_avg']}%（停損 {lt['stopped']} 筆）")
+    else:
+        log(f"──── 籌碼左側：尚無到期樣本（待到期 {lt['pending']} 筆）")
     log(f"  FinMind 呼叫 {_fm['calls']} 次{'（額度用盡，結果不完整）' if _fm['quota_out'] else ''}")
 
     # ── 寫回 Supabase performance_summary ──

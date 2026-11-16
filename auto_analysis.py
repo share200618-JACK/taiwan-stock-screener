@@ -30,6 +30,11 @@ from collections import defaultdict
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+try:
+    import left_side          # 籌碼左側策略（與因子實驗室共用同一份規則）
+except ImportError:
+    left_side = None
+
 # ══════════════════════════════════════════════════
 # ★ 設定區
 # ══════════════════════════════════════════════════
@@ -742,7 +747,7 @@ def _append_today_bar(records, snap):
     }]
 
 
-def analyze_stock(code, name, market_records, snap=None):
+def analyze_stock(code, name, market_records, snap=None, collect=None):
     raw = fetch_history(code, HISTORY_MONTHS)
     raw = _append_today_bar(raw, snap)
     if len(raw) < 80:
@@ -753,6 +758,8 @@ def analyze_stock(code, name, market_records, snap=None):
     start = records[0]["date"]
     inst_hist   = fetch_inst_history(code, start)
     margin_hist = fetch_margin_history(code, start)
+    if collect is not None:
+        collect[code] = (records, inst_hist, margin_hist)
 
     X, y = build_training_data(records, market_records, PREDICT_DAYS, RISE_THRESHOLD,
                                inst_hist, margin_hist)
@@ -893,6 +900,77 @@ def save_result(data):
     except Exception as e:
         print(f"  ❌ 存檔失敗: {e}")
 
+# ══════════════════════════════════════════════════
+# 籌碼左側選股（散戶退場、法人承接）
+# ══════════════════════════════════════════════════
+LEFT_EXTRA = 60   # 額外分析「今天下跌、AI 沒分析到」的量大股（每檔 3 次 FinMind）
+
+def save_left_to_supabase(payload):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        today = _tw_today()
+        url = f"{SUPABASE_URL}/rest/v1/left_side_results"
+        requests.delete(url, params={"date": f"eq.{today}"}, headers=_sb_headers(), timeout=10)
+        r = requests.post(url, json={"date": today, **payload}, headers=_sb_headers(), timeout=10)
+        if r.status_code in (200, 201):
+            print(f"[Supabase] ✅ left_side_results 已存入 {len(payload['stocks'])} 支")
+        else:
+            print(f"[Supabase] ❌ 左側選股存入失敗 {r.status_code}: {r.text[:200]}"
+                  f"{'（請先在 Supabase 建立 left_side_results 表）' if r.status_code == 404 else ''}")
+    except Exception as e:
+        print(f"[Supabase] ❌ 左側選股例外: {e}")
+
+
+def run_left_side(all_stocks, collected, now_str):
+    """重用 AI 已抓的資料，再補抓今天下跌的量大股，套用籌碼左側規則"""
+    if left_side is None:
+        print("\n⚠️ 找不到 left_side.py，略過左側選股")
+        return
+    print(f"\n④ 籌碼左側選股...")
+    info = {s["code"]: s for s in all_stocks}
+    extra = sorted([s for s in all_stocks
+                    if s["code"] not in collected and s.get("pct", 0) < -1],
+                   key=lambda x: x.get("vol", 0), reverse=True)[:LEFT_EXTRA]
+    print(f"   重用 AI 已抓 {len(collected)} 支，另補抓今天下跌的量大股 {len(extra)} 支")
+    for i, s in enumerate(extra):
+        try:
+            raw = _append_today_bar(fetch_history(s["code"], 5), s)   # 只需約 100 個交易日
+            if len(raw) <= left_side.WARMUP + 1:
+                continue
+            recs = back_adjust(raw)
+            start = recs[0]["date"]
+            collected[s["code"]] = (recs, fetch_inst_history(s["code"], start),
+                                    fetch_margin_history(s["code"], start))
+        except Exception as e:
+            print(f"   [{s['code']}] 左側補抓失敗: {e}")
+
+    today = _tw_today()
+    picks, near = [], 0
+    for code, (recs, ih, mh) in collected.items():
+        try:
+            if not recs or (datetime.strptime(today, "%Y-%m-%d") -
+                            datetime.strptime(recs[-1]["date"], "%Y-%m-%d")).days > 5:
+                continue                      # 停牌或資料過舊
+            m = left_side.compute_series(recs, ih, mh)[-1]
+            if not m:
+                continue
+            if m["hit"]:
+                s = info.get(code, {})
+                picks.append(left_side.pick(m, code, s.get("name", ""), s.get("price")))
+            elif len(m["fail"]) == 1:
+                near += 1
+        except Exception as e:
+            print(f"   [{code}] 左側計算失敗: {e}")
+    picks.sort(key=left_side.rank_key, reverse=True)
+    print(f"   符合條件 {len(picks)} 支（差一個條件 {near} 支）：" +
+          ("、".join(f"{p['code']}{p['name']}" for p in picks[:10]) or "無"))
+    save_left_to_supabase({
+        "time": now_str, "total_scanned": len(collected),
+        "near_miss": near, "rule": left_side.RULE, "stocks": picks[:10],
+    })
+
+
 def run():
     now_str = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y/%m/%d %H:%M")  # 台灣時間
     print(f"\n{'='*55}")
@@ -924,7 +1002,9 @@ def run():
         pre = stocks
     # 依今日成交量由大到小排序（量大＝市場關注度高），取前 N 支
     pre.sort(key=lambda x: x.get("vol", 0), reverse=True)
+    all_stocks = stocks            # 左側選股用（含今天下跌的股票）
     stocks = pre[:MAX_ANALYZE]
+    collected = {}
     print(f"   智慧粗篩後取量能前 {len(stocks)} 支進行分析（上限 {MAX_ANALYZE}）")
 
     # 逐支分析
@@ -933,7 +1013,7 @@ def run():
     for i, s in enumerate(stocks):
         print(f"   [{i+1:3d}/{len(stocks)}] {s['code']} {s['name']:<8}", end=" ")
         try:
-            r = analyze_stock(s["code"], s["name"], market_data, s)
+            r = analyze_stock(s["code"], s["name"], market_data, s, collected)
             if r and r["confidence"] > 5:
                 r.update(s)
                 results.append(r)
@@ -946,6 +1026,10 @@ def run():
     if not results:
         save_result({"error": "本次分析無有效推薦", "time": now_str,
                      "stocks": [], "total_scanned": len(stocks), "total_analyzed": 0})
+        try:
+            run_left_side(all_stocks, collected, now_str)
+        except Exception as e:
+            print(f"\n⚠️ 左側選股失敗: {e}")
         return
 
     # 排序：綜合信心度 + 漲機率
@@ -1001,6 +1085,12 @@ def run():
 
     save_result(output)
     save_to_supabase(output)   # ← 同步寫入 Supabase（GitHub Actions 用）
+
+    # AI 結果存好後才跑左側選股；左側出錯不影響 AI 推薦
+    try:
+        run_left_side(all_stocks, collected, now_str)
+    except Exception as e:
+        print(f"\n⚠️ 左側選股失敗（不影響 AI 推薦）: {e}")
 
     print(f"\n✅ 完成！前3名：" +
           "、".join(f"{r['code']}{r['name']}" for r in top[:3]))

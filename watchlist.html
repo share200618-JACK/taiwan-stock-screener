@@ -891,7 +891,8 @@ async function submitAddWatch() {
 function recordBuyFromWatch(code, name, addPrice, note) {
   // 依備註判斷來源
   let source = '自選';
-  if (note && note.includes('遊牧民')) source = '遊牧民';
+  if (note && note.includes('左側')) source = '左側';
+  else if (note && note.includes('遊牧民')) source = '遊牧民';
   else if (note && note.includes('三合一')) source = '三合一';
   else if (note && (note.includes('AI') || note.includes('推薦'))) source = 'AI推薦';
   const curPrice = _prices[code]?.price || addPrice || '';
@@ -909,7 +910,7 @@ function showToast(msg) {
 // ═══════════════════════════════════════════
 // 交易日誌
 // ═══════════════════════════════════════════
-const SOURCES = ['AI推薦','三合一','遊牧民','自選'];
+const SOURCES = ['AI推薦','左側','三合一','遊牧民','自選'];
 
 function switchMainTab(tab) {
   const isWatch = tab === 'watch';

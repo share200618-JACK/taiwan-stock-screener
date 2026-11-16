@@ -1535,8 +1535,21 @@ def get_stocks():
 # ══════════════════════════════════════════════════════
 # 因子實驗室（Factor Lab）— 通用因子預測力驗證
 # ══════════════════════════════════════════════════════
+# 兩種驗證範圍：
+#   portfolio：用自己的 AI 推薦股，回答「這因子能不能幫我的推薦再篩一次」
+#   market   ：全市場面板（80 支 × 約 2 年，依日期固定取樣），每檔每隔「持有天數」取一個
+#              不重疊的決策點，報酬扣掉「同一天全部樣本的平均報酬」（去掉大盤漲跌），
+#              回答「這因子本身有沒有預測力」
+# 因子值一律用「決策日收盤當下拿得到的資料」：法人/融資取前一交易日、財報等公告日之後。
 import math as _math
+import bisect as _fl_bisect
+import time as _fl_time
+try:
+    import left_side as _left        # 與每日排程共用同一份左側規則與指標
+except ImportError:
+    _left = None
 _factor_tasks = {}
+_fl_run_lock = threading.Lock()      # 一次只跑一個驗證，避免 FinMind 額度被吃光
 
 def _fl_safe(x, d=0.0):
     try: return float(str(x).replace(",", ""))
@@ -1571,226 +1584,359 @@ def _fl_load_recommendations(token):
     out.sort(key=lambda x: x.get("date",""))
     return out
 
-_fl_price_cache = {}
-def _fl_forward_return(code, rec_date, entry, token, hold=20):
-    if code not in _fl_price_cache:
-        try:
-            end = (datetime.utcnow()+timedelta(hours=8)).strftime("%Y-%m-%d")
-            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=5)).strftime("%Y-%m-%d")
-            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset":"TaiwanStockPrice","data_id":code,"start_date":start,"end_date":end},
-                headers={"Authorization":f"Bearer {token}"}, timeout=15)
-            rows = r.json().get("data",[]) if r.status_code==200 else []
-            _fl_price_cache[code] = sorted([(x["date"],_fl_safe(x.get("close",0))) for x in rows if _fl_safe(x.get("close",0))>0])
-        except: _fl_price_cache[code] = []
-    closes = _fl_price_cache[code]
-    future = [(d,c) for d,c in closes if d >= rec_date]
-    if len(future) <= hold: return None
-    base = entry if entry>0 else future[0][1]
-    if base <= 0: return None
-    return round((future[hold][1]-base)/base*100, 2)
+# ── FinMind 抓取（共用快取：同一股票同一資料集 6 小時內只抓一次，且一律抓到今天）──
+FL_LOOKBACK_DAYS = 900        # 約 2.4 年日K（前 60 天當暖機）
+FL_CACHE_TTL     = 6 * 3600
+FL_MIN_INTERVAL  = 0.35       # 每次呼叫至少間隔（秒）
+FL_MARKET_N      = 80         # 全市場面板股票數
+FL_PORTFOLIO_MAX = 120        # 我的推薦模式最多分析幾支（依被推薦次數排序）
+FL_MIN_VOL       = 300        # 全市場模式排除 20 日均量 < 300 張的冷門股（與左側規則一致）
+FL_FINMIND       = "https://api.finmindtrade.com/api/v4/data"
+_fl_cache = {}                # (dataset, code) -> (抓取時間, rows)
+_fl_last_call = [0.0]
 
-# ── 各因子的取值函式：回傳該股在推薦日當下的因子值 ──
-_fl_factor_cache = {}
-def _fl_get_factor(factor, code, rec_date, token):
-    ckey = (factor, code)
-    if ckey not in _fl_factor_cache:
-        _fl_factor_cache[ckey] = _fl_compute_factor_series(factor, code, rec_date, token)
-    series = _fl_factor_cache[ckey]  # [(date, value), ...] 已排序
-    if not series: return None
-    # 毛利率用財報，需 -60 天公告時間差；其餘用當日
-    if factor == "gross_margin":
-        cutoff = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=60)).strftime("%Y-%m-%d")
-    else:
-        cutoff = rec_date
-    avail = [(d,v) for d,v in series if d <= cutoff]
-    return avail[-1][1] if avail else None
+class _FLQuota(Exception):
+    """FinMind 每小時額度已用完"""
 
-def _fl_compute_factor_series(factor, code, rec_date, token):
+def _fl_today():
+    return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+def _fl_fm(dataset, code, token):
+    key = (dataset, code)
+    hit = _fl_cache.get(key)
+    if hit and _fl_time.time() - hit[0] < FL_CACHE_TTL:
+        return hit[1]
+    wait = FL_MIN_INTERVAL - (_fl_time.time() - _fl_last_call[0])
+    if wait > 0:
+        _fl_time.sleep(wait)
+    start = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=FL_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
     try:
-        if factor == "gross_margin":
-            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=1095)).strftime("%Y-%m-%d")
-            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset":"TaiwanStockFinancialStatements","data_id":code,"start_date":start,"end_date":rec_date},
-                headers={"Authorization":f"Bearer {token}"}, timeout=15)
-            rows = r.json().get("data",[]) if r.status_code==200 else []
-            byq = {}
-            for row in rows:
-                t, dt, val = row.get("type",""), row.get("date","")[:10], _fl_safe(row.get("value",0))
-                if t == "GrossProfit": byq.setdefault(dt,{})["gp"] = val
-                elif t == "Revenue": byq.setdefault(dt,{})["rev"] = val
-            out = []
-            for q, v in byq.items():
-                if v.get("gp") is not None and v.get("rev",0) > 0:
-                    out.append((q, round(v["gp"]/v["rev"]*100,2)))
-            return sorted(out)
-
-        elif factor == "margin_usage":  # 融資使用率
-            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=30)).strftime("%Y-%m-%d")
-            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset":"TaiwanStockMarginPurchaseShortSale","data_id":code,"start_date":start,"end_date":rec_date},
-                headers={"Authorization":f"Bearer {token}"}, timeout=15)
-            rows = r.json().get("data",[]) if r.status_code==200 else []
-            out = []
-            for row in rows:
-                bal = _fl_safe(row.get("MarginPurchaseTodayBalance",0))
-                lim = _fl_safe(row.get("MarginPurchaseLimit",0))
-                if lim > 0: out.append((row.get("date","")[:10], round(bal/lim*100,2)))
-            return sorted(out)
-
-        elif factor == "foreign_net":  # 外資近5日買超（張）
-            start = (datetime.strptime(rec_date,"%Y-%m-%d")-timedelta(days=15)).strftime("%Y-%m-%d")
-            r = SESSION.get("https://api.finmindtrade.com/api/v4/data",
-                params={"dataset":"TaiwanStockInstitutionalInvestorsBuySell","data_id":code,"start_date":start,"end_date":rec_date},
-                headers={"Authorization":f"Bearer {token}"}, timeout=15)
-            rows = r.json().get("data",[]) if r.status_code==200 else []
-            daily = {}
-            for row in rows:
-                if "Foreign" in row.get("name",""):
-                    d = row.get("date","")[:10]
-                    net = (_fl_safe(row.get("buy",0))-_fl_safe(row.get("sell",0)))/1000
-                    daily[d] = daily.get(d,0) + net
-                    out_key = d
-            # 累積近5日
-            ds = sorted(daily.keys())
-            out = []
-            for i in range(len(ds)):
-                window = ds[max(0,i-4):i+1]
-                out.append((ds[i], round(sum(daily[w] for w in window),1)))
-            return out
+        r = SESSION.get(FL_FINMIND, params={"dataset": dataset, "data_id": code,
+                                            "start_date": start, "end_date": _fl_today()},
+                        headers={"Authorization": f"Bearer {token}"}, timeout=20)
     except Exception as e:
-        print(f"[factor/{factor}] {code}: {e}")
-    return []
+        print(f"[factor] {dataset} {code}: {e}")
+        return []
+    finally:
+        _fl_last_call[0] = _fl_time.time()
+    if r.status_code in (402, 429):
+        raise _FLQuota()
+    try:
+        j = r.json()
+    except Exception:
+        return []
+    if j.get("status") in (402, 429):
+        raise _FLQuota()
+    if r.status_code != 200:
+        return []
+    rows = j.get("data") or []
+    if len(_fl_cache) > 1200:                       # 控制記憶體：丟掉最舊的
+        for k in sorted(_fl_cache, key=lambda k: _fl_cache[k][0])[:300]:
+            _fl_cache.pop(k, None)
+    _fl_cache[key] = (_fl_time.time(), rows)
+    return rows
 
 FACTOR_NAMES = {
-    "gross_margin": "毛利率",
-    "margin_usage": "融資使用率",
-    "foreign_net":  "外資近5日買超",
+    "left_chip":       "籌碼左側（整套規則）",
+    "bias20":          "MA20 乖離率",
+    "rsi6":            "RSI(6)",
+    "margin_chg10":    "融資10日變化",
+    "inst_in_decline": "跌勢中法人買超",
+    "foreign_net":     "外資近5日買超",
+    "margin_usage":    "融資使用率",
+    "gross_margin":    "毛利率",
+}
+RULE_FACTORS = {"left_chip"}          # 規則型：符合=1 / 不符合=0，只做勝率對照
+_FL_NEEDS = {                         # 除了日K，各因子還要抓哪些資料
+    "left_chip": ("inst", "margin"), "bias20": (), "rsi6": (),
+    "margin_chg10": ("margin",), "margin_usage": ("margin",),
+    "inst_in_decline": ("inst",), "foreign_net": ("inst",),
+    "gross_margin": ("fin",),
 }
 
-def _fl_market_sample(token, sample_n=60):
-    """全市場取樣：抓 STOCK_DAY_ALL + TPEX，隨機取 sample_n 支
-    回傳 [(回看日期, code, 該日收盤價), ...]，回看日期固定為 60 個交易日前"""
-    import random
-    codes = []
+def _fl_price_records(rows):
+    recs = []
+    for x in sorted(rows, key=lambda x: x.get("date", "")):
+        c = _fl_safe(x.get("close"))
+        if c <= 0:
+            continue
+        sp = x.get("spread")
+        recs.append({"date": x.get("date", "")[:10],
+                     "open": _fl_safe(x.get("open"), c), "high": _fl_safe(x.get("max"), c),
+                     "low": _fl_safe(x.get("min"), c), "close": c,
+                     "vol": _fl_safe(x.get("Trading_Volume")) / 1000,
+                     "chg": _fl_safe(sp, None) if sp not in (None, "") else None})
+    return recs
+
+def _fl_inst_hist(rows):
+    daily = {}
+    for r in rows:
+        d, name = r.get("date", "")[:10], r.get("name", "")
+        net = (_fl_safe(r.get("buy")) - _fl_safe(r.get("sell"))) / 1000
+        f, t = daily.get(d, (0.0, 0.0))
+        if name.startswith("Foreign"): f += net
+        elif name == "Investment_Trust": t += net
+        daily[d] = (f, t)
+    return (sorted(daily), daily) if daily else None
+
+def _fl_margin_hist(rows):
+    daily = {r.get("date", "")[:10]: (_fl_safe(r.get("MarginPurchaseTodayBalance")),
+                                      _fl_safe(r.get("MarginPurchaseLimit"))) for r in rows}
+    return (sorted(daily), daily) if daily else None
+
+def _fl_gross_margin(rows):
+    """季報毛利率 + 可取得日：Q1~Q3 季底後 46 天、Q4（年報）季底後 91 天才公布"""
+    byq = {}
+    for row in rows:
+        t, q, v = row.get("type", ""), row.get("date", "")[:10], _fl_safe(row.get("value"))
+        if t == "GrossProfit": byq.setdefault(q, {})["gp"] = v
+        elif t == "Revenue": byq.setdefault(q, {})["rev"] = v
+    out = []
+    for q, v in byq.items():
+        if v.get("gp") is None or v.get("rev", 0) <= 0:
+            continue
+        try: qd = datetime.strptime(q, "%Y-%m-%d")
+        except Exception: continue
+        avail = (qd + timedelta(days=91 if qd.month == 12 else 46)).strftime("%Y-%m-%d")
+        out.append((avail, round(v["gp"] / v["rev"] * 100, 2)))
+    return sorted(out)
+
+def _fl_stock(code, token, factor):
+    """一支股票的還原日K + 每日指標（與每日排程同一套計算）"""
+    needs = _FL_NEEDS[factor]
+    recs = _fl_price_records(_fl_fm("TaiwanStockPrice", code, token))
+    if len(recs) <= _left.WARMUP + 5:
+        return None
+    recs = _left.back_adjust(recs)
+    ih = _fl_inst_hist(_fl_fm("TaiwanStockInstitutionalInvestorsBuySell", code, token)) if "inst" in needs else None
+    mh = _fl_margin_hist(_fl_fm("TaiwanStockMarginPurchaseShortSale", code, token)) if "margin" in needs else None
+    fin = _fl_gross_margin(_fl_fm("TaiwanStockFinancialStatements", code, token)) if "fin" in needs else None
+    return {"code": code, "dates": [r["date"] for r in recs], "closes": [r["close"] for r in recs],
+            "series": _left.compute_series(recs, ih, mh), "fin": fin}
+
+def _fl_value(st, i, factor):
+    """第 i 個交易日收盤時拿得到的因子值（None = 這天不算樣本）"""
+    m = st["series"][i]
+    if m is None:
+        return None
+    if factor == "gross_margin":
+        d = st["dates"][i]
+        avail = [v for a, v in (st["fin"] or []) if a <= d]
+        return avail[-1] if avail else None
+    return _left.factor_value(m, factor)
+
+def _fl_fwd(st, i, hold):
+    c = st["closes"]
+    if i + hold >= len(c) or c[i] <= 0:
+        return None
+    return (c[i + hold] / c[i] - 1) * 100
+
+def _fl_market_codes(token):
+    codes = set()
     try:
         r = SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=15)
         if r.status_code == 200:
-            for row in r.json():
-                code = row.get("Code","")
-                if str(code).isdigit() and len(code)==4:
-                    codes.append(code)
+            codes.update(str(x.get("Code", "")) for x in r.json())
     except Exception as e:
         print(f"[market/TWSE] {e}")
     try:
-        r2 = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
-        if r2.status_code == 200:
-            for row in r2.json():
-                code = row.get("SecuritiesCompanyCode","") or row.get("code","")
-                if str(code).isdigit() and len(code)==4:
-                    codes.append(code)
+        r = SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=15)
+        if r.status_code == 200:
+            codes.update(str(x.get("SecuritiesCompanyCode", "") or x.get("code", "")) for x in r.json())
     except Exception as e:
         print(f"[market/TPEX] {e}")
-    codes = list(set(codes))
-    random.shuffle(codes)
-    codes = codes[:sample_n]
-    # 回看日期：60 個交易日前（約 3 個月），確保有後續報酬可算
-    lookback_date = (datetime.utcnow()+timedelta(hours=8)-timedelta(days=90)).strftime("%Y-%m-%d")
-    return [(lookback_date, code, 0) for code in codes]
+    if not codes:                                   # 備援：FinMind 股票清單
+        try:
+            r = SESSION.get(FL_FINMIND, params={"dataset": "TaiwanStockInfo"},
+                            headers={"Authorization": f"Bearer {token}"}, timeout=20)
+            if r.status_code == 200:
+                codes.update(str(x.get("stock_id", "")) for x in r.json().get("data", [])
+                             if x.get("type") in ("twse", "tpex"))
+        except Exception as e:
+            print(f"[market/FinMind] {e}")
+    # 只留一般股票（4 位數、排除 0 開頭的 ETF）
+    return sorted(c for c in codes if len(c) == 4 and c.isdigit() and not c.startswith("0"))
+
+def _fl_collect_market(factor, hold, token, prog):
+    prog.update({"pct": 3, "msg": "抓取全市場股票清單..."})
+    codes = _fl_market_codes(token)
+    if not codes:
+        raise RuntimeError("無法取得市場股票清單")
+    sample = random.Random(_fl_today()).sample(codes, min(FL_MARKET_N, len(codes)))  # 同一天固定同一批
+    stocks, quota = [], False
+    for k, code in enumerate(sample):
+        prog.update({"pct": 5 + int(k / len(sample) * 80),
+                     "msg": f"抓取第 {k+1}/{len(sample)} 支（{code}）約 2 年資料..."})
+        try:
+            st = _fl_stock(code, token, factor)
+        except _FLQuota:
+            quota = True
+            break
+        if st:
+            stocks.append(st)
+
+    prog.update({"pct": 88, "msg": "計算報酬並扣除同期市場平均..."})
+    # 同一天、所有可交易樣本的平均報酬（扣掉它＝去掉大盤漲跌）
+    by_date = {}
+    for st in stocks:
+        for i in range(_left.WARMUP, len(st["closes"]) - hold):
+            m = st["series"][i]
+            if m is None or m["avg_vol20"] < FL_MIN_VOL:
+                continue
+            r = _fl_fwd(st, i, hold)
+            if r is not None:
+                by_date.setdefault(st["dates"][i], []).append(r)
+    cs = {d: sum(v) / len(v) for d, v in by_date.items() if len(v) >= 10}
+
+    is_rule = factor in RULE_FACTORS
+    samples = []                         # (因子值, 超額報酬, 原始報酬)
+    for st in stocks:
+        n = len(st["closes"])
+        grid = set(range(n - 1 - hold, _left.WARMUP - 1, -hold))   # 每 hold 天一個不重疊決策點
+        next_event = 0
+        for i in range(_left.WARMUP, n - hold):
+            m = st["series"][i]
+            d = st["dates"][i]
+            if m is None or m["avg_vol20"] < FL_MIN_VOL or d not in cs:
+                continue
+            fv = _fl_value(st, i, factor)
+            if fv is None:
+                continue
+            if is_rule and fv >= 1:
+                # 規則觸發：每次訊號都算一筆，但同一檔持有期間內的重複訊號只算第一次
+                if i < next_event:
+                    continue
+                next_event = i + hold
+            elif i not in grid:
+                continue
+            raw = _fl_fwd(st, i, hold)
+            samples.append((fv, raw - cs[d], raw))
+    return samples, quota, len(stocks), len(sample)
+
+def _fl_collect_portfolio(factor, hold, token, prog):
+    prog.update({"pct": 3, "msg": "讀取歷史推薦..."})
+    recs = _fl_load_recommendations(token)
+    pairs = [(day.get("date"), str(s.get("code", ""))) for day in recs
+             for s in day.get("stocks", []) if s.get("code")]
+    if not pairs:
+        raise RuntimeError("無歷史推薦資料")
+    freq = {}
+    for _, c in pairs:
+        freq[c] = freq.get(c, 0) + 1
+    codes = sorted(freq, key=lambda c: -freq[c])[:FL_PORTFOLIO_MAX]
+    stocks, quota = {}, False
+    for k, code in enumerate(codes):
+        prog.update({"pct": 5 + int(k / len(codes) * 85),
+                     "msg": f"抓取第 {k+1}/{len(codes)} 支推薦股（{code}）..."})
+        try:
+            stocks[code] = _fl_stock(code, token, factor)
+        except _FLQuota:
+            quota = True
+            break
+    samples = []
+    for d, code in pairs:
+        st = stocks.get(code)
+        if not st or not d:
+            continue
+        i = _fl_bisect.bisect_left(st["dates"], d)    # 推薦日（或之後第一個交易日）收盤進場
+        if i >= len(st["dates"]):
+            continue
+        try:
+            if (datetime.strptime(st["dates"][i], "%Y-%m-%d") - datetime.strptime(d, "%Y-%m-%d")).days > 5:
+                continue
+        except Exception:
+            continue
+        fv = _fl_value(st, i, factor)
+        raw = _fl_fwd(st, i, hold) if fv is not None else None
+        if raw is None:
+            continue
+        samples.append((fv, raw, raw))
+    return samples, quota, len(stocks), len(codes)
+
+def _fl_evaluate(samples, factor, hold, scope, mode):
+    is_rule = factor in RULE_FACTORS
+    if is_rule:
+        mode = "winrate"
+    base = {"factor": factor, "factor_name": FACTOR_NAMES.get(factor, factor), "hold": hold,
+            "scope": scope, "mode": mode, "is_rule": is_rule, "demeaned": scope == "market",
+            "n": len(samples)}
+    if len(samples) < 20:
+        return {**base, "enough": False}
+    win = lambda g: round(len([s for s in g if s[1] > 0]) / len(g) * 100, 1)
+    avg = lambda g: round(_fl_mean([s[1] for s in g]), 2)
+    raw_avg = lambda g: round(_fl_mean([s[2] for s in g]), 2)
+
+    if mode == "winrate":
+        if is_rule:
+            pass_grp = [s for s in samples if s[0] >= 1]
+            fail_grp = [s for s in samples if s[0] < 1]
+            median = None
+            if len(pass_grp) < 15 or not fail_grp:
+                return {**base, "enough": False, "pass_n": len(pass_grp)}
+        else:
+            ordered = sorted(samples, key=lambda s: s[0])
+            median = ordered[len(ordered) // 2][0]
+            pass_grp = [s for s in samples if s[0] >= median]
+            fail_grp = [s for s in samples if s[0] < median]
+            if not pass_grp or not fail_grp:
+                return {**base, "enough": False}
+        pass_win, fail_win, all_win = win(pass_grp), win(fail_grp), win(samples)
+        win_lift = round(pass_win - all_win, 1)
+        t, _ = _fl_welch_t([s[1] for s in pass_grp], [s[1] for s in fail_grp])
+        if t > 1.96 and win_lift > 3: verdict = "improve"
+        elif t < -1.96 and win_lift < -3: verdict = "worsen"
+        else: verdict = "noeffect"
+        return {**base, "enough": True, "mode": "winrate",
+                "median": round(median, 2) if median is not None else None,
+                "pass_n": len(pass_grp), "pass_win": pass_win, "pass_avg": avg(pass_grp),
+                "pass_raw": raw_avg(pass_grp),
+                "fail_n": len(fail_grp), "fail_win": fail_win, "fail_avg": avg(fail_grp),
+                "fail_raw": raw_avg(fail_grp),
+                "all_win": all_win, "win_lift": win_lift, "t": t, "verdict": verdict}
+
+    ordered = sorted(samples, key=lambda s: s[0])
+    n = len(ordered)
+    low, mid, high = ordered[:n // 3], ordered[n // 3:2 * n // 3], ordered[2 * n // 3:]
+    def grp(g):
+        return {"n": len(g), "lo": round(g[0][0], 1), "hi": round(g[-1][0], 1),
+                "avg": avg(g), "raw": raw_avg(g), "win": round(win(g))}
+    gl, gm, gh = grp(low), grp(mid), grp(high)
+    t, sig = _fl_welch_t([s[1] for s in high], [s[1] for s in low])
+    diff = round(gh["avg"] - gl["avg"], 2)
+    if sig and diff > 1: verdict = "add"
+    elif sig and diff < -1: verdict = "reverse"
+    else: verdict = "skip"
+    return {**base, "enough": True, "mode": "quantile", "low": gl, "mid": gm, "high": gh,
+            "t": t, "diff": diff, "verdict": verdict}
 
 def _fl_run_validation(task_id, factor, hold, token, scope="portfolio", mode="quantile"):
     prog = _factor_tasks[task_id]
     try:
-        _fl_price_cache.clear(); _fl_factor_cache.clear()
-        if scope == "market":
-            prog.update({"pct":5,"msg":"抓取全市場股票清單..."})
-            pairs = _fl_market_sample(token, 60)
-            if not pairs:
-                prog.update({"done":True,"error":"無法取得市場清單"}); return
-        else:
-            prog.update({"pct":5,"msg":"讀取歷史推薦..."})
-            recs = _fl_load_recommendations(token)
-            if not recs:
-                prog.update({"done":True,"error":"無歷史推薦資料"}); return
-            pairs = []
-            for day in recs:
-                for s in day.get("stocks",[]):
-                    pairs.append((day.get("date"), s.get("code",""), _fl_safe(s.get("price",0))))
-        total = len(pairs)
-        import time as _time
-        samples = []
-        # 全市場模式呼叫量大，加延遲避免 FinMind 限流
-        delay = 0.6 if scope == "market" else 0.15
-        for i,(d,code,entry) in enumerate(pairs):
-            if i % 5 == 0:
-                prog.update({"pct":5+int(i/total*85),"msg":f"分析 {i+1}/{total} 筆（避免限流，較慢請稍候）..."})
-            if not code: continue
-            fv = _fl_get_factor(factor, code, d, token)
-            if fv is None:
-                _time.sleep(delay); continue
-            ret = _fl_forward_return(code, d, entry, token, hold)
-            _time.sleep(delay)   # 每支之間延遲
-            if ret is None: continue
-            samples.append((fv, ret))
-
-        if len(samples) < 20:
-            prog.update({"done":True,"result":{"enough":False,"n":len(samples)}}); return
-
-        samples.sort(key=lambda x: x[0])
-        n = len(samples)
-
-        if mode == "winrate":
-            # ── 勝率對照：依因子中位數分「符合(高) vs 不符合(低)」兩組，比勝率 ──
-            median_fv = samples[n//2][0]
-            pass_grp = [r for fv, r in samples if fv >= median_fv]   # 符合（因子值高）
-            fail_grp = [r for fv, r in samples if fv < median_fv]    # 不符合（因子值低）
-            if not pass_grp or not fail_grp:
-                prog.update({"done":True,"result":{"enough":False,"n":n}}); return
-            pass_win = round(len([r for r in pass_grp if r>0])/len(pass_grp)*100, 1)
-            fail_win = round(len([r for r in fail_grp if r>0])/len(fail_grp)*100, 1)
-            all_win  = round(len([r for _,r in samples if r>0])/n*100, 1)
-            win_lift = round(pass_win - all_win, 1)   # 用因子篩選後 vs 整體 的勝率提升
-            t, sig = _fl_welch_t(pass_grp, fail_grp)
-            # 判定：符合組勝率顯著高於不符合、且比整體有提升
-            if sig and win_lift > 3:  verdict = "improve"
-            elif sig and win_lift < -3: verdict = "worsen"
-            else: verdict = "noeffect"
-            prog.update({"pct":100,"done":True,"result":{
-                "enough":True,"mode":"winrate",
-                "factor":factor,"factor_name":FACTOR_NAMES.get(factor,factor),
-                "hold":hold,"n":n,"scope":scope,
-                "median":round(median_fv,2),
-                "pass_n":len(pass_grp),"pass_win":pass_win,"pass_avg":round(_fl_mean(pass_grp),2),
-                "fail_n":len(fail_grp),"fail_win":fail_win,"fail_avg":round(_fl_mean(fail_grp),2),
-                "all_win":all_win,"win_lift":win_lift,"t":t,"verdict":verdict}})
+        if _left is None:
+            raise RuntimeError("伺服器缺少 left_side.py，請一併上傳到 GitHub")
+        collect = _fl_collect_market if scope == "market" else _fl_collect_portfolio
+        samples, quota, got, want = collect(factor, hold, token, prog)
+        res = _fl_evaluate(samples, factor, hold, scope, mode)
+        res.update({"stocks_used": got, "stocks_planned": want, "quota_hit": quota})
+        if quota and not res.get("enough"):
+            prog.update({"done": True, "error": f"FinMind 每小時額度已用完（只抓到 {got} 支），請 1 小時後再試；"
+                                                "避開每日排程時段（約 14:30~17:30）較不會撞到"})
             return
-
-        # ── 原本的分位數模式（三組報酬對比）──
-        low, mid, high = samples[:n//3], samples[n//3:2*n//3], samples[2*n//3:]
-        def grp(g): 
-            rets=[r for _,r in g]
-            return {"n":len(g),"lo":round(g[0][0],1),"hi":round(g[-1][0],1),
-                    "avg":round(_fl_mean(rets),2),
-                    "win":round(len([r for r in rets if r>0])/len(rets)*100,0)}
-        gl, gm, gh = grp(low), grp(mid), grp(high)
-        t, sig = _fl_welch_t([r for _,r in high],[r for _,r in low])
-        diff = round(gh["avg"]-gl["avg"],2)
-        if sig and diff > 1: verdict = "add"
-        elif sig and diff < -1: verdict = "reverse"
-        else: verdict = "skip"
-        prog.update({"pct":100,"done":True,"result":{
-            "enough":True,"mode":"quantile","factor":factor,"factor_name":FACTOR_NAMES.get(factor,factor),
-            "hold":hold,"n":n,"low":gl,"mid":gm,"high":gh,
-            "t":t,"diff":diff,"verdict":verdict,"scope":scope}})
+        prog.update({"pct": 100, "done": True, "result": res})
     except Exception as e:
-        prog.update({"done":True,"error":str(e)})
+        prog.update({"done": True, "error": str(e)})
+    finally:
+        _fl_run_lock.release()
 
 @app.route("/api/factor/validate", methods=["POST"])
 def factor_validate():
     import uuid
     b = request.get_json() or {}
-    factor = b.get("factor","gross_margin")
-    hold   = int(b.get("hold",20))
+    factor = b.get("factor","left_chip")
+    try: hold = int(b.get("hold",20))
+    except Exception: hold = 20
+    if hold not in (5, 10, 15, 20):
+        hold = 20
     scope  = b.get("scope","portfolio")  # portfolio=我的推薦 / market=全市場
     mode   = b.get("mode","quantile")    # quantile=三組報酬 / winrate=勝率對照
     if factor not in FACTOR_NAMES:
@@ -1798,9 +1944,15 @@ def factor_validate():
     token = _get_finmind_token()
     if not token:
         return jsonify({"error":"未設定 FinMind token"}), 400
+    if not _fl_run_lock.acquire(blocking=False):
+        return jsonify({"error":"已有一個驗證正在跑，請等它完成（避免 FinMind 額度被吃光）"}), 409
     task_id = str(uuid.uuid4())[:8]
     _factor_tasks[task_id] = {"pct":0,"msg":"準備中...","done":False,"result":None,"error":None}
-    threading.Thread(target=_fl_run_validation, args=(task_id,factor,hold,token,scope,mode), daemon=True).start()
+    try:
+        threading.Thread(target=_fl_run_validation, args=(task_id,factor,hold,token,scope,mode), daemon=True).start()
+    except Exception as e:
+        _fl_run_lock.release()
+        return jsonify({"error": str(e)}), 500
     return jsonify({"task_id":task_id})
 
 @app.route("/api/factor/progress/<task_id>")
@@ -1808,6 +1960,33 @@ def factor_progress(task_id):
     prog = _factor_tasks.get(task_id)
     if not prog: return jsonify({"error":"找不到任務"}), 404
     return jsonify(prog)
+
+# ── 籌碼左側選股（每日排程寫入 left_side_results）──
+@app.route("/api/left/latest")
+def left_latest():
+    exit_rule = getattr(_left, "EXIT", {"stop_pct": 8, "time_stop_days": 20})
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"stocks": [], "error": "未設定 Supabase"})
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/left_side_results",
+                         params={"select": "date,time,total_scanned,near_miss,rule,stocks",
+                                 "order": "date.desc,created_at.desc", "limit": "1"},
+                         headers=_sb_headers(), timeout=10)
+        if r.status_code != 200:
+            missing = r.status_code == 404 or "left_side_results" in r.text
+            return jsonify({"stocks": [], "missing_table": missing, "error": f"Supabase {r.status_code}"})
+        rows = r.json()
+        if not rows:
+            return jsonify({"stocks": [], "empty": True, "exit": exit_rule})
+        row = rows[0]
+        for k in ("stocks", "rule"):
+            if isinstance(row.get(k), str):
+                try: row[k] = json.loads(row[k])
+                except Exception: row[k] = [] if k == "stocks" else {}
+        row["exit"] = exit_rule
+        return jsonify(row)
+    except Exception as e:
+        return jsonify({"stocks": [], "error": str(e)})
 
 @app.route("/factor-lab")
 def factor_lab_page():
@@ -7470,6 +7649,7 @@ def _start_keep_alive():
         print("[Keep-Alive] 本機環境，略過")
         return
     def _ping():
+        import time
         time.sleep(30)  # 啟動後等 30 秒再開始 ping
         while True:
             try:
