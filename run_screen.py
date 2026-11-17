@@ -12,8 +12,9 @@ from datetime import datetime, timedelta
 # ── 環境變數 ──────────────────────────────────────────
 SUPABASE_URL   = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY   = os.environ.get("SUPABASE_KEY", "")
-FINMIND_TOKEN  = os.environ.get("FINMIND_TOKEN", "85b8cba2f1ec0d8e28a25a00db26e121")
-JACK_TOKEN     = os.environ.get("JACK_TOKEN", "85b8cba2f1ec0d8e28a25a00db26e121")
+# 金鑰一律從環境變數（GitHub Secrets / Render Environment）讀，不寫在程式裡（repo 是公開的）
+FINMIND_TOKEN  = os.environ.get("FINMIND_TOKEN", "").strip()
+JACK_TOKEN     = os.environ.get("JACK_TOKEN", "").strip()
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "Mozilla/5.0"})
