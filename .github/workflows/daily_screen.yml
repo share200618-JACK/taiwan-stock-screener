@@ -13,6 +13,8 @@ on:
       - 'auto_analysis.py'
       - 'left_side.py'
       - 'strategy.py'
+      - 'notify.py'
+      - 'daily_report.py'
 
 # 同一時間只跑一個排程：上傳程式（push）觸發的和 14:35 的不會同時搶 FinMind 額度
 concurrency:
@@ -39,6 +41,7 @@ jobs:
         run: pip install requests
 
       - name: 執行 AI 自動選股分析
+        id: ai
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -46,6 +49,7 @@ jobs:
         run: python auto_analysis.py
 
       - name: 持倉賣出提醒（Telegram）
+        id: sell
         if: ${{ !cancelled() }}   # 前一步失敗也照跑
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -64,6 +68,7 @@ jobs:
           restore-keys: perf-cache-
 
       - name: 計算 AI／左側選股實戰績效（最後跑，不影響賣出提醒）
+        id: perf
         if: ${{ !cancelled() }}   # 前一步失敗也照跑
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -79,3 +84,15 @@ jobs:
         with:
           path: perf_cache.json
           key: perf-cache-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: 每日 Telegram 報告
+        if: always()   # 前面失敗、逾時也發，才知道哪裡出問題
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          AI_OUTCOME: ${{ steps.ai.outcome }}
+          SELL_OUTCOME: ${{ steps.sell.outcome }}
+          PERF_OUTCOME: ${{ steps.perf.outcome }}
+        run: python daily_report.py

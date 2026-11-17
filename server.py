@@ -5871,10 +5871,18 @@ def _start_daily_schedule():
 
                 if should_run:
                     print(f"[排程] ⏰ {reason}")
-                    # v2.0 AI 分析
-                    _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
-                    last_ran_date = _get_last_analysis_date() or tw_dt.strftime("%Y-%m-%d")
-                    print(f"[排程] ✅ v2.0 完成，last_ran_date={last_ran_date}")
+                    # 每日 AI 分析由 GitHub Actions（14:35）負責，會存當天結果、候選股與選股條件。
+                    # 執行前重新查一次：Actions 已存今天的結果就不要在這裡重跑（以前會刪掉覆蓋），
+                    # Actions 失敗沒存時，這裡才當備援。
+                    today_str = tw_dt.strftime("%Y-%m-%d")
+                    latest = _get_last_analysis_date()
+                    if latest >= today_str:
+                        last_ran_date = latest
+                        print("[排程] 今天的 AI 分析已由 GitHub Actions 完成，跳過（不覆蓋）")
+                    else:
+                        _run_auto_analysis(max_stocks=0, top_n=20, model_ver='v2')
+                        last_ran_date = _get_last_analysis_date() or today_str
+                        print(f"[排程] ✅ v2.0 備援分析完成，last_ran_date={last_ran_date}")
                     # 🎯 三合一選股
                     try:
                         print("[排程] 🎯 啟動三合一選股...")

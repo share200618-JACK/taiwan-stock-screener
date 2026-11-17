@@ -1,0 +1,131 @@
+"""
+每日 Telegram 報告（GitHub Actions 每日排程的最後一步，前面步驟失敗也會跑）
+=========================================================================
+把當天各步驟寫在 run_status.json 的結果整理成一則訊息：
+  AI 前 5 名、籌碼左側名單、持倉提醒、前 5 名一個月成績、選股條件狀態、系統警示
+賣出提醒與選股條件調整仍會「另外」即時推播，這則是每日總覽。
+
+用法：python daily_report.py          → 推播今日報告
+      python daily_report.py --test   → 推播一則測試訊息（確認 Telegram 設定）
+"""
+import os
+import sys
+from datetime import datetime, timedelta
+
+import notify
+from notify import esc
+
+SITE_URL = os.environ.get("SITE_URL", "https://taiwan-stock-screener-783z.onrender.com").rstrip("/")
+WEEK = "一二三四五六日"
+STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "PERF_OUTCOME": "績效計算"}
+
+
+def _num(v, fmt="{:+.1f}", unit="%"):
+    return "—" if v is None else fmt.format(v) + unit
+
+
+def build(status, outcomes, now=None):
+    now = now or (datetime.utcnow() + timedelta(hours=8))
+    ai, left, sell, perf = (status.get(k, {}) for k in ("ai", "left", "sell", "perf"))
+    failed = [STEP_NAMES[k] for k, v in outcomes.items() if v in ("failure", "cancelled")]
+    L = [f"📊 <b>台股選股日報</b> {now.month}/{now.day}（{WEEK[now.weekday()]}）"]
+    if failed:
+        L.append(f"⚠️ 有步驟沒跑完：{'、'.join(failed)}")
+    elif ai.get("minutes") is not None:
+        L.append(f"✅ 排程完成・AI 分析 {ai['minutes']} 分鐘（{ai.get('analyzed', 0)}/{ai.get('planned', 0)} 支）")
+
+    # AI 前 5 名
+    top = ai.get("top5") or []
+    L += ["", "🤖 <b>AI 前 5 名</b>（漲機率｜勝率優勢）"]
+    if top:
+        for i, s in enumerate(top, 1):
+            L.append(f"{i}. {esc(s.get('code'))} {esc(s.get('name'))} {s.get('price')} 元｜"
+                     f"{s.get('rise_prob')}%｜{(s.get('edge') or 0):+.1f}")
+        if ai.get("edge_filter") is False:
+            L.append("<i>（今天沒有股票通過勝率門檻，以上為原始排序，參考性較低）</i>")
+        if ai.get("strategy"):
+            L.append(f"<i>條件：{esc(ai['strategy'])}</i>")
+    else:
+        L.append("今天沒有產生推薦（分析失敗或沒有有效結果）")
+
+    # 籌碼左側
+    L += ["", "🪃 <b>籌碼左側</b>（觀察中）"]
+    if left.get("n"):
+        for i, p in enumerate(left.get("picks") or [], 1):
+            L.append(f"{i}. {esc(p.get('code'))} {esc(p.get('name'))} {p.get('price')}｜"
+                     f"停損 {p.get('stop')}｜目標 {p.get('target')}")
+    elif left:
+        L.append(f"今天沒有符合的股票（檢查 {left.get('scanned', 0)} 支，差一個條件 {left.get('near_miss', 0)} 支）")
+    else:
+        L.append("今天沒有執行")
+
+    # 持倉
+    if sell:
+        if not sell.get("holdings"):
+            L += ["", "🔔 <b>持倉</b>：目前沒有持倉中的交易"]
+        elif sell.get("alerts"):
+            L += ["", f"🔔 <b>持倉</b>：{sell['holdings']} 檔中 {sell['alerts']} 檔觸發賣出訊號"
+                      f"{'（已另外推播）' if sell.get('sent') else ''}：{esc('、'.join(sell.get('names') or []))}"]
+        else:
+            L += ["", f"🔔 <b>持倉</b>：{sell['holdings']} 檔都沒有觸發賣出訊號"]
+
+    # 前 5 名一個月成績＋選股條件
+    t5 = perf.get("top5") or {}
+    L += ["", "🎯 <b>前 5 名一個月成績</b>（持有 20 交易日 vs 0050）"]
+    if t5.get("n"):
+        L.append(f"到期 {t5['n']} 筆｜勝率 {t5.get('win_rate')}%｜平均 {_num(t5.get('avg_return'))}｜"
+                 f"超額 {_num(t5.get('avg_excess'))}｜贏 0050 {_num(t5.get('beat_bench'), '{:.0f}')}")
+    elif t5.get("total"):
+        L.append(f"已記錄 {t5['total']} 筆，每筆追蹤滿 20 個交易日才計分")
+    else:
+        L.append("尚無資料")
+    tun = perf.get("tuning") or {}
+    if tun.get("status") == "changed":
+        L.append(f"🔧 <b>選股條件已自動調整</b>：{esc(tun.get('describe_new') or '')}")
+    elif tun.get("message"):
+        icon = {"collecting": "⏳", "cooldown": "🕒", "kept": "✅", "locked": "🔒"}.get(tun.get("status"), "ℹ️")
+        L.append(f"{icon} 選股條件：{esc(tun['message'])}")
+
+    # 系統警示
+    warn = []
+    errs = ai.get("fm_errors") or {}
+    if errs:
+        first = next(iter(errs.items()))
+        warn.append(f"FinMind 抓資料失敗（{esc(first[0])}：{esc(first[1])}）→ 法人/融資/大盤資料可能缺，"
+                    "請檢查 GitHub Secrets 的 FINMIND_TOKEN")
+    if ai.get("fm_quota_out"):
+        warn.append("FinMind 每小時額度用完，部分股票改用備援資料")
+    if ai and ai.get("market_rows") == 0:
+        warn.append("大盤資料 0 筆（相對強弱特徵沒有作用）")
+    if ai.get("candidates_saved") is False:
+        warn.append("候選股沒存進 Supabase（請建立 ai_candidates 表），選股條件無法自動調整")
+    if perf and perf.get("fm_calls") and perf.get("fm_empty", 0) >= max(3, perf["fm_calls"] * 0.5):
+        warn.append(f"績效計算向 FinMind 抓價 {perf['fm_calls']} 次有 {perf['fm_empty']} 次沒資料")
+    if sell.get("alerts") and sell.get("sent") is False:
+        warn.append("賣出提醒推播失敗")
+    if warn:
+        L += ["", "⚠️ <b>系統警示</b>"] + [f"・{w}" for w in warn]
+
+    run_url = ""
+    if os.environ.get("GITHUB_RUN_ID") and os.environ.get("GITHUB_REPOSITORY"):
+        run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+    links = [f'<a href="{SITE_URL}/analyze">AI 分析</a>', f'<a href="{SITE_URL}/backtest">回測績效</a>']
+    if run_url:
+        links.append(f'<a href="{run_url}">執行紀錄</a>')
+    L += ["", "🔗 " + "｜".join(links)]
+    return "\n".join(L)
+
+
+def main():
+    if "--test" in sys.argv:
+        ok = notify.send("✅ <b>台股選股系統</b>\nTelegram 設定成功！之後每個交易日排程跑完會收到一則日報，"
+                         "持倉觸發賣出訊號、選股條件自動調整時也會另外通知。")
+        sys.exit(0 if ok else 1)
+    outcomes = {k: os.environ.get(k, "") for k in STEP_NAMES}
+    msg = build(notify.load_status(), outcomes)
+    print(msg)
+    notify.send(msg)
+
+
+if __name__ == "__main__":
+    main()

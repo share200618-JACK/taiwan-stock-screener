@@ -35,6 +35,7 @@ try:
 except ImportError:
     left_side = None
 import strategy                # AI 選股條件（門檻＋排序），每月依實際成績自動調整
+import notify                  # 排程狀態（每日 Telegram 報告用）
 
 # ══════════════════════════════════════════════════
 # ★ 設定區
@@ -123,6 +124,7 @@ def save_candidates(results):
     try:
         requests.delete(url, params={"date": f"eq.{today}"}, headers=_sb_headers(), timeout=10)
         r = requests.post(url, json={"date": today, "candidates": rows}, headers=_sb_headers(), timeout=15)
+        notify.record("ai", {"candidates_saved": r.status_code in (200, 201)})
         if r.status_code in (200, 201):
             print(f"[Supabase] ✅ ai_candidates 已存入 {len(rows)} 支候選股")
         else:
@@ -219,8 +221,10 @@ def finmind_get(dataset, data_id, start_date, end_date=None):
 
 
 _fm_warned = set()
+_fm_errors = {}    # dataset → 第一次失敗原因（寫進每日報告）
 def _fm_warn(dataset, msg):
     """同一資料集只印第一次失敗原因（之前失敗都靜默，大盤資料壞掉好幾週都沒發現）"""
+    _fm_errors[dataset] = _fm_errors.get(dataset) or msg
     if dataset not in _fm_warned:
         _fm_warned.add(dataset)
         print(f"\n   ⚠️ FinMind {dataset} 失敗：{msg}", flush=True)
@@ -407,6 +411,7 @@ def fetch_market_index(months=24):
         recs = sorted(recs, key=lambda x: x["date"])
         if len(recs) >= 60:
             print(f"   大盤來源：{src}", flush=True)
+            notify.record("ai", {"market_source": src})
             return recs
         return None
 
@@ -468,6 +473,7 @@ def get_market_data():
         print("   抓取大盤加權指數...")
         _market_cache = fetch_market_index(HISTORY_MONTHS)
         print(f"   大盤資料：{len(_market_cache)} 筆")
+        notify.record("ai", {"market_rows": len(_market_cache)})
     return _market_cache
 
 
@@ -1106,6 +1112,9 @@ def run_left_side(all_stocks, collected, now_str):
     picks.sort(key=left_side.rank_key, reverse=True)
     print(f"   符合條件 {len(picks)} 支（差一個條件 {near} 支）：" +
           ("、".join(f"{p['code']}{p['name']}" for p in picks[:10]) or "無"))
+    notify.record("left", {"scanned": len(collected), "near_miss": near, "n": len(picks),
+                           "picks": [{k: p.get(k) for k in ("code", "name", "price", "stop", "target", "ret20")}
+                                     for p in picks[:5]]})
     save_left_to_supabase({
         "time": now_str, "total_scanned": len(collected),
         "near_miss": near, "rule": left_side.RULE, "stocks": picks[:10],
@@ -1168,6 +1177,9 @@ def run():
             print(f"錯誤:{e}")
 
     print(f"   分析耗時 {(_time.time() - t0) / 60:.0f} 分鐘", flush=True)
+    notify.record("ai", {"minutes": round((_time.time() - t0) / 60), "planned": len(stocks),
+                         "analyzed": len(results), "fm_calls": _fm_state["calls"],
+                         "fm_quota_out": bool(_fm_state["disabled"]), "fm_errors": _fm_errors})
 
     if not results:
         save_result({"error": "本次分析無有效推薦", "time": now_str,
@@ -1234,6 +1246,10 @@ def run():
     save_result(output)
     save_to_supabase(output)   # ← 同步寫入 Supabase（GitHub Actions 用）
     save_candidates(results)   # 全部候選股（每月調整選股條件用）
+    notify.record("ai", {"qualified": len(qualified), "edge_filter": edge_filter,
+                         "strategy": strategy.describe(cfg), "model_ver": output["model_ver"],
+                         "top5": [{k: r.get(k) for k in ("code", "name", "price", "rise_prob", "edge", "precision")}
+                                  for r in top[:5]]})
 
     # AI 結果存好後才跑左側選股；左側出錯不影響 AI 推薦
     try:
