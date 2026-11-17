@@ -40,6 +40,20 @@ CASES = [  # (代號, 名稱, 買進日, 買進價)
     ("5381", "光譜", "2026-07-09", 27.35),
     ("1410", "南染", "2026-07-06", 26.1),
 ]
+def _cases_from_env():
+    """CHECK_CASES＝「代號,名稱,買進日,價格;…」（手動執行時填），沒填就用上面的清單"""
+    raw = os.environ.get("CHECK_CASES", "").strip()
+    out = []
+    for part in raw.replace("；", ";").split(";"):
+        x = [t.strip() for t in part.replace("，", ",").split(",")]
+        if len(x) == 4:
+            try:
+                out.append((x[0], x[1], x[2], float(x[3])))
+            except ValueError:
+                pass
+    return out or CASES
+
+
 N_EXTRA = int(os.environ.get("CHECK_EXTRA_N", "180"))     # 在實驗室 200 支之外再抽幾支
 HORIZONS = [5, 20, 60]
 VOL_STRICT, VOL_LOOSE = 2000, 500
@@ -228,7 +242,7 @@ def case_report(code, name, buy_date, buy_px, S):
 
 def run_cases():
     cache, out = {}, []
-    for code, name, bd, px in CASES:
+    for code, name, bd, px in _cases_from_env():
         if code not in cache:
             cache[code] = load_stock(code, extra=True)
         rep = case_report(code, name, bd, px, cache[code])
