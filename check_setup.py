@@ -17,6 +17,7 @@ SITE_CHECKS = [
     ("/api/performance", "實戰績效 API（11/17）"),
     ("/api/strategy", "選股條件自動調整（11/17）"),
     ("/api/etf-wave/latest", "正2波浪（11/17）"),
+    ("/api/signal-lab/latest", "個股勝率實驗室（11/18）"),
 ]
 
 

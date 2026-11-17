@@ -1,0 +1,47 @@
+name: 個股勝率實驗室
+
+# 每週六晚上 22:00（台灣）自動更新；也可手動：GitHub → Actions →「個股勝率實驗室」→ Run workflow（約 1.5 小時）
+# 結果存 Supabase analysis_store（key=signal_lab），網站 /signal-lab 顯示
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 14 * * 6"
+
+concurrency:
+  group: signal-lab
+  cancel-in-progress: false
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: 個股訊號回測（約 200 支、2019 年起）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: python signal_lab.py
+
+      - name: 保存結果檔
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: signal-lab-result
+          path: signal_lab_result.json
+          if-no-files-found: ignore
+          retention-days: 30
