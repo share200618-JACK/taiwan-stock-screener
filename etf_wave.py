@@ -35,6 +35,7 @@ try:
     import notify
 except ImportError:  # 單獨測試時
     notify = None
+import tech_signals
 
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
@@ -362,8 +363,8 @@ def current_status(dates, vals, theta, sigs, table):
     return out
 
 
-def analyze_group(gkey, u_dates, u_vals, etf_series, drag):
-    """一個指數群組（臺灣50 / 加權）的完整分析"""
+def analyze_group(gkey, u_dates, u_vals, etf_series, drag, vol=None):
+    """一個指數群組（臺灣50 / 加權）的完整分析：波浪＋技術指標"""
     syn = synthetic_2x(u_vals, drag)
     res = {"key": gkey, **{k: GROUPS[gkey][k] for k in ("name", "index_name")},
            "start": u_dates[0], "end": u_dates[-1], "drag": drag, "thetas": {}}
@@ -387,6 +388,7 @@ def analyze_group(gkey, u_dates, u_vals, etf_series, drag):
     # 圖表：指數（較早用週線、近一年用日線，控制資料量）
     wk = list(range(0, max(0, len(u_dates) - 250), 5)) + list(range(max(0, len(u_dates) - 250), len(u_dates)))
     res["chart"] = {"dates": [u_dates[i] for i in wk], "values": [round(u_vals[i], 2) for i in wk]}
+    res["tech"] = tech_signals.evaluate(u_dates, u_vals, syn, vol)
     return res
 
 
@@ -431,8 +433,11 @@ def build():
                "states": {k: {"name": v[0], "side": v[1]} for k, v in STATES.items()},
                "etfs": [], "groups": {}}
     under = {}
+    vol_map = {}      # 0050 成交金額：當作市場量能（加權報酬指數沒有成交量）
     for gk, g in GROUPS.items():
         rows = fm_get(g["dataset"], g["id"])
+        if g["id"] == "0050":
+            vol_map = {r["date"][:10]: _f(r.get("Trading_money")) or None for r in rows}
         d, v = (series_from_prices(rows) if g["dataset"] == "TaiwanStockPrice" else series_from_index(rows))
         if len(d) < 500 and gk == "taiex":     # 報酬指數拿不到 → 用 0050 代替
             log("⚠️ 加權報酬指數資料不足，改用 0050 代替")
@@ -460,7 +465,8 @@ def build():
         drags = [p["drag"] for p in payload["etfs"] if p["group"] == gk and p.get("drag") is not None]
         drag = round(sum(drags) / len(drags), 4) if drags else DEFAULT_DRAG
         drag = min(max(drag, 0.0), 0.06)
-        payload["groups"][gk] = analyze_group(gk, d, v, etf_series[gk], drag)
+        payload["groups"][gk] = analyze_group(gk, d, v, etf_series[gk], drag,
+                                              [vol_map.get(x) for x in d] if vol_map else None)
         payload["groups"][gk]["best"] = best_states(payload["groups"][gk])
     return payload
 
@@ -499,6 +505,13 @@ def summary_for_report(payload):
                    "next_confirm": cur.get("next_confirm"),
                    "win60": stats.get("win"), "avg60": stats.get("avg"), "n60": stats.get("n"),
                    "base_win60": g["baseline_synthetic"]["60"].get("win")}
+        tech = g.get("tech") or {}
+        sig = tech.get("signals", [])
+        out[gk]["tech_today"] = [{"name": s["name"], "verdict": s["verdict"], "win60": s["stats"]["60"].get("win"),
+                                  "n60": s["stats"]["60"].get("n")}
+                                 for s in sig if s.get("today") and s["verdict"] != "none"]
+        out[gk]["tech_effective"] = [s["name"] for s in sig if s["verdict"] == "effective"]
+        out[gk]["tech_base_win60"] = tech.get("baseline", {}).get("60", {}).get("win")
     return out
 
 
@@ -527,6 +540,21 @@ def main():
                             else f"{'—':>16}" for h in ("20", "60", "120"))
             log(f"     {STATES[st][0]:<16}{cells}   {row['60'].get('n', 0)}")
         log(f"     {'任何一天買進':<16}" + "".join(f"{base[h]['win']:>8.1f}%/{base[h]['avg']:+6.1f}%" for h in ("20", "60", "120")))
+        tech = g.get("tech") or {}
+        tb = tech.get("baseline", {})
+        log(f"   技術指標（合成正2，60 日；基準 {tb.get('60', {}).get('win')}%，前半/後半基準 {tech.get('halves', {}).get('base_win')}）")
+        mark = {"effective": "✅穩定有效", "lean": "△傾向較好", "avoid": "⛔應避開", "lean_avoid": "▽傾向較差", "none": ""}
+        for s in tech.get("signals", []):
+            st = s["stats"]
+            log(f"     {s['name']:<22}" + "".join(
+                f"{(st[h].get('win') or 0):>7.1f}%/{(st[h].get('avg') or 0):+6.1f}%" if st[h].get("n") else f"{'—':>15}"
+                for h in ("20", "60", "120"))
+                + f"  n={st['60'].get('n', 0):<4} z={s['z']:<6} 前後半 {s['half'][0]['win']}/{s['half'][1]['win']}"
+                + f"  {mark[s['verdict']]}{'  ←今天' if s.get('today') else ''}")
+        for k, v in (tech.get("strategies") or {}).items():
+            log(f"     策略（{k}，{v['from']} 起）：正2抱著 年化 {v['buy_hold_2x']['cagr']}% 最大跌幅 {v['buy_hold_2x']['mdd']}%｜"
+                f"年線之上才持有 年化 {v['ma200_2x']['cagr']}% 最大跌幅 {v['ma200_2x']['mdd']}%（持有 {v['ma200_2x']['in_market']}% 時間）｜"
+                f"原型指數 年化 {v['index_1x']['cagr']}% 最大跌幅 {v['index_1x']['mdd']}%")
 
 
 if __name__ == "__main__":
