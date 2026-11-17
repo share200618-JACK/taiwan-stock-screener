@@ -36,6 +36,7 @@ except ImportError:
     left_side = None
 import strategy                # AI 選股條件（門檻＋排序），每月依實際成績自動調整
 import notify                  # 排程狀態（每日 Telegram 報告用）
+import revenue                 # 月營收創新高訊號（個股勝率實驗室驗證過；每支每月只抓一次）
 
 # ══════════════════════════════════════════════════
 # ★ 設定區
@@ -118,7 +119,8 @@ def save_candidates(results):
     if not SUPABASE_URL or not SUPABASE_KEY or not results:
         return
     today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
-    keys = ("code", "name", "price", "rise_prob", "confidence", "precision", "base_rate", "edge", "support")
+    keys = ("code", "name", "price", "rise_prob", "confidence", "precision", "base_rate", "edge", "support",
+            "rev_hot", "rev_yoy")
     rows = [{k: r.get(k) for k in keys} for r in results]
     url = f"{SUPABASE_URL}/rest/v1/ai_candidates"
     try:
@@ -855,7 +857,15 @@ def fetch_stock_data(code, snap=None):
     start = records[0]["date"]
     inst_hist   = fetch_inst_history(code, start)
     margin_hist = fetch_margin_history(code, start)
+    try:
+        if revenue.ensure(code, _tw_today(), finmind_get):
+            _rev_stat["fetched"] += 1
+    except Exception as e:
+        _fm_warn("TaiwanStockMonthRevenue", str(e)[:80])
     return raw, records, inst_hist, margin_hist
+
+
+_rev_stat = {"fetched": 0}
 
 
 def prefetch(stocks, ahead=3):
@@ -954,6 +964,8 @@ def analyze_stock(code, name, market_records, snap=None, collect=None, data=None
     rise_prob  = rf_final.predict_proba([cur_feat])[0]
     confidence = accuracy * abs(rise_prob - 0.5) * 2
 
+    rs = revenue.status(code, _tw_today()) or {}
+
     # 顯示用：最新一筆已公布的法人買賣超（張）
     inst_f = inst_t = 0
     if inst_hist:
@@ -976,6 +988,8 @@ def analyze_stock(code, name, market_records, snap=None, collect=None, data=None
         "has_inst":      bool(inst_hist),
         "has_margin":    bool(margin_hist),
         "data_years":    round(len(records)/250, 1),
+        "rev_hot":       bool(rs.get("rev_hot")),      # 最新月營收創 12 個月新高且年增 ≥ 20%
+        "rev_yoy":       rs.get("rev_yoy"),
     }
 
 # ══════════════════════════════════════════════════
@@ -1162,6 +1176,9 @@ def run():
     collected = {}
     print(f"   智慧粗篩後取量能前 {len(stocks)} 支進行分析（上限 {MAX_ANALYZE}）")
 
+    _rev_stat["fetched"] = 0
+    print(f"   月營收快取 {revenue.load()} 支（每支每月只抓一次）")
+
     # 逐支分析
     print(f"\n② 隨機森林分析（{len(stocks)} 支）...")
     results = []
@@ -1175,17 +1192,24 @@ def run():
             if r and r["confidence"] > 5:
                 r.update(s)
                 results.append(r)
-                print(f"✅ 漲:{r['rise_prob']}% 勝率:{r['precision']}%(基準{r['base_rate']}%) 優勢:{r['edge']:+}")
+                print(f"✅ 漲:{r['rise_prob']}% 勝率:{r['precision']}%(基準{r['base_rate']}%) 優勢:{r['edge']:+}"
+                      f"{'  📈營收創高' if r.get('rev_hot') else ''}")
             else:
                 print("略過")
         except Exception as e:
             print(f"錯誤:{e}")
+        if (i + 1) % 25 == 0:
+            revenue.save()
+    revenue.save()
+    n_hot = sum(1 for r in results if r.get("rev_hot"))
+    print(f"   月營收：本次抓 {_rev_stat['fetched']} 支、{n_hot} 支最新月營收創 12 個月新高且年增 ≥ 20%", flush=True)
 
     print(f"   分析耗時 {(_time.time() - t0) / 60:.0f} 分鐘", flush=True)
     notify.record("ai", {"minutes": round((_time.time() - t0) / 60), "planned": len(stocks),
                          "analyzed": len(results), "fm_calls": _fm_state["calls"],
                          "fm_quota_out": bool(_fm_state["disabled"]) and not _fm_state.get("token_bad"),
-                         "fm_token_bad": bool(_fm_state.get("token_bad")), "fm_errors": _fm_errors})
+                         "fm_token_bad": bool(_fm_state.get("token_bad")), "fm_errors": _fm_errors,
+                         "rev_fetched": _rev_stat["fetched"], "rev_hot": n_hot})
 
     if not results:
         save_result({"error": "本次分析無有效推薦", "time": now_str,
@@ -1246,6 +1270,8 @@ def run():
             "data_years":  r.get("data_years", 0),
             "inst_foreign":r.get("inst_foreign", 0),
             "inst_trust":  r.get("inst_trust", 0),
+            "rev_hot":     r.get("rev_hot", False),
+            "rev_yoy":     r.get("rev_yoy"),
         } for r in top]
     }
 
@@ -1254,7 +1280,7 @@ def run():
     save_candidates(results)   # 全部候選股（每月調整選股條件用）
     notify.record("ai", {"qualified": len(qualified), "edge_filter": edge_filter,
                          "strategy": strategy.describe(cfg), "model_ver": output["model_ver"],
-                         "top5": [{k: r.get(k) for k in ("code", "name", "price", "rise_prob", "edge", "precision")}
+                         "top5": [{k: r.get(k) for k in ("code", "name", "price", "rise_prob", "edge", "precision", "rev_hot")}
                                   for r in top[:5]]})
 
     # AI 結果存好後才跑左側選股；左側出錯不影響 AI 推薦

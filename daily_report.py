@@ -41,7 +41,7 @@ def build(status, outcomes, now=None):
     if top:
         for i, s in enumerate(top, 1):
             L.append(f"{i}. {esc(s.get('code'))} {esc(s.get('name'))} {s.get('price')} 元｜"
-                     f"{s.get('rise_prob')}%｜{(s.get('edge') or 0):+.1f}")
+                     f"{s.get('rise_prob')}%｜{(s.get('edge') or 0):+.1f}{' 📈營收創高' if s.get('rev_hot') else ''}")
         if ai.get("edge_filter") is False:
             L.append("<i>（今天沒有股票通過勝率門檻，以上為原始排序，參考性較低）</i>")
         if ai.get("strategy"):

@@ -4,10 +4,12 @@ AI 選股條件（門檻＋排序）與「每月自動調整」
 純計算模組，不連網。每日排程（auto_analysis.py）用它決定推薦哪些股票；
 績效計算（performance.py）用同一份邏輯回測不同條件，確保「模擬的」＝「實際推薦的」。
 
-可調整的條件（共 18 組；範圍刻意收窄，避免在雜訊裡挑出「剛好最好」的組合）
+可調整的條件（每次比 19 組；範圍刻意收窄，避免在雜訊裡挑出「剛好最好」的組合）
   min_prob : 漲機率門檻（%）             50 / 60
   min_edge : 勝率優勢門檻（百分點，需大於） 0 / 3 / 6
   rank     : 排序方式  prob_conf＝漲機率×0.6＋信心度×0.4（原本的） / edge＝勝率優勢 / precision＝歷史命中率
+  rev      : off＝不看營收 / prefer＝「最新月營收創 12 個月新高且年增 ≥ 20%」的股票排前面
+             （個股勝率實驗室 2019~2026 驗證：傾向較好；要不要開由下面的實際成績決定）
   min_support 固定 5（驗證期至少喊漲 5 次，數字才有意義）
 
 自動調整規則（每月最多一次）——目標：提高「勝率」（前 5 名持有 20 日後賺錢的比例），但不犧牲報酬
@@ -19,13 +21,15 @@ AI 選股條件（門檻＋排序）與「每月自動調整」
   4. 使用者可在回測頁「鎖定」條件（不再自動調整）或「恢復預設」。
 """
 
-DEFAULT = {"min_prob": 50, "min_edge": 0, "min_support": 5, "rank": "prob_conf", "locked": False}
+DEFAULT = {"min_prob": 50, "min_edge": 0, "min_support": 5, "rank": "prob_conf", "rev": "off", "locked": False}
 GRID = {
     "min_prob": [50, 60],
     "min_edge": [0, 3, 6],
     "rank":     ["prob_conf", "edge", "precision"],
+    "rev":      ["off", "prefer"],
 }
 RANK_NAMES = {"prob_conf": "漲機率＋信心度", "edge": "勝率優勢", "precision": "歷史命中率"}
+REV_NAMES = {"off": "", "prefer": "營收創新高優先"}
 
 TOP_PICKS = 5       # 追蹤與評估的是「每天前 5 名」
 HOLD      = 20      # 追蹤 20 個交易日（約一個月）
@@ -33,7 +37,7 @@ MIN_DAYS  = 20      # 至少 20 個已到期交易日才評估（每組條件約
 MIN_PICKS = 60
 MIN_WIN_GAIN    = 5.0   # 勝率至少高 5 個百分點才換
 MAX_EXCESS_DROP = 0.5   # 平均超額報酬最多只能比現行少 0.5 個百分點（不為了勝率犧牲報酬）
-MIN_T     = 2.2     # 逐日配對 t 值門檻：模擬 18 組一起比時，純雜訊誤換約 5%、強訊號 30 天抓到約 7 成
+MIN_T     = 2.2     # 逐日配對 t 值門檻：模擬 19 組一起比時，純雜訊誤換約 5%、強訊號 30 天抓到約 7 成
 COOLDOWN  = 20      # 兩次調整至少隔 20 個交易日（每月最多一次）
 
 
@@ -50,6 +54,8 @@ def normalize(cfg):
                 pass
         elif k == "rank" and v in RANK_NAMES:
             out[k] = v
+        elif k == "rev" and v in REV_NAMES:
+            out[k] = v
         elif k == "locked":
             out[k] = bool(v)
     return out
@@ -58,12 +64,12 @@ def normalize(cfg):
 def describe(cfg):
     c = normalize(cfg)
     return (f"漲機率 ≥ {c['min_prob']}%、勝率優勢 > {c['min_edge']}、"
-            f"依「{RANK_NAMES[c['rank']]}」排序")
+            f"依「{RANK_NAMES[c['rank']]}」排序" + ("、營收創新高優先" if c["rev"] == "prefer" else ""))
 
 
 def same_rule(a, b):
     a, b = normalize(a), normalize(b)
-    return all(a[k] == b[k] for k in ("min_prob", "min_edge", "min_support", "rank"))
+    return all(a[k] == b[k] for k in ("min_prob", "min_edge", "min_support", "rank", "rev"))
 
 
 def rank_score(s, rank):
@@ -87,18 +93,28 @@ def select(cands, cfg, n=None):
     回傳 (選出的清單, 是否有通過門檻)
     """
     cfg = normalize(cfg)
-    ranked = sorted(cands, key=lambda s: rank_score(s, cfg["rank"]), reverse=True)
+    if cfg["rev"] == "prefer":
+        key = lambda s: (1 if s.get("rev_hot") else 0,) + rank_score(s, cfg["rank"])
+    else:
+        key = lambda s: rank_score(s, cfg["rank"])
+    ranked = sorted(cands, key=key, reverse=True)
     qualified = [s for s in ranked if qualifies(s, cfg)]
     picked = qualified if qualified else ranked
     return (picked[:n] if n else picked), bool(qualified)
 
 
-def all_configs():
+def all_configs(current=None):
+    """
+    門檻×排序 18 組（營收選項維持現行），再加「現行條件只切換營收選項」1 組，共 19 組。
+    不做 36 組全排列：一起比的組合越多越容易在雜訊裡挑到「剛好最好」的（模擬 36 組時誤換率約 15%）。
+    """
+    cur = normalize(current)
     out = []
     for p in GRID["min_prob"]:
         for e in GRID["min_edge"]:
             for r in GRID["rank"]:
-                out.append(normalize({"min_prob": p, "min_edge": e, "rank": r}))
+                out.append(normalize({"min_prob": p, "min_edge": e, "rank": r, "rev": cur["rev"]}))
+    out.append(normalize({**cur, "rev": "off" if cur["rev"] == "prefer" else "prefer"}))
     return out
 
 
@@ -133,7 +149,7 @@ def evaluate(days, cfg):
     m = _mean(excs)
     return {
         "_daily": daily,
-        "min_prob": cfg["min_prob"], "min_edge": cfg["min_edge"], "rank": cfg["rank"],
+        "min_prob": cfg["min_prob"], "min_edge": cfg["min_edge"], "rank": cfg["rank"], "rev": cfg["rev"],
         "n": len(rets),
         "win": _winrate(rets),
         "mean": round(m, 2) if m is not None else None,
@@ -177,7 +193,7 @@ def decide(current, days, days_since_change):
                 "message": f"資料累積中：已到期 {n_days}/{MIN_DAYS} 個交易日（每天的前 5 名要追蹤滿 {HOLD} 個交易日）"}
 
     cur = evaluate(days, current)
-    table = [evaluate(days, c) for c in all_configs()]
+    table = [evaluate(days, c) for c in all_configs(current)]
     table = [t for t in table if t["win"] is not None]
     table.sort(key=lambda t: (t["win"], t["mean"] if t["mean"] is not None else -99), reverse=True)
     for t in table:
@@ -192,7 +208,7 @@ def decide(current, days, days_since_change):
 
     best = table[0]
     best_cfg = normalize({**current, "min_prob": best["min_prob"], "min_edge": best["min_edge"],
-                          "rank": best["rank"]})
+                          "rank": best["rank"], "rev": best["rev"]})
     gain = round(best["win"] - cur["win"], 1)
     if same_rule(best_cfg, current):
         return {**base, "status": "kept", "message": f"現行條件勝率就是最高的（{cur['win']}%），維持"}

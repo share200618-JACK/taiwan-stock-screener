@@ -367,7 +367,7 @@ async function loadStrategy(s) {
   if (T && T.table && T.table.length) {
     const ce = T.current_eval;
     const row = (t, mark) => `<tr style="${mark ? 'color:var(--gold);' : ''}">
-      <td style="padding:4px 6px;text-align:left;">${mark ? '現行 ' : ''}≥${t.min_prob}% / >${t.min_edge} / ${names[t.rank] || t.rank}</td>
+      <td style="padding:4px 6px;text-align:left;">${mark ? '現行 ' : ''}≥${t.min_prob}% / >${t.min_edge} / ${names[t.rank] || t.rank}${t.rev === 'prefer' ? ' / 📈營收創高優先' : ''}</td>
       <td style="font-weight:700;">${t.win ?? '—'}%</td><td style="color:${_col(t.mean)};">${_sg(t.mean)}</td>
       <td>${t.h1 ?? '—'}%</td><td>${t.h2 ?? '—'}%</td><td>${t.n}</td></tr>`;
     table = `<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;font-size:.68rem;text-align:right;font-family:'JetBrains Mono',monospace;">
