@@ -212,7 +212,12 @@ def finmind_get(dataset, data_id, start_date, end_date=None):
             print(f"\n   ⚠️ FinMind 額度用盡（{r.status_code}），之後改用 TWSE 備援", end=" ")
             return None
         if r.status_code != 200:
-            _fm_warn(dataset, f"HTTP {r.status_code} {str(body.get('msg', ''))[:80]}")
+            msg = str(body.get('msg', ''))
+            _fm_warn(dataset, f"HTTP {r.status_code} {msg[:80]}")
+            if r.status_code in (400, 401, 403) and "token" in msg.lower():
+                # token 無效時每次呼叫都會失敗，還白等 7 秒 → 直接停用，改走 TWSE 備援
+                _fm_state["disabled"] = _fm_state["token_bad"] = True
+                print("\n   ⚠️ FinMind token 無效，本次不再呼叫 FinMind（請更新 GitHub Secrets 的 FINMIND_TOKEN）", flush=True)
             return None
         return body.get("data", []) or []
     except Exception as e:
@@ -1179,7 +1184,8 @@ def run():
     print(f"   分析耗時 {(_time.time() - t0) / 60:.0f} 分鐘", flush=True)
     notify.record("ai", {"minutes": round((_time.time() - t0) / 60), "planned": len(stocks),
                          "analyzed": len(results), "fm_calls": _fm_state["calls"],
-                         "fm_quota_out": bool(_fm_state["disabled"]), "fm_errors": _fm_errors})
+                         "fm_quota_out": bool(_fm_state["disabled"]) and not _fm_state.get("token_bad"),
+                         "fm_token_bad": bool(_fm_state.get("token_bad")), "fm_errors": _fm_errors})
 
     if not results:
         save_result({"error": "本次分析無有效推薦", "time": now_str,

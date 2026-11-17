@@ -254,7 +254,7 @@ def fetch_closes(code, start, end):
         _fm["reused"] += 1
         _price_cache[key] = shared
         return shared
-    if _fm["quota_out"] or not FINMIND_TOKEN:
+    if _fm["quota_out"] or _fm.get("token_bad") or not FINMIND_TOKEN:
         return []
     wait = FINMIND_MIN_INTERVAL - (_time.time() - _fm["last"])
     if wait > 0:
@@ -278,6 +278,10 @@ def fetch_closes(code, start, end):
             if _fm["empty"] <= 3:     # 之前失敗完全不印，績效一直是 0 筆卻看不出原因
                 log(f"  ⚠️ FinMind {code} 沒有資料：HTTP {r.status_code} "
                     f"status={body.get('status')} msg={str(body.get('msg', ''))[:100]}")
+            if r.status_code in (400, 401, 403) and "token" in str(body.get("msg", "")).lower():
+                _fm["token_bad"] = True       # token 無效：之後每次都會失敗，不再白等
+                log("  ⚠️ FinMind token 無效，其餘股票只用 AI 已抓的股價（請更新 FINMIND_TOKEN）")
+                return []
         out = []
         for row in body.get("data", []) if r.status_code == 200 else []:
             cl = safe_float(row.get("close", 0))
@@ -530,7 +534,7 @@ def run():
     tuning = run_tuning(cand_recs, cand_results)
     _record({"ai_done": len(results), "left_done": len(left_results), "cand_done": len(cand_results),
              "fm_calls": _fm["calls"], "fm_empty": _fm.get("empty", 0), "reused": _fm["reused"],
-             "quota_out": _fm["quota_out"],
+             "quota_out": _fm["quota_out"], "token_bad": bool(_fm.get("token_bad")),
              "tuning": {k: tuning.get(k) for k in ("status", "message", "matured_days", "need_days",
                                                    "describe", "describe_new")}})
     if not results and not left_results and not cand_results:
@@ -634,7 +638,7 @@ def run():
     summary["tuning"]     = tuning
     summary["model_days"] = MODEL_DAYS
     summary["window_days"] = WINDOW_DAYS
-    summary["incomplete"] = _fm["quota_out"]
+    summary["incomplete"] = bool(_fm["quota_out"] or _fm.get("token_bad"))
 
     # 印出摘要
     log("════════ AI 選股實戰績效摘要 ════════")
