@@ -99,6 +99,10 @@ def build(status, outcomes, now=None):
                     if g.get("win60") is not None else "")
             L.append(f"・{esc(g['name'])}：{tag}{esc(g['state_name'])}，"
                      f"目前{'上漲' if g.get('trend') == 'up' else '下跌'}段 {_num(g.get('since_pivot_pct'))}{stat}")
+            vname = {"effective": "穩定有效", "lean": "傾向較好", "avoid": "應該避開", "lean_avoid": "傾向較差"}
+            for t in g.get("tech_today") or []:
+                L.append(f"  📐 今天出現「{esc(t['name'])}」（{vname.get(t['verdict'], '')}，"
+                         f"過去 60 日勝率 {t.get('win60')}% vs 任意日 {g.get('tech_base_win60')}%）")
     if wave and wave.get("saved") is False:
         L.append("<i>（正2 波浪結果沒存進 Supabase，請建立 etf_wave_results 表）</i>")
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>正2波浪</title>
+<title>正2波浪與技術指標</title>
 <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 :root{
@@ -29,6 +29,15 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',system-ui,
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
 .tab{padding:8px 14px;border-radius:9px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.8rem;font-weight:700;cursor:pointer;}
 .tab.on{color:#fff;border-color:rgba(34,211,238,.5);background:rgba(34,211,238,.12);}
+.mode{display:flex;gap:0;margin-bottom:16px;border:1px solid var(--bd);border-radius:11px;overflow:hidden;}
+.mode button{flex:1;padding:11px;border:none;background:var(--s1);color:var(--dim);font-size:.85rem;font-weight:800;cursor:pointer;}
+.mode button.on{background:linear-gradient(135deg,rgba(34,211,238,.25),rgba(61,139,255,.2));color:#fff;}
+.badge{display:inline-block;padding:2px 7px;border-radius:999px;font-size:.62rem;font-weight:700;}
+.b-eff{background:rgba(255,77,94,.15);color:var(--red);border:1px solid rgba(255,77,94,.35);}
+.b-lean{background:rgba(240,180,41,.12);color:var(--gold);border:1px solid rgba(240,180,41,.3);}
+.b-avoid{background:rgba(39,217,129,.12);color:var(--grn);border:1px solid rgba(39,217,129,.3);}
+.b-none{color:var(--dim);}
+tr.cat td{color:var(--cyan);font-weight:700;font-size:.68rem;padding-top:12px;border-bottom:none;}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
 .chip{padding:4px 10px;border-radius:999px;border:1px solid var(--bd);background:transparent;color:var(--dim);font-size:.72rem;cursor:pointer;font-family:'JetBrains Mono',monospace;}
 .chip.on{color:#fff;border-color:var(--cyan);background:rgba(34,211,238,.15);}
@@ -79,11 +88,12 @@ select{padding:6px 8px;background:var(--s3);border:1px solid var(--bd);border-ra
 </div>
 
 <div class="card">
-  <div class="title">🌊 台股正2 × 波浪理論：什麼時候買勝率較高？</div>
+  <div class="title">🌊 台股正2：什麼時候買勝率較高？（波浪理論＋技術指標）</div>
   <div class="sub">
     把波浪畫在指數上（臺灣50 用 0050 含息還原、加權用加權報酬指數，2003 年起），用規則化的艾略特波浪判讀每個波段高低點，
     再統計「在那個位置買正2，之後 20／60／120 個交易日」的勝率與報酬，和「任何一天買進」比較。
-    高低點要等價格反轉 θ 才確認，確認後隔天收盤才進場——<b>不偷看未來</b>。每個交易日排程跑完自動更新。
+    高低點要等價格反轉 θ 才確認，確認後隔天收盤才進場——<b>不偷看未來</b>。
+    「技術指標」分頁用同樣方式測 MACD、量能、均線、RSI、KD、布林、回檔幅度等 25 種訊號。每個交易日排程跑完自動更新。
     <span id="gen"></span>
   </div>
 </div>
@@ -108,7 +118,8 @@ select{padding:6px 8px;background:var(--s3);border:1px solid var(--bd);border-ra
 
 <script>
 const API = location.hostname === 'localhost' ? 'http://localhost:5000' : '';
-let DATA = null, G = 'tw50', TH = null, SRC = 'synthetic', chart = null;
+let DATA = null, G = 'tw50', TH = null, SRC = 'synthetic', chart = null, MODE = 'wave';
+try { MODE = localStorage.getItem('etfMode') || 'wave'; } catch (e) {}
 const H = ['20', '60', '120'];
 const COLORS = {w3_start:'#ff4d5e', w5_start:'#ff8a3d', abc_end:'#f0b429', low_other:'#8892a6',
                 w3_top:'#3d8bff', w5_top:'#a855f7', b_top:'#22d3ee', high_other:'#5b6478'};
@@ -144,8 +155,13 @@ async function load() {
   }
 }
 
+function setMode(m) { MODE = m; try { localStorage.setItem('etfMode', m); } catch (e) {} render(); }
+
 function render() {
   const g = DATA.groups[G];
+  const modeHtml = `<div class="mode"><button class="${MODE === 'wave' ? 'on' : ''}" onclick="setMode('wave')">🌊 波浪理論</button>
+    <button class="${MODE === 'tech' ? 'on' : ''}" onclick="setMode('tech')">📐 技術指標（MACD・量能…）</button></div>`;
+  if (MODE === 'tech') { renderTech(modeHtml); return; }
   const groupsHtml = Object.entries(DATA.groups).map(([k, v]) => {
     const codes = DATA.etfs.filter(e => e.group === k).map(e => e.code).join('・');
     return `<button class="tab ${k === G ? 'on' : ''}" onclick="G='${k}';SRC='synthetic';render()">${esc(v.name)}（${codes}）</button>`;
@@ -157,7 +173,7 @@ function render() {
     .concat(Object.keys(T.etf || {}).map(c => [c, `實際 ${c}（${(DATA.etfs.find(e => e.code === c) || {}).listed?.slice(0, 4) || ''} 起）`]))
     .map(([v, l]) => `<option value="${v}" ${v === SRC ? 'selected' : ''}>${esc(l)}</option>`).join('');
 
-  document.getElementById('app').innerHTML = `
+  document.getElementById('app').innerHTML = modeHtml + `
     <div class="card">
       <div class="tabs">${groupsHtml}</div>
       <div class="chips"><span class="lbl">波段認定（反轉 θ）：</span>${thChips}</div>
@@ -188,6 +204,84 @@ function render() {
       ${renderEtfs()}
     </div>`;
   drawChart(g, T);
+}
+
+// ── 技術指標 ──
+const VERDICT = {effective: ['穩定有效', 'b-eff'], lean: ['傾向較好', 'b-lean'], none: ['無明顯差異', 'b-none'],
+                 lean_avoid: ['傾向較差', 'b-avoid'], avoid: ['應該避開', 'b-avoid']};
+const vb = v => `<span class="badge ${VERDICT[v][1]}">${VERDICT[v][0]}</span>`;
+
+function groupTabs() {
+  return Object.entries(DATA.groups).map(([k, v]) => {
+    const codes = DATA.etfs.filter(e => e.group === k).map(e => e.code).join('・');
+    return `<button class="tab ${k === G ? 'on' : ''}" onclick="G='${k}';render()">${esc(v.name)}（${codes}）</button>`;
+  }).join('');
+}
+
+function renderTech(modeHtml) {
+  const g = DATA.groups[G], t = g && g.tech;
+  const app = document.getElementById('app');
+  if (!t) { app.innerHTML = modeHtml + `<div class="card"><div class="tabs">${groupTabs()}</div><div class="empty">技術指標資料尚未產生（下次排程更新後出現）</div></div>`; return; }
+  const b = t.baseline, sigs = t.signals;
+  const active = sigs.filter(s => s.active);
+  const good = sigs.filter(s => s.verdict === 'effective' || s.verdict === 'lean');
+  const bad = sigs.filter(s => s.verdict === 'avoid' || s.verdict === 'lean_avoid');
+  const line = s => `${esc(s.name)} ${vb(s.verdict)}：60 日勝率 <b class="${(s.stats['60'].win ?? 0) >= b['60'].win ? 'up' : 'dn'}">${s.stats['60'].win ?? '—'}%</b>、平均 ${pc(s.stats['60'].avg)}
+    <span style="color:var(--dim);">（獨立樣本 ${s.n_eff}、前半 ${s.half[0].win ?? '—'}% vs ${s.half[0].base}%、後半 ${s.half[1].win ?? '—'}% vs ${s.half[1].base}%）</span>`;
+  const CAT_ORDER = ['均線', 'MACD', 'RSI/KD', '布林', '量能', '回檔', '組合'];
+  const cats = [...new Set(sigs.map(s => s.cat))].sort((a, z) => CAT_ORDER.indexOf(a) - CAT_ORDER.indexOf(z));
+  const ordered = cats.flatMap(c => [{hdr: c}, ...sigs.filter(s => s.cat === c)]);
+  const cell = (st, h) => {
+    const s = st[h] || {};
+    if (!s.n) return '<td class="num">—</td><td class="num">—</td>';
+    return `<td class="num ${s.win >= (b[h].win ?? 0) ? 'up' : 'dn'}">${s.win}%</td><td class="num ${cls(s.avg)}">${pc(s.avg)}</td>`;
+  };
+  const strat = Object.entries(t.strategies || {}).map(([k, v]) => `
+    <tr class="cat"><td colspan="5">${esc(k)}（${esc(v.from)} 起）</td></tr>
+    ${[['正2 一直抱著', v.buy_hold_2x], ['正2，指數站上年線才持有', v.ma200_2x], ['原型指數一直抱著（參考）', v.index_1x]].map(([n, x]) =>
+      `<tr><td>${n}</td><td class="num ${cls(x.cagr)}">${pc(x.cagr)}</td><td class="num dn">${pc(x.mdd)}</td><td class="num">${x.final}×</td><td class="num">${x.in_market}%</td></tr>`).join('')}`).join('');
+
+  app.innerHTML = modeHtml + `
+    <div class="card">
+      <div class="tabs">${groupTabs()}</div>
+      <div class="sub">基準：任何一天買進正2，60 日勝率 <b>${b['60'].win}%</b>、平均 ${pc(b['60'].avg)}
+        （前半段 ${t.halves.base_win[0]}%、後半段 ${t.halves.base_win[1]}%，以 ${esc(t.halves.split)} 為界）。量能用 0050 成交金額代表市場量。</div>
+      <div class="title" style="font-size:.92rem;margin-top:12px;">🔔 目前成立／最近 5 日出現的訊號</div>
+      ${active.length ? active.map(s => `<div class="note ${s.verdict === 'effective' || s.verdict === 'lean' ? 'n-good' : s.verdict.includes('avoid') ? 'n-warn' : 'n-info'}">
+        ${s.today ? '🆕 今天：' : s.kind === 'state' ? '目前：' : '最近：'}${line(s)}</div>`).join('')
+        : '<div class="note n-info">目前沒有任何訊號成立。</div>'}
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">🎯 勝率較高的機會</div>
+      ${good.length ? good.map(s => `<div class="note n-good">${line(s)}</div>`).join('')
+        : `<div class="note n-info">25 種訊號裡，沒有一個的勝率「顯著、且前後兩段期間都」高於任何一天買進。
+           正2 在台股長期向上的行情裡，隨便哪天買的勝率本來就不低（${b['60'].win}%），單一技術訊號很難再明顯拉高。</div>`}
+      ${bad.length ? `<div class="title" style="font-size:.85rem;margin-top:14px;">⛔ 勝率較差、出現時建議避開</div>` + bad.map(s => `<div class="note n-warn">${line(s)}</div>`).join('') : ''}
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">📊 全部 25 種訊號（合成正2，${esc(g.start.slice(0, 4))} 起）</div>
+      <div class="tbl-wrap"><table>
+        <tr><th>訊號出現後隔天買進</th>${H.map(h => `<th>${h}日勝率</th><th>${h}日平均</th>`).join('')}<th>次數</th><th>獨立樣本</th><th>前半/後半 60日勝率</th><th>判定</th></tr>
+        ${ordered.map(s => s.hdr ? `<tr class="cat"><td colspan="11">${esc(s.hdr)}</td></tr>` :
+          `<tr class="${s.n_eff < 8 ? 'low' : ''}"><td>${esc(s.name)}${s.today ? ' 🆕' : s.active ? ' 🔔' : ''}</td>${H.map(h => cell(s.stats, h)).join('')}
+           <td class="num">${s.stats['60'].n || 0}</td><td class="num">${s.n_eff}</td>
+           <td class="num">${s.half[0].win ?? '—'}% / ${s.half[1].win ?? '—'}%</td><td>${vb(s.verdict)}</td></tr>`).join('')}
+        <tr class="base"><td>任何一天買進（基準）</td>${H.map(h => `<td class="num">${b[h].win}%</td><td class="num">${pc(b[h].avg)}</td>`).join('')}
+          <td class="num">${b['60'].n}</td><td></td><td class="num">${t.halves.base_win[0]}% / ${t.halves.base_win[1]}%</td><td></td></tr>
+      </table></div>
+      <div class="sub" style="margin-top:8px;">
+        判定：<b>穩定有效</b>＝獨立樣本 ≥ 8、60 日勝率比基準高 ≥ 5 個百分點、z ≥ 3、前後兩段各自都高 ≥ 3 個百分點；
+        <b>傾向較好</b>＝z ≥ 2 且前後兩段都較好（參考）。獨立樣本＝彼此相隔 ≥ 60 個交易日的次數——同一波下跌裡連續出現的訊號結果幾乎一樣，不能重複計算。
+        🔔＝目前成立、🆕＝今天出現。
+      </div>
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">🧭 策略比較：正2 一直抱著 vs 站上年線才持有</div>
+      <div class="tbl-wrap"><table>
+        <tr><th>策略（收盤判斷、隔天換手）</th><th>年化報酬</th><th>最大跌幅</th><th>資金變幾倍</th><th>持有時間</th></tr>${strat}
+      </table></div>
+      <div class="sub" style="margin-top:8px;">年線濾網：指數收盤在 200 日均線之上才持有正2，跌破就空手（未計交易成本與稅）。用來看「避開空頭」能不能降低正2 的大幅回檔。</div>
+    </div>`;
 }
 
 function renderCurrent(g, T) {
