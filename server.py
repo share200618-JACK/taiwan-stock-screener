@@ -1994,6 +1994,39 @@ def etf_wave_latest():
         return jsonify({"ok": False, "error": str(e)})
 
 
+# ── 個股勝率實驗室（每週 signal_lab.py 寫入 analysis_store, key=signal_lab）──
+@app.route("/signal-lab")
+def signal_lab_page():
+    return send_from_directory(".", "signal_lab.html")
+
+_signal_lab_cache = {"t": 0, "data": None}
+
+@app.route("/api/signal-lab/latest")
+def signal_lab_latest():
+    import time as _t
+    if _signal_lab_cache["data"] and _t.time() - _signal_lab_cache["t"] < 600:
+        return jsonify(_signal_lab_cache["data"])
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定 Supabase"})
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_store",
+                         params={"select": "date,payload", "key": "eq.signal_lab", "order": "date.desc", "limit": "1"},
+                         headers=_sb_headers(), timeout=20)
+        if r.status_code != 200:
+            return jsonify({"ok": False, "missing_table": r.status_code in (400, 404), "error": f"Supabase {r.status_code}"})
+        rows = r.json()
+        if not rows:
+            return jsonify({"ok": False, "error": "尚無資料"})
+        payload = rows[0].get("payload")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        data = {"ok": True, "date": rows[0].get("date"), "payload": payload}
+        _signal_lab_cache.update({"t": _t.time(), "data": data})
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 # ── 實戰績效（每日排程 performance.py 寫入 performance_summary）──
 # 回測頁一直呼叫這個網址，但之前伺服器沒有這條路由，實戰績效區塊永遠是空的
 @app.route("/api/performance")

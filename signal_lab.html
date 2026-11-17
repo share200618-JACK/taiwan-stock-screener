@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>個股勝率實驗室</title>
+<style>
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;--cyan:#22d3ee;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',system-ui,sans-serif;padding-bottom:40px;}
+.w{max-width:1000px;margin:0 auto;padding:0 14px;}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 0;flex-wrap:wrap;}
+.tlogo{display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--txt);}
+.tlogo-icon{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#a855f7,#3d8bff);display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
+.tlogo-text{font-size:1rem;font-weight:800;}
+.nav-links{display:flex;gap:4px;flex-wrap:wrap;}
+.nav-link{padding:5px 10px;border-radius:6px;font-size:.7rem;font-weight:600;text-decoration:none;color:var(--dim);}
+.nav-link:hover{color:#fff;background:rgba(255,255,255,.07);}
+.nav-link.active{color:#fff;background:rgba(168,85,247,.25);}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:16px;}
+.title{font-size:1.05rem;font-weight:800;margin-bottom:6px;}
+.sub{font-size:.76rem;color:var(--dim);line-height:1.7;}
+.badge{display:inline-block;padding:2px 7px;border-radius:999px;font-size:.62rem;font-weight:700;white-space:nowrap;}
+.b-effective{background:rgba(255,77,94,.15);color:var(--red);border:1px solid rgba(255,77,94,.35);}
+.b-lean{background:rgba(240,180,41,.12);color:var(--gold);border:1px solid rgba(240,180,41,.3);}
+.b-avoid{background:rgba(39,217,129,.15);color:var(--grn);border:1px solid rgba(39,217,129,.35);}
+.b-lean_avoid{background:rgba(39,217,129,.08);color:var(--grn);border:1px solid rgba(39,217,129,.2);}
+.b-none{color:var(--dim);}
+.box{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.box>div{flex:1;min-width:130px;background:rgba(0,0,0,.25);border-radius:10px;padding:10px;text-align:center;}
+.box .k{font-size:.64rem;color:var(--dim);margin-bottom:4px;}
+.box .v{font-size:1.05rem;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.box .s{font-size:.6rem;color:var(--dim);margin-top:3px;}
+.note{border-radius:10px;padding:12px;font-size:.78rem;line-height:1.7;margin-top:10px;}
+.n-good{background:rgba(255,77,94,.08);border:1px solid rgba(255,77,94,.28);}
+.n-bad{background:rgba(39,217,129,.07);border:1px solid rgba(39,217,129,.25);}
+.n-info{background:rgba(61,139,255,.08);border:1px solid rgba(61,139,255,.25);}
+.n-warn{background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.25);color:var(--gold);}
+.tbl-wrap{overflow-x:auto;margin-top:10px;}
+table{width:100%;border-collapse:collapse;font-size:.72rem;}
+th,td{padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);text-align:right;white-space:nowrap;}
+th{color:var(--dim);font-weight:600;font-size:.66rem;}
+td:first-child,th:first-child{text-align:left;white-space:normal;min-width:170px;}
+td.num{font-family:'JetBrains Mono',monospace;}
+tr.cat td{color:var(--pur);font-weight:700;font-size:.68rem;padding-top:12px;border-bottom:none;}
+tr.base td{color:var(--dim);border-top:1px solid var(--bd);}
+.up{color:var(--red);} .dn{color:var(--grn);}
+.hits{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;}
+.hit{background:var(--s2);border:1px solid var(--bd);border-radius:8px;padding:5px 9px;font-size:.72rem;}
+.hit .d{color:var(--dim);font-size:.62rem;margin-left:4px;font-family:'JetBrains Mono',monospace;}
+.grp{margin-top:14px;}
+.grp-h{font-size:.8rem;font-weight:700;margin-bottom:2px;}
+.empty{text-align:center;color:var(--dim);font-size:.85rem;padding:40px 10px;line-height:1.8;}
+code{background:var(--s3);padding:1px 5px;border-radius:4px;font-size:.72rem;}
+</style>
+</head>
+<body>
+<div class="w">
+<div class="topbar">
+  <a href="/" class="tlogo"><div class="tlogo-icon">🔬</div><span class="tlogo-text">個股勝率</span></a>
+  <nav class="nav-links">
+    <a href="/" class="nav-link">📊 儀表板</a>
+    <a href="/analyze" class="nav-link">🤖 AI分析</a>
+    <a href="/backtest" class="nav-link">📈 回測</a>
+    <a href="/watchlist" class="nav-link">👁️ 追蹤</a>
+    <a href="/factor-lab" class="nav-link">🧪 因子實驗室</a>
+    <a href="/etf-wave" class="nav-link">🌊 正2波浪</a>
+    <a href="/signal-lab" class="nav-link active">🔬 個股勝率</a>
+  </nav>
+</div>
+
+<div class="card">
+  <div class="title">🔬 個股：哪些邏輯真的能提高勝率？</div>
+  <div class="sub">
+    從所有上市櫃普通股<b>隨機抽約 200 支</b>（不是挑現在的熱門股，避免只看到贏家），2019 年起逐日檢查營收、籌碼、動能、過熱、趨勢等邏輯，
+    統計出現訊號後 20／60 個交易日<b>贏過同期所有股票平均</b>的機率（扣掉大盤漲跌，所以多頭年不會灌水）。
+    決策用當天收盤後才知道的資料、隔天收盤進場；法人籌碼晚一天、月營收視為隔月 11 日才知道——<b>不偷看未來</b>。每週六晚上自動更新。
+    <span id="gen"></span>
+  </div>
+</div>
+
+<div id="app"><div class="card empty">載入中…</div></div>
+
+<div class="card">
+  <div class="title" style="font-size:.9rem;">📖 怎麼判讀</div>
+  <div class="sub">
+    • <b>勝率</b>：出現訊號的股票，之後報酬<b>高於同一天所有合格股票的平均</b>的比例。因為少數股票大漲會拉高平均，「任何一支股票」的勝率通常不到 50%，要和<b>基準</b>比。<br>
+    • <b>超額</b>：之後報酬減掉同期平均（百分點）。<b>t</b>：把每個月出現訊號的股票平均起來，逐月檢定；同一天很多支一起出現只算一次，避免誇大。<br>
+    • <span class="badge b-effective">穩定有效</span> 樣本 ≥ 100、≥ 18 個月有訊號、t ≥ 3、勝率高於基準 ≥ 3 個百分點、前後兩段期間都比較好、60 日也是正的。
+    <span class="badge b-lean">傾向較好</span> t ≥ 2 且前後兩段都較好，但還不夠穩。
+    <span class="badge b-avoid">應該避開</span>／<span class="badge b-lean_avoid">傾向較差</span> 反方向。<br>
+    • 合格股票：20 日均量 ≥ 300 張、股價 ≥ 10 元。動能、趨勢這類「狀態」每 20 個交易日檢查一次；營收、籌碼、過熱這類「事件」同一支股票 20 天內只算一次。<br>
+    • 限制：只有約 200 支、7 年；交易成本未扣（每次來回約 0.6%）；過去有效不代表未來。<b>僅供研究，不構成投資建議。</b>
+  </div>
+</div>
+</div>
+
+<script>
+const API = location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+const pc = v => v == null ? '—' : (v > 0 ? '+' : '') + v + '%';
+const pp = v => v == null ? '—' : (v > 0 ? '+' : '') + v;
+const cls = v => v == null ? '' : v > 0 ? 'up' : v < 0 ? 'dn' : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const VNAME = {effective:'穩定有效', lean:'傾向較好', avoid:'應該避開', lean_avoid:'傾向較差', none:'不明顯'};
+const badge = v => `<span class="badge b-${v}">${VNAME[v] || v}</span>`;
+
+async function load() {
+  const app = document.getElementById('app');
+  try {
+    const r = await fetch(API + '/api/signal-lab/latest');
+    const d = await r.json();
+    if (!d.ok) {
+      app.innerHTML = `<div class="card empty">${d.missing_table
+        ? '⚠️ Supabase 還沒有 <code>analysis_store</code> 資料表，建表後執行「個股勝率實驗室」就會出現。'
+        : '還沒有結果（' + esc(d.error || '') + '）。<br>每週六晚上自動更新，或到 GitHub Actions 手動執行「個股勝率實驗室」（約 1.5 小時）。'}</div>`;
+      return;
+    }
+    render(d.payload, d.date);
+  } catch (e) {
+    app.innerHTML = `<div class="card empty">載入失敗：${esc(e.message)}</div>`;
+  }
+}
+
+function render(P, date) {
+  document.getElementById('gen').innerHTML = `<br>更新：${esc(P.generated || date)}　期間 ${esc(P.period[0])} ~ ${esc(P.period[1])}　${P.n_stocks} 支（全市場 ${P.universe_total} 檔中隨機抽樣）`;
+  const B = P.baseline, S = P.signals;
+  const good = S.filter(s => s.verdict === 'effective' || s.verdict === 'lean');
+  const bad = S.filter(s => s.verdict === 'avoid' || s.verdict === 'lean_avoid');
+  let h = `<div class="card"><div class="title">結論</div>
+    <div class="box">
+      <div><div class="k">基準：任一合格股票 20 日勝率</div><div class="v">${B['20'].win}%</div><div class="s">贏過同期平均的比例</div></div>
+      <div><div class="k">基準 60 日勝率</div><div class="v">${B['60'].win}%</div><div class="s">20 日前後半 ${P.halves.base_win.map(x => x + '%').join(' / ')}</div></div>
+      <div><div class="k">測試邏輯</div><div class="v">${S.length}</div><div class="s">有效 ${S.filter(s => s.verdict === 'effective').length}・避開 ${S.filter(s => s.verdict === 'avoid').length}</div></div>
+    </div>`;
+  if (good.length) h += `<div class="note n-good">✅ <b>提高勝率的邏輯</b><br>${good.map(s =>
+      `${badge(s.verdict)} ${esc(s.name)}：20 日勝率 <b>${s.stats['20'].win}%</b>（基準 ${B['20'].win}%）、平均超額 ${pc(s.stats['20'].avg)}、60 日超額 ${pc(s.stats['60'].avg)}`).join('<br>')}</div>`;
+  else h += `<div class="note n-info">沒有任何邏輯在嚴格標準下顯著提高勝率。</div>`;
+  if (bad.length) h += `<div class="note n-bad">⛔ <b>出現時勝率較低（適合當作「不要買」的過濾條件）</b><br>${bad.map(s =>
+      `${badge(s.verdict)} ${esc(s.name)}：20 日勝率 <b>${s.stats['20'].win}%</b>、平均超額 ${pc(s.stats['20'].avg)}`).join('<br>')}</div>`;
+  h += `</div>`;
+
+  // 全部邏輯
+  const cats = [...new Set(S.map(s => s.cat))];
+  h += `<div class="card"><div class="title">全部邏輯</div><div class="sub">依類別排列；前後半以 ${esc(P.halves.split)} 為界。</div>
+    <div class="tbl-wrap"><table><tr><th>邏輯</th><th>20日勝率</th><th>比基準</th><th>20日超額</th><th>60日勝率</th><th>60日超額</th><th>次數</th><th>月數</th><th>t</th><th>前半/後半勝率</th><th>判定</th></tr>`;
+  for (const c of cats) {
+    h += `<tr class="cat"><td colspan="11">${esc(c)}</td></tr>`;
+    for (const s of S.filter(x => x.cat === c)) {
+      const a = s.stats['20'], b = s.stats['60'];
+      h += `<tr><td>${esc(s.name)}</td><td class="num">${a.win ?? '—'}%</td><td class="num ${cls(a.edge)}">${pp(a.edge)}</td>
+        <td class="num ${cls(a.avg)}">${pc(a.avg)}</td><td class="num">${b.win ?? '—'}%</td><td class="num ${cls(b.avg)}">${pc(b.avg)}</td>
+        <td class="num">${a.n || 0}</td><td class="num">${s.months}</td><td class="num ${cls(s.t20)}">${s.t20}</td>
+        <td class="num">${s.half.map(x => x.win == null ? '—' : x.win + '%').join(' / ')}</td><td>${badge(s.verdict)}</td></tr>`;
+    }
+  }
+  h += `<tr class="base"><td>基準（任一合格股票）</td><td class="num">${B['20'].win}%</td><td></td><td class="num">${pc(B['20'].avg)}</td>
+    <td class="num">${B['60'].win}%</td><td class="num">${pc(B['60'].avg)}</td><td class="num">${B['20'].n}</td><td></td><td></td><td class="num">${P.halves.base_win.map(x => x + '%').join(' / ')}</td><td></td></tr>`;
+  h += `</table></div></div>`;
+
+  // 近期符合
+  const show = [...good, ...bad].filter(s => s.recent && s.recent.length);
+  if (show.length) {
+    h += `<div class="card"><div class="title">近期符合的股票（抽樣的 ${P.n_stocks} 支中）</div>
+      <div class="sub">只涵蓋這次抽樣的股票，不是全市場清單；事件型為最近 10 個交易日、狀態型為最近一次檢查。</div>`;
+    for (const s of show) {
+      h += `<div class="grp"><div class="grp-h">${badge(s.verdict)} ${esc(s.name)}</div><div class="hits">${s.recent.map(r =>
+        `<span class="hit">${esc(r.code)} ${esc(r.name)}<span class="d">${esc(r.date.slice(5))}</span></span>`).join('')}</div></div>`;
+    }
+    h += `</div>`;
+  }
+  document.getElementById('app').innerHTML = h;
+}
+load();
+</script>
+</body>
+</html>
