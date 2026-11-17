@@ -197,6 +197,11 @@ def fetch_closes(code, start, end):
             _fm["quota_out"] = True
             log(f"  ⚠️ FinMind 額度用盡，已抓 {_fm['calls']} 次，其餘樣本本次略過")
             return []
+        if r.status_code != 200 or not body.get("data"):
+            _fm["empty"] = _fm.get("empty", 0) + 1
+            if _fm["empty"] <= 3:     # 之前失敗完全不印，績效一直是 0 筆卻看不出原因
+                log(f"  ⚠️ FinMind {code} 沒有資料：HTTP {r.status_code} "
+                    f"status={body.get('status')} msg={str(body.get('msg', ''))[:100]}")
         out = []
         for row in body.get("data", []) if r.status_code == 200 else []:
             cl = safe_float(row.get("close", 0))
@@ -383,6 +388,8 @@ def run():
 
     log(f"成功計算 AI {len(results)} 筆、左側 {len(left_results)} 筆（其餘因資料不足或非交易日略過）")
     if not results and not left_results:
+        log(f"  ⚠️ 全部沒算出來：FinMind 呼叫 {_fm['calls']} 次、沒資料 {_fm.get('empty', 0)} 次、"
+            f"重用 AI 股價 {_fm['reused']} 檔、額度用盡={_fm['quota_out']}")
         return
     save_perf_cache(results + left_results, horizons)
 
@@ -487,7 +494,7 @@ def run():
             f"平均{lt['avg_return']}% | 超額{lt['avg_excess']}% | 照停損規則平均{lt['rule_avg']}%（停損 {lt['stopped']} 筆）")
     else:
         log(f"──── 籌碼左側：尚無到期樣本（待到期 {lt['pending']} 筆）")
-    log(f"  FinMind 呼叫 {_fm['calls']} 次、重用 AI 已抓股價 {_fm['reused']} 檔"
+    log(f"  FinMind 呼叫 {_fm['calls']} 次（沒資料 {_fm.get('empty', 0)} 次）、重用 AI 已抓股價 {_fm['reused']} 檔"
         f"{'（額度用盡，結果不完整）' if _fm['quota_out'] else ''}")
 
     # ── 寫回 Supabase performance_summary ──
