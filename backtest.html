@@ -360,16 +360,16 @@ async function loadStrategy(s) {
   } else {
     statusHtml = '⏳ 每日排程跑完績效計算後會顯示評估狀態。';
   }
-  const names = {prob_conf: '漲機率＋信心度', edge: '勝率優勢'};
+  const names = {prob_conf: '漲機率＋信心度', edge: '勝率優勢', precision: '歷史命中率'};
   let table = '';
   if (T && T.table && T.table.length) {
     const ce = T.current_eval;
     const row = (t, mark) => `<tr style="${mark ? 'color:var(--gold);' : ''}">
       <td style="padding:4px 6px;text-align:left;">${mark ? '現行 ' : ''}≥${t.min_prob}% / >${t.min_edge} / ${names[t.rank] || t.rank}</td>
-      <td style="color:${_col(t.mean)};">${_sg(t.mean)}</td><td>${t.win ?? '—'}%</td>
-      <td>${_sg(t.h1)}</td><td>${_sg(t.h2)}</td><td>${t.n}</td></tr>`;
+      <td style="font-weight:700;">${t.win ?? '—'}%</td><td style="color:${_col(t.mean)};">${_sg(t.mean)}</td>
+      <td>${t.h1 ?? '—'}%</td><td>${t.h2 ?? '—'}%</td><td>${t.n}</td></tr>`;
     table = `<div style="overflow-x:auto;margin-top:10px;"><table style="width:100%;border-collapse:collapse;font-size:.68rem;text-align:right;font-family:'JetBrains Mono',monospace;">
-      <tr style="color:var(--dim);"><th style="text-align:left;padding:4px 6px;">條件（漲機率/優勢/排序）</th><th>前5名超額</th><th>贏0050</th><th>前半</th><th>後半</th><th>n</th></tr>
+      <tr style="color:var(--dim);"><th style="text-align:left;padding:4px 6px;">條件（漲機率/優勢/排序）</th><th>勝率</th><th>超額</th><th>前半勝率</th><th>後半勝率</th><th>n</th></tr>
       ${ce ? row(ce, true) : ''}${T.table.map(t => row(t, false)).join('')}
     </table></div>`;
   }
@@ -379,7 +379,7 @@ async function loadStrategy(s) {
   el.innerHTML = `
     <div style="font-size:.72rem;color:var(--dim);margin-bottom:8px;">🎯 每天 AI 前 5 名・追蹤一個月（20 個交易日）對 0050：</div>
     ${topHtml}
-    <div style="font-size:.72rem;color:var(--dim);margin:16px 0 6px;">🔧 選股條件（每月依前 5 名實際成績自動調整）：</div>
+    <div style="font-size:.72rem;color:var(--dim);margin:16px 0 6px;">🔧 選股條件（每月自動調整，目標：提高前 5 名勝率）：</div>
     <div style="font-size:.8rem;line-height:1.6;">${locked ? '🔒 ' : ''}<strong>${(st && st.describe) || (T && T.describe) || '漲機率 ≥ 50%、勝率優勢 > 0、依「漲機率＋信心度」排序'}</strong>
       <span style="color:var(--dim);font-size:.7rem;">${since}</span></div>
     <div style="font-size:.72rem;margin-top:6px;line-height:1.6;">${statusHtml}</div>
@@ -390,7 +390,7 @@ async function loadStrategy(s) {
       <button onclick="strategyReset()" style="border:1px solid rgba(255,255,255,.15);background:transparent;color:var(--dim);border-radius:8px;padding:6px 12px;font-size:.72rem;cursor:pointer;">↺ 恢復預設條件</button>
     </div>
     <div style="font-size:.6rem;color:var(--dim);margin-top:8px;line-height:1.6;">
-      規則：已到期滿 20 個交易日才評估；最佳組合要比現行多 ≥1 個百分點、前後兩段期間都較好、樣本 ≥60 筆才會換；每月最多調整一次，調整時會 Telegram 通知。
+      規則：已到期滿 20 個交易日才評估；勝率最高的組合要比現行高 ≥5 個百分點、逐日比較穩定（t ≥ 2.2）、前後兩段期間都較好、平均超額報酬不能明顯變少、樣本 ≥60 筆才會換；每月最多調整一次，調整時會 Telegram 通知。
     </div>`;
 }
 

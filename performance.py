@@ -381,8 +381,8 @@ def run_tuning(cand_recs, cand_results):
     # 只用「有超額報酬」的候選股；一天至少一半的候選股算得出來才算到期
     by_date = defaultdict(list)
     for r in cand_results:
-        if "excess" in r:
-            by_date[r["date"]].append({**r["cand"], "excess": r["excess"]})
+        if "excess" in r and strategy.HOLD in r["returns"]:
+            by_date[r["date"]].append({**r["cand"], "excess": r["excess"], "ret": r["returns"][strategy.HOLD]})
     totals = {d["date"]: len(d.get("candidates", [])) for d in cand_recs}
     days = {d: v for d, v in by_date.items() if totals.get(d) and len(v) >= totals[d] * 0.5}
     since_change = sum(1 for d in totals if d > since) if since else None
