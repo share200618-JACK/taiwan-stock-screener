@@ -186,13 +186,16 @@ def save_strategy(cfg, reason, stats):
 
 
 def send_telegram(msg):
-    if not TG_BOT_TOKEN or not TG_CHAT_ID:
-        return
+    import notify
+    return notify.send(msg)
+
+
+def _record(data):
     try:
-        SESSION.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-                     json={"chat_id": TG_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
-    except Exception as e:
-        log(f"⚠️ Telegram 推播失敗: {e}")
+        import notify
+        notify.record("perf", data)
+    except Exception:
+        pass
 
 
 # ── 抓某股票一段期間的收盤價 ──────────────────────────
@@ -525,6 +528,11 @@ def run():
     log(f"成功計算 AI {len(results)} 筆、左側 {len(left_results)} 筆、候選股 {len(cand_results)} 筆"
         f"（其餘因未到期、資料不足或非交易日略過）")
     tuning = run_tuning(cand_recs, cand_results)
+    _record({"ai_done": len(results), "left_done": len(left_results), "cand_done": len(cand_results),
+             "fm_calls": _fm["calls"], "fm_empty": _fm.get("empty", 0), "reused": _fm["reused"],
+             "quota_out": _fm["quota_out"],
+             "tuning": {k: tuning.get(k) for k in ("status", "message", "matured_days", "need_days",
+                                                   "describe", "describe_new")}})
     if not results and not left_results and not cand_results:
         log(f"  ⚠️ 全部沒算出來：FinMind 呼叫 {_fm['calls']} 次、沒資料 {_fm.get('empty', 0)} 次、"
             f"重用 AI 股價 {_fm['reused']} 檔、額度用盡={_fm['quota_out']}")
@@ -601,6 +609,7 @@ def run():
             "beat_bench": round(len([v for v in exc if v > 0]) / len(exc) * 100, 1) if exc else None,
         })
     by_model["top5"] = st
+    _record({"top5": st})
 
     # ── 籌碼左側（持有 20 日；另算套用 −8% 停損的報酬）──
     done = [r for r in left_results if LEFT_DAYS in r["returns"]]

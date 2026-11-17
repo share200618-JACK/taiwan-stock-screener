@@ -149,22 +149,23 @@ def left_reasons(h, cur, ma20, dates):
 
 
 def send_telegram(msg):
-    if not TG_BOT_TOKEN or not TG_CHAT_ID:
-        log("❌ 未設定 TG_BOT_TOKEN / TG_CHAT_ID，無法推播")
-        return False
+    import notify
+    return notify.send(msg)
+
+
+def _record(data):
     try:
-        r = SESSION.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
-        return r.status_code == 200
-    except Exception as e:
-        log(f"❌ Telegram 推播失敗: {e}")
-        return False
+        import notify
+        notify.record("sell", data)
+    except Exception:
+        pass
 
 
 def run():
     holdings = load_holdings()
     if not holdings:
         log("目前無持倉中的交易，結束")
+        _record({"holdings": 0, "alerts": 0})
         return
     log(f"檢查 {len(holdings)} 檔持倉...")
 
@@ -213,6 +214,7 @@ def run():
 
     if not alerts:
         log("✅ 所有持倉均未觸發賣出條件")
+        _record({"holdings": len(holdings), "alerts": 0})
         return
 
     # 組 Telegram 訊息
@@ -230,6 +232,8 @@ def run():
     msg = "\n".join(lines)
     ok = send_telegram(msg)
     log(f"Telegram 推播: {'✅ 成功' if ok else '❌ 失敗'}")
+    _record({"holdings": len(holdings), "alerts": len(alerts), "sent": ok,
+             "names": [f"{a['name']}({a['code']})" for a in alerts[:10]]})
 
 
 if __name__ == "__main__":
