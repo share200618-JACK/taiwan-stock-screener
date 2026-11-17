@@ -1,0 +1,50 @@
+name: 選股條件體檢
+
+# 手動：GitHub → Actions →「選股條件體檢」→ Run workflow
+#   cases    ：逐筆檢查實際買進的股票（約 10 分鐘）
+#   backtest ：約 400 支、2019 年起回測券商選股條件與過濾條件（約 3 小時）
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "cases 或 backtest"
+        required: true
+        default: "cases"
+
+concurrency:
+  group: strategy-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: 選股條件體檢
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+          CHECK_MODE: ${{ github.event.inputs.mode }}
+        run: python strategy_check.py
+
+      - name: 保存結果檔
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: strategy-check-${{ github.event.inputs.mode }}
+          path: strategy_*_result.json
+          if-no-files-found: ignore
+          retention-days: 30
