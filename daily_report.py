@@ -17,7 +17,8 @@ from notify import esc
 
 SITE_URL = os.environ.get("SITE_URL", "https://taiwan-stock-screener-783z.onrender.com").rstrip("/")
 WEEK = "一二三四五六日"
-STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "PERF_OUTCOME": "績效計算"}
+STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "PERF_OUTCOME": "績效計算",
+              "WAVE_OUTCOME": "正2 波浪分析"}
 
 
 def _num(v, fmt="{:+.1f}", unit="%"):
@@ -26,7 +27,7 @@ def _num(v, fmt="{:+.1f}", unit="%"):
 
 def build(status, outcomes, now=None):
     now = now or (datetime.utcnow() + timedelta(hours=8))
-    ai, left, sell, perf = (status.get(k, {}) for k in ("ai", "left", "sell", "perf"))
+    ai, left, sell, perf, wave = (status.get(k, {}) for k in ("ai", "left", "sell", "perf", "wave"))
     failed = [STEP_NAMES[k] for k, v in outcomes.items() if v in ("failure", "cancelled")]
     L = [f"📊 <b>台股選股日報</b> {now.month}/{now.day}（{WEEK[now.weekday()]}）"]
     if failed:
@@ -86,6 +87,21 @@ def build(status, outcomes, now=None):
         icon = {"collecting": "⏳", "cooldown": "🕒", "kept": "✅", "locked": "🔒"}.get(tun.get("status"), "ℹ️")
         L.append(f"{icon} 選股條件：{esc(tun['message'])}")
 
+    # 正2 波浪（θ 8%）
+    wg = wave.get("groups") or {}
+    if wg:
+        L += ["", "🌊 <b>正2 波浪</b>（θ 8%，合成正2 持有 60 日）"]
+        for g in wg.values():
+            if not g.get("state_name"):
+                continue
+            tag = "🆕 今天確認：" if g.get("new_today") else f"{(g.get('pivot_date') or '')[5:].replace('-', '/')} "
+            stat = (f"｜過去勝率 {g['win60']}%（任意日 {g.get('base_win60')}%）n={g.get('n60')}"
+                    if g.get("win60") is not None else "")
+            L.append(f"・{esc(g['name'])}：{tag}{esc(g['state_name'])}，"
+                     f"目前{'上漲' if g.get('trend') == 'up' else '下跌'}段 {_num(g.get('since_pivot_pct'))}{stat}")
+    if wave and wave.get("saved") is False:
+        L.append("<i>（正2 波浪結果沒存進 Supabase，請建立 etf_wave_results 表）</i>")
+
     # 系統警示
     warn = []
     errs = ai.get("fm_errors") or {}
@@ -112,7 +128,8 @@ def build(status, outcomes, now=None):
     run_url = ""
     if os.environ.get("GITHUB_RUN_ID") and os.environ.get("GITHUB_REPOSITORY"):
         run_url = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
-    links = [f'<a href="{SITE_URL}/analyze">AI 分析</a>', f'<a href="{SITE_URL}/backtest">回測績效</a>']
+    links = [f'<a href="{SITE_URL}/analyze">AI 分析</a>', f'<a href="{SITE_URL}/backtest">回測績效</a>',
+             f'<a href="{SITE_URL}/etf-wave">正2 波浪</a>']
     if run_url:
         links.append(f'<a href="{run_url}">執行紀錄</a>')
     L += ["", "🔗 " + "｜".join(links)]

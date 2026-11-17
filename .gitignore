@@ -4,3 +4,4 @@ perf_cache.json
 analysis_result.json
 __pycache__/
 run_status.json
+etf_wave_result.json

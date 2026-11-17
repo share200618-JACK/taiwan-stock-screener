@@ -1,0 +1,29 @@
+name: 正2波浪更新（手動）
+
+# 平常每日排程會自動更新；想立刻更新時：GitHub → Actions →「正2波浪更新」→ Run workflow（約 1 分鐘）
+on:
+  workflow_dispatch:
+
+jobs:
+  wave:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: 台股正2 × 波浪理論分析
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          PYTHONUNBUFFERED: "1"
+        run: python etf_wave.py
