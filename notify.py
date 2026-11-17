@@ -9,8 +9,8 @@ import json
 import html
 import requests
 
-TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "")
-TG_CHAT_ID   = os.environ.get("TG_CHAT_ID", "")
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
+TG_CHAT_ID   = os.environ.get("TG_CHAT_ID", "").strip()
 STATUS_FILE  = os.environ.get("RUN_STATUS_FILE",
                               os.path.join(os.path.dirname(os.path.abspath(__file__)), "run_status.json"))
 LIMIT = 4000   # Telegram 單則上限 4096 字

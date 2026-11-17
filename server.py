@@ -2325,7 +2325,7 @@ FINMIND_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "f
 def _get_finmind_token():
     """讀取 FinMind Token：優先環境變數，其次本地檔案"""
     import os
-    token = os.environ.get("FINMIND_TOKEN", "")
+    token = os.environ.get("FINMIND_TOKEN", "").strip()
     if token: return token
     try:
         if os.path.exists(FINMIND_TOKEN_FILE):

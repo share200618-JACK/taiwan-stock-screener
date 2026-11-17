@@ -26,7 +26,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
-FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()   # 貼上時多的空白/換行會讓 FinMind 判定 token 無效
 TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN", "")
 TG_CHAT_ID    = os.environ.get("TG_CHAT_ID", "")
 import strategy     # 選股條件與每月自動調整（與 auto_analysis 共用）

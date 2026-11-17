@@ -1,11 +1,12 @@
-name: Telegram 測試
+name: 連線測試（FinMind＋Telegram）
 
-# 到 GitHub → Actions → 「Telegram 測試」→ Run workflow，手機應該會收到一則測試訊息
+# 更新 FINMIND_TOKEN 或 Telegram 設定後：GitHub → Actions →「連線測試」→ Run workflow
+# 約 30 秒；Telegram 設好的話手機會收到測試結果，紀錄裡也看得到
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -20,8 +21,10 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
-      - name: 發送測試訊息
+      - name: 檢查 FinMind 與 Telegram
         env:
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python daily_report.py --test
+          PYTHONUNBUFFERED: "1"
+        run: python check_setup.py
