@@ -518,6 +518,15 @@ def main():
         for b in g.get("best", []):
             log(f"     較佳買點：{b['name']} 60日勝率 {b['win']}%（任意日 {b['base_win']}%）"
                 f"平均 {b['avg']:+.1f}% n={b['n']} θ穩定 {b['stable']}")
+        if not g.get("best"):
+            log("     沒有「顯著且穩定」較佳的波浪買點")
+        base = g["baseline_synthetic"]
+        log(f"     {'位置':<16}" + "".join(f"{h:>4}日勝率/平均" for h in ("20", "60", "120")) + "   n(60)")
+        for st, row in g["thetas"][str(DEFAULT_THETA)]["synthetic"].items():
+            cells = "".join(f"{(row[h].get('win') or 0):>8.1f}%/{(row[h].get('avg') or 0):+6.1f}%" if row[h].get("n")
+                            else f"{'—':>16}" for h in ("20", "60", "120"))
+            log(f"     {STATES[st][0]:<16}{cells}   {row['60'].get('n', 0)}")
+        log(f"     {'任何一天買進':<16}" + "".join(f"{base[h]['win']:>8.1f}%/{base[h]['avg']:+6.1f}%" for h in ("20", "60", "120")))
 
 
 if __name__ == "__main__":
