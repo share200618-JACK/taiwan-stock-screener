@@ -221,7 +221,7 @@ function renderModelCompare(s) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;">${card('舊模型（10/22 以前）', o)}${card('新模型（10/23 起）', n)}</div>
     <div style="font-size:.72rem;margin-top:10px;line-height:1.6;">${verdict}</div>
     ${renderLeftTrack(s.by_model.left, pct, col)}
-    ${s.incomplete ? '<div style="font-size:.62rem;color:#f0b429;margin-top:6px;">⚠️ 本次 FinMind 額度用盡，部分樣本未計入</div>' : ''}`;
+    ${s.incomplete ? '<div style="font-size:.62rem;color:#f0b429;margin-top:6px;">⚠️ 本次 FinMind 額度用盡或 token 無效，部分樣本未計入</div>' : ''}`;
 }
 
 // 籌碼左側名單的實戰追蹤（持有 20 日＝時間停損；另算套用 −8% 停損）

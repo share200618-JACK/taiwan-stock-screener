@@ -89,7 +89,10 @@ def build(status, outcomes, now=None):
     # 系統警示
     warn = []
     errs = ai.get("fm_errors") or {}
-    if errs:
+    if ai.get("fm_token_bad") or perf.get("token_bad"):
+        warn.append("<b>FinMind token 無效</b>（Token is illegal）→ 法人/融資資料抓不到、上櫃股票無法分析、"
+                    "左側選股不會有結果。請到 FinMind 網站複製新的 API token，更新 GitHub Secrets 的 FINMIND_TOKEN")
+    elif errs:
         first = next(iter(errs.items()))
         warn.append(f"FinMind 抓資料失敗（{esc(first[0])}：{esc(first[1])}）→ 法人/融資/大盤資料可能缺，"
                     "請檢查 GitHub Secrets 的 FINMIND_TOKEN")
@@ -99,7 +102,7 @@ def build(status, outcomes, now=None):
         warn.append("大盤資料 0 筆（相對強弱特徵沒有作用）")
     if ai.get("candidates_saved") is False:
         warn.append("候選股沒存進 Supabase（請建立 ai_candidates 表），選股條件無法自動調整")
-    if perf and perf.get("fm_calls") and perf.get("fm_empty", 0) >= max(3, perf["fm_calls"] * 0.5):
+    if perf and not perf.get("token_bad") and perf.get("fm_calls") and perf.get("fm_empty", 0) >= max(3, perf["fm_calls"] * 0.5):
         warn.append(f"績效計算向 FinMind 抓價 {perf['fm_calls']} 次有 {perf['fm_empty']} 次沒資料")
     if sell.get("alerts") and sell.get("sent") is False:
         warn.append("賣出提醒推播失敗")
