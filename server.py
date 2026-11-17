@@ -1961,6 +1961,98 @@ def factor_progress(task_id):
     if not prog: return jsonify({"error":"找不到任務"}), 404
     return jsonify(prog)
 
+# ── 實戰績效（每日排程 performance.py 寫入 performance_summary）──
+# 回測頁一直呼叫這個網址，但之前伺服器沒有這條路由，實戰績效區塊永遠是空的
+@app.route("/api/performance")
+def performance_latest():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定 Supabase"})
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/performance_summary",
+                         params={"select": "date,summary", "order": "date.desc", "limit": "1"},
+                         headers=_sb_headers(), timeout=10)
+        if r.status_code != 200 or not r.json():
+            return jsonify({"ok": False, "error": f"Supabase {r.status_code}" if r.status_code != 200 else "尚無資料"})
+        row = r.json()[0]
+        summary = row.get("summary")
+        if isinstance(summary, str):
+            summary = json.loads(summary)
+        return jsonify({"ok": True, "date": row.get("date"), "summary": summary})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+# ── AI 選股條件（每月依前 5 名實際成績自動調整；可鎖定或恢復預設）──
+try:
+    import strategy as _strategy
+except ImportError:
+    _strategy = None
+
+def _strategy_rows(limit=10):
+    r = requests.get(f"{SUPABASE_URL}/rest/v1/strategy_config",
+                     params={"select": "config,reason,created_at", "order": "created_at.desc", "limit": str(limit)},
+                     headers=_sb_headers(), timeout=10)
+    if r.status_code != 200:
+        return None, r.status_code
+    rows = r.json()
+    for row in rows:
+        if isinstance(row.get("config"), str):
+            try: row["config"] = json.loads(row["config"])
+            except Exception: row["config"] = {}
+    return rows, 200
+
+@app.route("/api/strategy")
+def strategy_get():
+    if _strategy is None or not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定"})
+    try:
+        rows, code = _strategy_rows()
+        if rows is None:
+            return jsonify({"ok": False, "missing_table": code in (400, 404), "error": f"Supabase {code}",
+                            "current": _strategy.DEFAULT, "describe": _strategy.describe(None)})
+        cur = _strategy.normalize(rows[0]["config"] if rows else None)
+        return jsonify({"ok": True, "current": cur, "describe": _strategy.describe(cur),
+                        "is_default": not rows,
+                        "history": [{"date": (x.get("created_at") or "")[:10],
+                                     "describe": _strategy.describe(x.get("config")),
+                                     "locked": _strategy.normalize(x.get("config")).get("locked"),
+                                     "reason": x.get("reason", "")} for x in rows]})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+def _strategy_insert(cfg, reason):
+    r = requests.post(f"{SUPABASE_URL}/rest/v1/strategy_config",
+                      json={"config": cfg, "reason": reason, "stats": {}}, headers=_sb_headers(), timeout=10)
+    return r.status_code in (200, 201), r.status_code
+
+@app.route("/api/strategy/lock", methods=["POST"])
+def strategy_lock():
+    if _strategy is None or not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定"}), 400
+    locked = bool((request.get_json() or {}).get("locked", True))
+    try:
+        rows, code = _strategy_rows(1)
+        if rows is None:
+            return jsonify({"ok": False, "error": f"Supabase {code}（請先建立 strategy_config 表）"}), 400
+        cfg = _strategy.normalize(rows[0]["config"] if rows else None)
+        cfg["locked"] = locked
+        ok, code = _strategy_insert(cfg, "手動鎖定（不再自動調整）" if locked else "解除鎖定（恢復每月自動調整）")
+        return jsonify({"ok": ok, "current": cfg}), (200 if ok else 500)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+@app.route("/api/strategy/reset", methods=["POST"])
+def strategy_reset():
+    if _strategy is None or not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定"}), 400
+    try:
+        cfg = _strategy.normalize(None)
+        ok, code = _strategy_insert(cfg, "手動恢復預設條件")
+        return jsonify({"ok": ok, "current": cfg}), (200 if ok else 500)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ── 籌碼左側選股（每日排程寫入 left_side_results）──
 @app.route("/api/left/latest")
 def left_latest():

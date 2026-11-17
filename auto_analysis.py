@@ -34,6 +34,7 @@ try:
     import left_side          # 籌碼左側策略（與因子實驗室共用同一份規則）
 except ImportError:
     left_side = None
+import strategy                # AI 選股條件（門檻＋排序），每月依實際成績自動調整
 
 # ══════════════════════════════════════════════════
 # ★ 設定區
@@ -89,6 +90,47 @@ def save_to_supabase(data):
             print(f"[Supabase] ❌ 存入失敗 {r.status_code}: {r.text[:200]}")
     except Exception as e:
         print(f"[Supabase] ❌ 例外: {e}")
+
+def load_strategy_config():
+    """讀取最新的選股條件（每月自動調整後寫在 strategy_config）；讀不到就用預設"""
+    if SUPABASE_URL and SUPABASE_KEY:
+        try:
+            r = requests.get(f"{SUPABASE_URL}/rest/v1/strategy_config",
+                             params={"select": "config,reason,created_at",
+                                     "order": "created_at.desc", "limit": "1"},
+                             headers=_sb_headers(), timeout=10)
+            if r.status_code == 200 and r.json():
+                row = r.json()[0]
+                cfg = row.get("config")
+                if isinstance(cfg, str):
+                    cfg = json.loads(cfg)
+                return strategy.normalize(cfg), (row.get("created_at") or "")[:10]
+            if r.status_code != 200:
+                print(f"   ℹ️ 讀不到 strategy_config（{r.status_code}），使用預設條件")
+        except Exception as e:
+            print(f"   ℹ️ 讀取選股條件失敗（{e}），使用預設條件")
+    return strategy.normalize(None), ""
+
+
+def save_candidates(results):
+    """把今天「所有」分析過的股票存起來（不只推薦的），一個月後才能公平比較不同選股條件"""
+    if not SUPABASE_URL or not SUPABASE_KEY or not results:
+        return
+    today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+    keys = ("code", "name", "price", "rise_prob", "confidence", "precision", "base_rate", "edge", "support")
+    rows = [{k: r.get(k) for k in keys} for r in results]
+    url = f"{SUPABASE_URL}/rest/v1/ai_candidates"
+    try:
+        requests.delete(url, params={"date": f"eq.{today}"}, headers=_sb_headers(), timeout=10)
+        r = requests.post(url, json={"date": today, "candidates": rows}, headers=_sb_headers(), timeout=15)
+        if r.status_code in (200, 201):
+            print(f"[Supabase] ✅ ai_candidates 已存入 {len(rows)} 支候選股")
+        else:
+            hint = "（請先在 Supabase 建立 ai_candidates 表）" if r.status_code in (404, 400) else ""
+            print(f"[Supabase] ⚠️ 候選股存入失敗 {r.status_code}{hint}: {r.text[:150]}")
+    except Exception as e:
+        print(f"[Supabase] ⚠️ 候選股存入例外: {e}")
+
 
 FILTER = {
     "min_price":   10,
@@ -1137,16 +1179,16 @@ def run():
         dump_price_cache()
         return
 
-    # 排序：綜合信心度 + 漲機率
-    results.sort(key=lambda x: x["rise_prob"] * 0.6 + x["confidence"] * 0.4, reverse=True)
-    # 勝率門檻：只推薦「歷史上說會漲時，勝率確實高於隨便買」的股票
-    #   edge > 0：精確率 > 基準上漲率；support ≥ 5：驗證期至少喊漲過 5 次，數字才有意義
-    qualified = [r for r in results
-                 if r["rise_prob"] >= 50 and r.get("edge", 0) > 0 and r.get("support", 0) >= 5]
-    edge_filter = len(qualified) > 0
+    # 選股條件（門檻＋排序）：預設＝漲機率≥50、勝率優勢>0、support≥5、依漲機率＋信心度排序；
+    # 每月依前 5 名的實際成績自動調整（strategy.py），這裡與回測用同一份邏輯
+    cfg, cfg_since = load_strategy_config()
+    print(f"\n   選股條件：{strategy.describe(cfg)}{f'（{cfg_since} 起）' if cfg_since else '（預設）'}")
+    picked, edge_filter = strategy.select(results, cfg)
+    qualified = [r for r in results if strategy.qualifies(r, cfg)]
+    results.sort(key=lambda r: strategy.rank_score(r, cfg["rank"]), reverse=True)
     if not edge_filter:
         print("\n   ⚠️ 沒有股票通過勝率優勢門檻，退回原本排序")
-    top = (qualified if edge_filter else results)[:TOP_N]
+    top = picked[:TOP_N]
     print(f"\n   通過勝率門檻 {len(qualified)}/{len(results)} 支；FinMind 呼叫 {_fm_state['calls']} 次"
           f"{'（額度用盡，部分改用備援）' if _fm_state['disabled'] else ''}")
 
@@ -1168,6 +1210,7 @@ def run():
         "bullish":        bullish,
         "bearish":        bearish,
         "predict_days":   PREDICT_DAYS,
+        "strategy":       cfg,
         "stocks": [{
             "code":        r["code"],
             "name":        r["name"],
@@ -1190,6 +1233,7 @@ def run():
 
     save_result(output)
     save_to_supabase(output)   # ← 同步寫入 Supabase（GitHub Actions 用）
+    save_candidates(results)   # 全部候選股（每月調整選股條件用）
 
     # AI 結果存好後才跑左側選股；左側出錯不影響 AI 推薦
     try:
