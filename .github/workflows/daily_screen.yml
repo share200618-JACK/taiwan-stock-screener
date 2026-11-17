@@ -85,6 +85,15 @@ jobs:
           path: perf_cache.json
           key: perf-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
+      - name: 台股正2 × 波浪理論分析
+        id: wave
+        if: ${{ !cancelled() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+        run: python etf_wave.py
+
       - name: 每日 Telegram 報告
         if: always()   # 前面失敗、逾時也發，才知道哪裡出問題
         env:
@@ -95,4 +104,5 @@ jobs:
           AI_OUTCOME: ${{ steps.ai.outcome }}
           SELL_OUTCOME: ${{ steps.sell.outcome }}
           PERF_OUTCOME: ${{ steps.perf.outcome }}
+          WAVE_OUTCOME: ${{ steps.wave.outcome }}
         run: python daily_report.py

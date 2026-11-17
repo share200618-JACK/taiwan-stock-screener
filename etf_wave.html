@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>正2波浪</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root{
+  --bg:#0a0c10;--s1:#111318;--s2:#161b25;--s3:#1e2330;
+  --bd:#252a38;--gold:#f0b429;--gold2:#ffe080;
+  --red:#ff4d5e;--grn:#27d981;--blu:#3d8bff;
+  --pur:#a855f7;--txt:#e4eaf5;--dim:#6a748f;--cyan:#22d3ee;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',system-ui,sans-serif;padding-bottom:40px;}
+.w{max-width:960px;margin:0 auto;padding:0 14px;}
+.topbar{display:flex;align-items:center;gap:14px;padding:14px 0;flex-wrap:wrap;}
+.tlogo{display:flex;align-items:center;gap:8px;text-decoration:none;color:var(--txt);}
+.tlogo-icon{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#22d3ee,#3d8bff);display:flex;align-items:center;justify-content:center;font-size:1.1rem;}
+.tlogo-text{font-size:1rem;font-weight:800;}
+.nav-links{display:flex;gap:4px;flex-wrap:wrap;}
+.nav-link{padding:5px 10px;border-radius:6px;font-size:.7rem;font-weight:600;text-decoration:none;color:var(--dim);}
+.nav-link:hover{color:#fff;background:rgba(255,255,255,.07);}
+.nav-link.active{color:#fff;background:rgba(34,211,238,.22);}
+.card{background:var(--s1);border:1px solid var(--bd);border-radius:14px;padding:18px;margin-bottom:16px;}
+.title{font-size:1.05rem;font-weight:800;margin-bottom:6px;}
+.sub{font-size:.76rem;color:var(--dim);line-height:1.7;}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+.tab{padding:8px 14px;border-radius:9px;border:1px solid var(--bd);background:var(--s2);color:var(--dim);font-size:.8rem;font-weight:700;cursor:pointer;}
+.tab.on{color:#fff;border-color:rgba(34,211,238,.5);background:rgba(34,211,238,.12);}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;}
+.chip{padding:4px 10px;border-radius:999px;border:1px solid var(--bd);background:transparent;color:var(--dim);font-size:.72rem;cursor:pointer;font-family:'JetBrains Mono',monospace;}
+.chip.on{color:#fff;border-color:var(--cyan);background:rgba(34,211,238,.15);}
+.lbl{font-size:.7rem;color:var(--dim);}
+.state{font-size:1.15rem;font-weight:800;margin:6px 0;}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px;}
+.kv>div{background:var(--s2);border-radius:9px;padding:9px 10px;}
+.kv .k{font-size:.66rem;color:var(--dim);margin-bottom:3px;}
+.kv .v{font-size:.92rem;font-weight:700;font-family:'JetBrains Mono',monospace;}
+.box{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+.box>div{flex:1;min-width:120px;background:rgba(0,0,0,.25);border-radius:10px;padding:10px;text-align:center;}
+.box .k{font-size:.64rem;color:var(--dim);margin-bottom:4px;}
+.box .v{font-size:1.05rem;font-weight:800;font-family:'JetBrains Mono',monospace;}
+.box .s{font-size:.6rem;color:var(--dim);margin-top:3px;}
+.note{border-radius:10px;padding:12px;font-size:.78rem;line-height:1.65;margin-top:10px;}
+.n-good{background:rgba(255,77,94,.08);border:1px solid rgba(255,77,94,.28);}
+.n-info{background:rgba(61,139,255,.08);border:1px solid rgba(61,139,255,.25);}
+.n-warn{background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.25);color:var(--gold);}
+.tbl-wrap{overflow-x:auto;margin-top:10px;}
+table{width:100%;border-collapse:collapse;font-size:.72rem;}
+th,td{padding:7px 6px;border-bottom:1px solid rgba(255,255,255,.05);text-align:right;white-space:nowrap;}
+th{color:var(--dim);font-weight:600;font-size:.66rem;}
+td:first-child,th:first-child{text-align:left;}
+td.num{font-family:'JetBrains Mono',monospace;}
+tr.base td{color:var(--dim);border-top:1px solid var(--bd);}
+tr.low td{opacity:.45;}
+.up{color:var(--red);} .dn{color:var(--grn);}
+.star{color:var(--gold);font-size:.7rem;}
+#chart{height:340px;margin-top:10px;}
+.legend{display:flex;gap:10px;flex-wrap:wrap;font-size:.66rem;color:var(--dim);margin-top:8px;}
+.legend span b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:middle;}
+.empty{text-align:center;color:var(--dim);font-size:.85rem;padding:40px 10px;line-height:1.8;}
+select{padding:6px 8px;background:var(--s3);border:1px solid var(--bd);border-radius:8px;color:var(--txt);font-size:.75rem;}
+</style>
+</head>
+<body>
+<div class="w">
+<div class="topbar">
+  <a href="/" class="tlogo"><div class="tlogo-icon">🌊</div><span class="tlogo-text">正2波浪</span></a>
+  <nav class="nav-links">
+    <a href="/" class="nav-link">📊 儀表板</a>
+    <a href="/analyze" class="nav-link">🤖 AI分析</a>
+    <a href="/backtest" class="nav-link">📈 回測</a>
+    <a href="/watchlist" class="nav-link">👁️ 追蹤</a>
+    <a href="/factor-lab" class="nav-link">🧪 因子實驗室</a>
+    <a href="/etf-wave" class="nav-link active">🌊 正2波浪</a>
+  </nav>
+</div>
+
+<div class="card">
+  <div class="title">🌊 台股正2 × 波浪理論：什麼時候買勝率較高？</div>
+  <div class="sub">
+    把波浪畫在指數上（臺灣50 用 0050 含息還原、加權用加權報酬指數，2003 年起），用規則化的艾略特波浪判讀每個波段高低點，
+    再統計「在那個位置買正2，之後 20／60／120 個交易日」的勝率與報酬，和「任何一天買進」比較。
+    高低點要等價格反轉 θ 才確認，確認後隔天收盤才進場——<b>不偷看未來</b>。每個交易日排程跑完自動更新。
+    <span id="gen"></span>
+  </div>
+</div>
+
+<div id="app"><div class="card empty">載入中…</div></div>
+
+<div class="card">
+  <div class="title" style="font-size:.9rem;">📖 怎麼判讀、要注意什麼</div>
+  <div class="sub">
+    • <b>波段高低點（ZigZag）</b>：從最高點回落 θ 才確認那是高點、從最低點反彈 θ 才確認低點。θ 越小訊號越多但越雜。<br>
+    • <b>第2浪結束→第3浪起漲</b>：跌勢創新低後反彈（第1浪），回檔 38.2%~78.6% 但沒破起點，再度反彈確認。<br>
+    • <b>第4浪結束→第5浪起漲</b>：第3浪突破第1浪高點且不短於第1浪，回檔 23.6%~61.8% 且不跌回第1浪高點。<br>
+    • <b>ABC 修正結束</b>：從高點下跌 A、反彈 B（不過前高、回升 38.2%~88.6%）、再跌 C 破 A 低點且長度 ≥ A 的 61.8%，之後反彈確認。<br>
+    • <b>合成正2</b>：指數每日報酬 ×2 再扣成本（成本用實際 ETF 校正），可回測到 2003 年；<b>實際 ETF</b> 為各檔上市以來的真實還原價格（00631L 1拆22、00685L 1拆24 已還原）。<br>
+    • <span class="star">★</span> 勝率顯著高於「任何一天買進」（z ≥ 2）、<span class="star">★★</span> 非常顯著（z ≥ 2.5）；樣本少於 10 次的列會變淡。
+    「較佳買點」還要求換不同 θ 也成立。<br>
+    • 限制：波浪理論本身主觀，這裡是可驗證的近似；每種情況 23 年通常只有 10~40 次，過去不代表未來；
+    正2 有波動耗損，盤整期間會持續虧損、下跌時跌幅約兩倍。<b>僅供研究，不構成投資建議。</b>
+  </div>
+</div>
+</div>
+
+<script>
+const API = location.hostname === 'localhost' ? 'http://localhost:5000' : '';
+let DATA = null, G = 'tw50', TH = null, SRC = 'synthetic', chart = null;
+const H = ['20', '60', '120'];
+const COLORS = {w3_start:'#ff4d5e', w5_start:'#ff8a3d', abc_end:'#f0b429', low_other:'#8892a6',
+                w3_top:'#3d8bff', w5_top:'#a855f7', b_top:'#22d3ee', high_other:'#5b6478'};
+const SHORT = {w3_start:'3浪起', w5_start:'5浪起', abc_end:'C結束', low_other:'低',
+               w3_top:'3浪頂', w5_top:'5浪頂', b_top:'B頂', high_other:'高'};
+const pc = v => v == null ? '—' : (v > 0 ? '+' : '') + v + '%';
+const cls = v => v == null ? '' : v > 0 ? 'up' : v < 0 ? 'dn' : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function zOf(win, n, base) {
+  if (!n || base == null || base <= 0 || base >= 100) return 0;
+  const p0 = base / 100;
+  return (win / 100 - p0) / Math.sqrt(p0 * (1 - p0) / n);
+}
+const stars = z => z >= 2.5 ? '<span class="star">★★</span>' : z >= 2 ? '<span class="star">★</span>' : '';
+
+async function load() {
+  try {
+    const r = await fetch(`${API}/api/etf-wave/latest`);
+    const d = await r.json();
+    if (!d.ok) {
+      document.getElementById('app').innerHTML = `<div class="card empty">${d.missing_table
+        ? '⚠️ Supabase 還沒有 <code>etf_wave_results</code> 資料表，建表後下次排程（或手動執行「正2波浪更新」）就會出現。'
+        : '尚無資料，每日排程跑完後會自動產生。' + (d.error ? `<br><span style="font-size:.7rem;">${esc(d.error)}</span>` : '')}</div>`;
+      return;
+    }
+    DATA = d.payload;
+    TH = String(DATA.default_theta);
+    document.getElementById('gen').innerHTML = `<br>資料更新：<b>${esc(DATA.generated)}</b>`;
+    render();
+  } catch (e) {
+    document.getElementById('app').innerHTML = `<div class="card empty">讀取失敗：${esc(e.message)}</div>`;
+  }
+}
+
+function render() {
+  const g = DATA.groups[G];
+  const groupsHtml = Object.entries(DATA.groups).map(([k, v]) => {
+    const codes = DATA.etfs.filter(e => e.group === k).map(e => e.code).join('・');
+    return `<button class="tab ${k === G ? 'on' : ''}" onclick="G='${k}';SRC='synthetic';render()">${esc(v.name)}（${codes}）</button>`;
+  }).join('');
+  if (!g) { document.getElementById('app').innerHTML = `<div class="card"><div class="tabs">${groupsHtml}</div><div class="empty">這個群組沒有資料</div></div>`; return; }
+  const T = g.thetas[TH];
+  const thChips = DATA.thetas.map(t => `<button class="chip ${String(t) === TH ? 'on' : ''}" onclick="TH='${t}';render()">${Math.round(t * 100)}%</button>`).join('');
+  const srcOpts = [['synthetic', `合成正2（${g.start.slice(0, 4)} 起）`]]
+    .concat(Object.keys(T.etf || {}).map(c => [c, `實際 ${c}（${(DATA.etfs.find(e => e.code === c) || {}).listed?.slice(0, 4) || ''} 起）`]))
+    .map(([v, l]) => `<option value="${v}" ${v === SRC ? 'selected' : ''}>${esc(l)}</option>`).join('');
+
+  document.getElementById('app').innerHTML = `
+    <div class="card">
+      <div class="tabs">${groupsHtml}</div>
+      <div class="chips"><span class="lbl">波段認定（反轉 θ）：</span>${thChips}</div>
+      ${renderCurrent(g, T)}
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">🎯 較佳買點（顯著勝過任何一天買進，且換 θ 也成立）</div>
+      ${renderBest(g)}
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">📈 ${esc(g.index_name)}與波段轉折（θ ${Math.round(TH * 100)}%）</div>
+      <div id="chart"></div>
+      <div class="legend">${Object.keys(SHORT).map(k => `<span><b style="background:${COLORS[k]}"></b>${esc(DATA.states[k].name)}</span>`).join('')}</div>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="title" style="font-size:.95rem;margin:0;">📊 各波浪位置買進正2 之後的表現</div>
+        <select onchange="SRC=this.value;render()">${srcOpts}</select>
+      </div>
+      ${renderTable(g, T)}
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">🧾 最近的訊號</div>
+      ${renderSignals(g, T)}
+    </div>
+    <div class="card">
+      <div class="title" style="font-size:.95rem;">🏦 各家台股正2 比較</div>
+      ${renderEtfs()}
+    </div>`;
+  drawChart(g, T);
+}
+
+function renderCurrent(g, T) {
+  const c = T.current;
+  if (!c) return '<div class="empty">目前沒有足夠的轉折點</div>';
+  const lp = c.last_pivot, st = c.state_stats || {}, b = g.baseline_synthetic;
+  const side = DATA.states[lp.state].side;
+  const nc = c.next_confirm;
+  const box = h => {
+    const s = st[h] || {}, bb = b[h] || {};
+    if (!s.n) return `<div><div class="k">${h} 日</div><div class="v">—</div><div class="s">無樣本</div></div>`;
+    const z = zOf(s.win, s.n, bb.win);
+    return `<div><div class="k">持有 ${h} 日 ${stars(z)}</div>
+      <div class="v ${s.win >= bb.win ? 'up' : 'dn'}">${s.win}%</div>
+      <div class="s">平均 ${pc(s.avg)}・最大回檔 ${pc(s.mdd)}<br>任意日 ${bb.win}%｜${pc(bb.avg)}・n=${s.n}</div></div>`;
+  };
+  return `
+    <div style="margin-top:14px;">
+      <div class="lbl">最近確認的轉折（${esc(lp.date)} ${lp.type === 'L' ? '低點' : '高點'}，${esc(lp.confirm_date)} 確認）</div>
+      <div class="state" style="color:${COLORS[lp.state]}">${esc(lp.state_name)}</div>
+      <div class="kv">
+        <div><div class="k">目前走勢</div><div class="v ${c.trend === 'up' ? 'up' : 'dn'}">${c.trend === 'up' ? '上漲段' : '下跌段'}</div></div>
+        <div><div class="k">距轉折點</div><div class="v ${cls(c.since_pivot_pct)}">${pc(c.since_pivot_pct)}</div></div>
+        <div><div class="k">訊號後經過</div><div class="v">${c.days_since_signal} 個交易日</div></div>
+        <div><div class="k">${nc.type === 'H' ? '再跌多少確認高點' : '再漲多少確認低點'}</div><div class="v ${cls(nc.pct_from_now)}">${pc(nc.pct_from_now)}</div></div>
+      </div>
+      <div class="kv">
+        ${Object.entries(c.fib).map(([k, v]) => `<div><div class="k">這段的 ${k} ${c.trend === 'up' ? '回檔' : '反彈'}位置</div><div class="v ${cls(v)}">${pc(v)}</div></div>`).join('')}
+      </div>
+      <div class="lbl" style="margin-top:14px;">過去在「${esc(lp.state_name)}」${side === 'buy' ? '買進' : '時買進'}正2（合成，${g.start.slice(0, 4)} 起）：</div>
+      <div class="box">${H.map(box).join('')}</div>
+      ${side === 'sell' ? '<div class="note n-warn">⚠️ 目前最近的轉折是「高點」，統計是「這時候買進」之後的表現，通常用來判斷要不要避開或減碼。</div>' : ''}
+    </div>`;
+}
+
+function renderBest(g) {
+  if (!g.best || !g.best.length) {
+    return `<div class="note n-info">目前沒有任何波浪位置的勝率「顯著且穩定」高於任何一天買進（${g.baseline_synthetic['60'].win}%，持有 60 日）。
+      代表單靠波浪位置挑買點，在 ${g.start.slice(0, 4)} 年以來的資料裡看不出可靠優勢——下面的表格仍可看各情況的傾向，但樣本不多、別過度解讀。</div>`;
+  }
+  return g.best.map(b => `<div class="note n-good">
+    <b style="color:${COLORS[b.state]}">${esc(b.name)}</b>：持有 60 日勝率 <b class="up">${b.win}%</b>
+    （任何一天買進 ${b.base_win}%）、平均 ${pc(b.avg)}（任意日 ${pc(b.base_avg)}），n=${b.n}，z=${b.z}，θ 穩定 ${b.stable}
+  </div>`).join('');
+}
+
+function renderTable(g, T) {
+  const isSyn = SRC === 'synthetic';
+  const tab = isSyn ? T.synthetic : (T.etf || {})[SRC];
+  const base = isSyn ? g.baseline_synthetic : (g.baseline_etf || {})[SRC];
+  if (!tab || !base) return '<div class="empty">沒有資料</div>';
+  const order = ['w3_start', 'w5_start', 'abc_end', 'low_other', 'w3_top', 'w5_top', 'b_top', 'high_other'];
+  const row = k => {
+    const r = tab[k];
+    const low = (r['60'] || {}).n < 10;
+    return `<tr class="${low ? 'low' : ''}"><td><b style="color:${COLORS[k]}">●</b> ${esc(DATA.states[k].name)}</td>
+      ${H.map(h => {
+        const s = r[h] || {}, bb = base[h] || {};
+        if (!s.n) return '<td class="num">—</td><td class="num">—</td>';
+        const z = zOf(s.win, s.n, bb.win);
+        return `<td class="num ${s.win >= bb.win ? 'up' : 'dn'}">${s.win}%${stars(z)}</td><td class="num ${cls(s.avg)}">${pc(s.avg)}</td>`;
+      }).join('')}
+      <td class="num">${(r['60'] || {}).mdd != null ? pc(r['60'].mdd) : '—'}</td><td class="num">${(r['60'] || {}).n || 0}</td></tr>`;
+  };
+  return `<div class="tbl-wrap"><table>
+    <tr><th>買進時的波浪位置</th>${H.map(h => `<th>${h}日勝率</th><th>${h}日平均</th>`).join('')}<th>60日最大回檔</th><th>次數</th></tr>
+    ${order.map(row).join('')}
+    <tr class="base"><td>任何一天買進（基準）</td>${H.map(h => `<td class="num">${base[h].win ?? '—'}%</td><td class="num">${pc(base[h].avg)}</td>`).join('')}
+      <td class="num">${pc((base['60'] || {}).mdd)}</td><td class="num">${(base['60'] || {}).n || 0}</td></tr>
+  </table></div>
+  <div class="sub" style="margin-top:8px;">勝率＝持有期滿報酬 &gt; 0 的比例；最大回檔＝持有 60 日期間從買進價最多跌多少（平均）。紅色＝勝率高於基準。</div>`;
+}
+
+function renderSignals(g, T) {
+  const sigs = (T.signals || []).slice(-10).reverse();
+  if (!sigs.length) return '<div class="empty">沒有訊號</div>';
+  return `<div class="tbl-wrap"><table><tr><th>轉折日</th><th style="text-align:left;">判讀</th><th>進場日</th></tr>
+    ${sigs.map(s => `<tr><td class="num">${esc(s.pivot_date)}</td><td style="text-align:left;"><b style="color:${COLORS[s.state]}">●</b> ${esc(DATA.states[s.state].name)}</td><td class="num">${esc(s.entry_date)}</td></tr>`).join('')}
+  </table></div>`;
+}
+
+function renderEtfs() {
+  const idx = {tw50: '臺灣50', taiex: '加權指數'};
+  return `<div class="tbl-wrap"><table>
+    <tr><th>ETF</th><th>追蹤</th><th>收盤</th><th>近1月</th><th>近3月</th><th>今年</th><th>近1年</th><th>近1年最大回檔</th><th>實際槓桿</th><th>年化成本*</th><th>日均量(張)</th><th>上市</th></tr>
+    ${DATA.etfs.map(e => `<tr><td><b>${esc(e.code)}</b> ${esc(e.name)}</td><td>${idx[e.group]}</td>
+      <td class="num">${e.close}</td><td class="num ${cls(e.ret_1m)}">${pc(e.ret_1m)}</td><td class="num ${cls(e.ret_3m)}">${pc(e.ret_3m)}</td>
+      <td class="num ${cls(e.ret_ytd)}">${pc(e.ret_ytd)}</td><td class="num ${cls(e.ret_1y)}">${pc(e.ret_1y)}</td>
+      <td class="num dn">${pc(e.mdd_1y)}</td><td class="num">${e.beta ?? '—'}${e.beta ? '×' : ''}</td>
+      <td class="num">${e.drag != null ? (e.drag * 100).toFixed(2) + '%' : '—'}</td>
+      <td class="num">${(e.avg_vol || 0).toLocaleString()}</td><td class="num">${esc(e.listed)}</td></tr>`).join('')}
+  </table></div>
+  <div class="sub" style="margin-top:8px;">* 年化成本＝「指數每日報酬 ×2」與實際 ETF 的年化落差（含經理費、期貨轉倉與資金成本），越低越貼近 2 倍。實際槓桿＝近一年每日報酬對指數的倍數。00631L 追蹤臺灣50，其他三檔追蹤加權指數。</div>`;
+}
+
+function drawChart(g, T) {
+  const el = document.getElementById('chart');
+  if (!el || !window.LightweightCharts) return;
+  el.innerHTML = '';
+  chart = LightweightCharts.createChart(el, {
+    layout: {background: {color: 'transparent'}, textColor: '#6a748f'},
+    grid: {vertLines: {color: 'rgba(255,255,255,.03)'}, horzLines: {color: 'rgba(255,255,255,.03)'}},
+    rightPriceScale: {mode: 1, borderColor: '#252a38'}, timeScale: {borderColor: '#252a38'},
+    autoSize: true,
+  });
+  const line = chart.addLineSeries({color: '#22d3ee', lineWidth: 1.5, priceLineVisible: false});
+  const cd = g.chart.dates, cv = g.chart.values;
+  line.setData(cd.map((d, i) => ({time: d, value: cv[i]})));
+  // 轉折點對到圖上最近的日期（較早期是週線）
+  const snap = d => { let lo = 0, hi = cd.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (cd[m] <= d) lo = m; else hi = m - 1; } return cd[lo]; };
+  const seen = new Set();
+  const marks = (T.signals || []).map(s => {
+    const t = snap(s.pivot_date), side = DATA.states[s.state].side;
+    return {time: t, position: side === 'buy' ? 'belowBar' : 'aboveBar', color: COLORS[s.state],
+            shape: side === 'buy' ? 'arrowUp' : 'arrowDown', text: s.state.endsWith('other') ? '' : SHORT[s.state]};
+  }).filter(m => { const k = m.time + m.position; if (seen.has(k)) return false; seen.add(k); return true; })
+    .sort((a, b) => a.time < b.time ? -1 : 1);
+  line.setMarkers(marks);
+  chart.timeScale().setVisibleRange({from: cd[Math.max(0, cd.length - 900)], to: cd[cd.length - 1]});
+}
+
+load();
+</script>
+</body>
+</html>
