@@ -13,6 +13,7 @@ on:
       - 'auto_analysis.py'
       - 'left_side.py'
       - 'strategy.py'
+      - 'revenue.py'
       - 'notify.py'
       - 'daily_report.py'
 
@@ -40,6 +41,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
+      - name: 還原月營收快取（每支股票每月只抓一次）
+        uses: actions/cache/restore@v4
+        with:
+          path: rev_cache.json
+          key: rev-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: rev-cache-
+
       - name: 執行 AI 自動選股分析
         id: ai
         env:
@@ -47,6 +55,13 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python auto_analysis.py
+
+      - name: 保存月營收快取
+        if: ${{ !cancelled() && hashFiles('rev_cache.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: rev_cache.json
+          key: rev-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: 持倉賣出提醒（Telegram）
         id: sell

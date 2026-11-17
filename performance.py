@@ -30,6 +30,7 @@ FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()   # 貼上時多的�
 TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN", "")
 TG_CHAT_ID    = os.environ.get("TG_CHAT_ID", "")
 import strategy     # 選股條件與每月自動調整（與 auto_analysis 共用）
+import revenue                 # 月營收創新高（以前的候選股沒存這欄 → 用營收快取回推當天的狀態）
 
 HOLD_DAYS   = [5, 10, 20]   # 預設評估的持有交易日數
 MODEL_DAYS  = 15            # 模型預測的天數（auto_analysis PREDICT_DAYS）
@@ -380,9 +381,18 @@ def run_tuning(cand_recs, cand_results):
     since = (rows[0].get("created_at") or "")[:10] if rows else ""
     # 只用「有超額報酬」的候選股；一天至少一半的候選股算得出來才算到期
     by_date = defaultdict(list)
+    revenue.load()
+    filled = 0
     for r in cand_results:
         if "excess" in r and strategy.HOLD in r["returns"]:
-            by_date[r["date"]].append({**r["cand"], "excess": r["excess"], "ret": r["returns"][strategy.HOLD]})
+            c = {**r["cand"], "excess": r["excess"], "ret": r["returns"][strategy.HOLD]}
+            if "rev_hot" not in c:      # 11/18 以前存的候選股沒有營收欄位：用快取回推「當天可知」的狀態
+                st = revenue.status(c.get("code"), r["date"])
+                c["rev_hot"] = bool(st and st["rev_hot"])
+                filled += st is not None
+            by_date[r["date"]].append(c)
+    if filled:
+        log(f"   營收創新高：回推 {filled} 筆舊候選股的狀態")
     totals = {d["date"]: len(d.get("candidates", [])) for d in cand_recs}
     days = {d: v for d, v in by_date.items() if totals.get(d) and len(v) >= totals[d] * 0.5}
     since_change = sum(1 for d in totals if d > since) if since else None

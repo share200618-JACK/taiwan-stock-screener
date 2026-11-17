@@ -1534,6 +1534,7 @@ function renderResults(data) {
       </div>` : ''}
       ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
       <span class="acc-badge" style="background:rgba(168,85,247,.12);color:var(--pur);border-color:rgba(168,85,247,.2);">訓練 ${s.data_years||'?'} 年</span>
+      ${s.rev_hot ? `<span class="acc-badge" title="最新月營收創 12 個月新高且年增 ≥ 20%（個股勝率實驗室：之後勝率較高）" style="background:rgba(255,77,94,.12);color:var(--red);border-color:rgba(255,77,94,.25);">📈 營收創高 ${s.rev_yoy != null ? '年增 ' + s.rev_yoy + '%' : ''}</span>` : ''}
     ` : '';
 
     return `<div class="card ${cardCls}" onclick="openStockPanel('${s.code}','${s.name||s.code}',${s.price||0},'${s.sector||s.industry_category||''}')" style="cursor:pointer;transition:border-color .15s;" onmouseover="this.style.borderColor='rgba(168,85,247,.6)'" onmouseout="this.style.borderColor=''">
