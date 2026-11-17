@@ -12,6 +12,7 @@ on:
       - 'run_screen.py'
       - 'auto_analysis.py'
       - 'left_side.py'
+      - 'strategy.py'
 
 # 同一時間只跑一個排程：上傳程式（push）觸發的和 14:35 的不會同時搶 FinMind 額度
 concurrency:
@@ -68,6 +69,8 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}   # 選股條件自動調整時通知
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python performance.py
 
       - name: 保存績效快取

@@ -27,6 +27,9 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 SUPABASE_URL  = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY  = os.environ.get("SUPABASE_KEY", "")
 FINMIND_TOKEN = os.environ.get("FINMIND_TOKEN", "")
+TG_BOT_TOKEN  = os.environ.get("TG_BOT_TOKEN", "")
+TG_CHAT_ID    = os.environ.get("TG_CHAT_ID", "")
+import strategy     # 選股條件與每月自動調整（與 auto_analysis 共用）
 
 HOLD_DAYS   = [5, 10, 20]   # 預設評估的持有交易日數
 MODEL_DAYS  = 15            # 模型預測的天數（auto_analysis PREDICT_DAYS）
@@ -120,6 +123,76 @@ def load_left_recommendations():
     out.sort(key=lambda x: x.get("date", ""))
     log(f"讀到 {len(out)} 天的左側名單")
     return out
+
+
+def load_candidates():
+    """每天所有分析過的股票（含沒被推薦的），自動調整選股條件用"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        r = SESSION.get(f"{SUPABASE_URL}/rest/v1/ai_candidates",
+            params={"select": "date,candidates,created_at", "order": "date.asc", "limit": "400"},
+            headers=sb_headers(), timeout=30)
+    except Exception as e:
+        log(f"⚠️ 讀取候選股失敗: {e}")
+        return []
+    if r.status_code != 200:
+        log(f"ℹ️ 讀不到 ai_candidates（{r.status_code}），略過選股條件調整")
+        return []
+    seen, out = set(), []
+    for row in sorted(r.json(), key=lambda x: x.get("created_at", ""), reverse=True):
+        d = row.get("date")
+        if d in seen:
+            continue
+        seen.add(d)
+        if isinstance(row.get("candidates"), str):
+            try: row["candidates"] = json.loads(row["candidates"])
+            except Exception: row["candidates"] = []
+        out.append(row)
+    out.sort(key=lambda x: x.get("date", ""))
+    log(f"讀到 {len(out)} 天的候選股")
+    return out
+
+
+def load_strategy_rows(limit=10):
+    """選股條件的歷史（最新在前）"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        r = SESSION.get(f"{SUPABASE_URL}/rest/v1/strategy_config",
+            params={"select": "config,reason,created_at", "order": "created_at.desc", "limit": str(limit)},
+            headers=sb_headers(), timeout=15)
+        if r.status_code != 200:
+            return []
+        rows = r.json()
+        for row in rows:
+            if isinstance(row.get("config"), str):
+                row["config"] = json.loads(row["config"])
+        return rows
+    except Exception:
+        return []
+
+
+def save_strategy(cfg, reason, stats):
+    try:
+        r = SESSION.post(f"{SUPABASE_URL}/rest/v1/strategy_config",
+            json={"config": cfg, "reason": reason, "stats": stats}, headers=sb_headers(), timeout=15)
+        ok = r.status_code in (200, 201)
+        log(("✅ 已寫入新選股條件" if ok else f"❌ 新選股條件寫入失敗 {r.status_code}: {r.text[:150]}"))
+        return ok
+    except Exception as e:
+        log(f"❌ 新選股條件寫入例外: {e}")
+        return False
+
+
+def send_telegram(msg):
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        return
+    try:
+        SESSION.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
+                     json={"chat_id": TG_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
+    except Exception as e:
+        log(f"⚠️ Telegram 推播失敗: {e}")
 
 
 # ── 抓某股票一段期間的收盤價 ──────────────────────────
@@ -251,6 +324,10 @@ def _is_final(entry, model, horizons):
         return False
     if model == "left":
         return LEFT_DAYS in rets and "rule_ret" in entry
+    if model == "cand":
+        return strategy.HOLD in rets
+    if strategy.HOLD in horizons and "excess20" not in entry:
+        return False
     return all(h in rets for h in horizons)
 
 
@@ -276,8 +353,9 @@ def save_perf_cache(done_samples, horizons):
     for smp in done_samples:
         if _is_final(smp, smp["model"], horizons):
             e = {"returns": smp["returns"], "excess": smp["excess"]}
-            if "rule_ret" in smp:
-                e["rule_ret"] = smp["rule_ret"]
+            for k in ("rule_ret", "excess20"):
+                if k in smp:
+                    e[k] = smp[k]
             keep[_skey(smp)] = e
     try:
         with open(PERF_CACHE_FILE, "w", encoding="utf-8") as f:
@@ -287,11 +365,45 @@ def save_perf_cache(done_samples, horizons):
         log(f"⚠️ 績效快取存檔失敗: {e}")
 
 
+# ── 每月自動調整選股條件 ──────────────────────────────
+def run_tuning(cand_recs, cand_results):
+    """用已到期的候選股，比較不同選股條件「每天前 5 名」的一個月超額報酬；夠好才換（見 strategy.py）"""
+    rows = load_strategy_rows()
+    current = strategy.normalize(rows[0]["config"] if rows else None)
+    since = (rows[0].get("created_at") or "")[:10] if rows else ""
+    # 只用「有超額報酬」的候選股；一天至少一半的候選股算得出來才算到期
+    by_date = defaultdict(list)
+    for r in cand_results:
+        if "excess" in r:
+            by_date[r["date"]].append({**r["cand"], "excess": r["excess"]})
+    totals = {d["date"]: len(d.get("candidates", [])) for d in cand_recs}
+    days = {d: v for d, v in by_date.items() if totals.get(d) and len(v) >= totals[d] * 0.5}
+    since_change = sum(1 for d in totals if d > since) if since else None
+    dec = strategy.decide(current, days, since_change)
+    dec["since"] = since
+    dec["describe"] = strategy.describe(current)
+    dec["history"] = [{"date": (r.get("created_at") or "")[:10], "describe": strategy.describe(r.get("config")),
+                       "locked": strategy.normalize(r.get("config")).get("locked"),
+                       "reason": r.get("reason", "")} for r in rows[:5]]
+    log(f"──── 選股條件：{dec['describe']} → {dec['status']}：{dec['message']}")
+    if dec["status"] == "changed":
+        stats = {"gain": dec["gain"], "matured_days": dec["matured_days"], "table": dec["table"],
+                 "current_eval": dec.get("current_eval")}
+        if save_strategy(dec["new"], dec["message"], stats):
+            send_telegram("🔧 <b>AI 選股條件已自動調整</b>\n"
+                          f"原本：{strategy.describe(current)}\n"
+                          f"改為：{strategy.describe(dec['new'])}\n\n{dec['message']}\n"
+                          "（明天 14:35 的選股開始套用；不想自動調整可到回測頁鎖定）")
+            dec["describe_new"] = strategy.describe(dec["new"])
+    return dec
+
+
 # ── 主流程 ──────────────────────────────────────────
 def run():
     recs = load_all_recommendations()
     left_recs = load_left_recommendations()
-    if not recs and not left_recs:
+    cand_recs = load_candidates()
+    if not recs and not left_recs and not cand_recs:
         log("無資料可分析")
         return
 
@@ -301,14 +413,16 @@ def run():
     cutoff = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=WINDOW_DAYS)).strftime("%Y-%m-%d")
     recs = [r for r in recs if (r.get("date") or "") >= cutoff]
     left_recs = [r for r in left_recs if (r.get("date") or "") >= cutoff]
+    cand_recs = [r for r in cand_recs if (r.get("date") or "") >= cutoff]
 
     # 收集每一筆 (推薦日, code, entry_price, rise_prob, 新/舊模型)
     # 新模型（10/23 起）的推薦帶有 edge 欄位，以此區分
     samples = []
     for day in recs:
         d = day.get("date")
-        for s in day.get("stocks", []):
+        for rank, s in enumerate(day.get("stocks", [])):
             samples.append({
+                "rank":      rank,
                 "date":      d,
                 "code":      s.get("code", ""),
                 "name":      s.get("name", ""),
@@ -322,22 +436,32 @@ def run():
             left_samples.append({"date": day.get("date"), "code": s.get("code", ""),
                                  "name": s.get("name", ""), "entry": safe_float(s.get("price", 0)),
                                  "rise_prob": 0, "model": "left"})
-    if not samples and not left_samples:
+    cand_samples = []
+    for day in cand_recs:
+        for c in day.get("candidates", []):
+            if c.get("code") and safe_float(c.get("price")) > 0:
+                cand_samples.append({"date": day.get("date"), "code": str(c["code"]),
+                                     "entry": safe_float(c.get("price")), "model": "cand", "cand": c})
+    if not samples and not left_samples and not cand_samples:
         log(f"近 {WINDOW_DAYS} 天沒有推薦紀錄")
         return
-    log(f"共 {len(samples)} 筆 AI 推薦、{len(left_samples)} 筆左側樣本")
+    log(f"共 {len(samples)} 筆 AI 推薦、{len(left_samples)} 筆左側樣本、{len(cand_samples)} 筆候選股")
 
     horizons = sorted(set(HOLD_DAYS) | {MODEL_DAYS})
     left_h = list(range(1, LEFT_DAYS + 1))         # 左側要逐日路徑才能判斷停損
 
     # 已到期的樣本直接沿用，只抓還沒到期的
     cache = load_perf_cache()
-    results, left_results, pending = [], [], []
-    for smp in samples + left_samples:
+    results, left_results, cand_results, pending = [], [], [], []
+    bucket = {"left": left_results, "cand": cand_results}
+    for smp in samples + left_samples + cand_samples:
         c = cache.get(_skey(smp))
         if c and _is_final(c, smp["model"], horizons):
             smp.update(c)
-            (left_results if smp["model"] == "left" else results).append(smp)
+            bucket.get(smp["model"], results).append(smp)
+        elif smp["model"] == "cand" and (datetime.strptime(today, "%Y-%m-%d") -
+                                         datetime.strptime(smp["date"], "%Y-%m-%d")).days < 27:
+            continue      # 候選股只看 20 個交易日報酬，未滿約 4 週一定還沒到期，不用抓價
         else:
             pending.append(smp)
 
@@ -345,7 +469,7 @@ def run():
     by_code = defaultdict(list)
     for smp in pending:
         by_code[smp["code"]].append(smp)
-    log(f"已到期沿用快取 {len(samples) + len(left_samples) - len(pending)} 筆；"
+    log(f"已到期沿用快取 {len(results) + len(left_results) + len(cand_results)} 筆；"
         f"需計算 {len(pending)} 筆（{len(by_code)} 檔），開始抓後續股價...")
 
     # 基準：同一天買 0050，持有同樣天數（扣掉大盤漲跌，新舊模型才能公平比較）
@@ -363,6 +487,16 @@ def run():
         if not closes:
             continue
         for smp in smps:
+            if smp["model"] == "cand":
+                rets = compute_forward_returns(code, smp["date"], smp["entry"], closes, [strategy.HOLD])
+                if strategy.HOLD in rets:
+                    smp["returns"] = rets
+                    if bench:
+                        b = compute_forward_returns("0050", smp["date"], 0, bench, [strategy.HOLD])
+                        if strategy.HOLD in b:
+                            smp["excess"] = round(rets[strategy.HOLD] - b[strategy.HOLD], 2)
+                    cand_results.append(smp)
+                continue
             if smp["model"] == "left":
                 path = compute_forward_returns(code, smp["date"], smp["entry"], closes, left_h)
                 if path:
@@ -380,18 +514,22 @@ def run():
             rets = compute_forward_returns(code, smp["date"], smp["entry"], closes, horizons)
             if rets:
                 smp["returns"] = rets
-                if MODEL_DAYS in rets and bench:
-                    b = compute_forward_returns("0050", smp["date"], 0, bench, [MODEL_DAYS])
-                    if MODEL_DAYS in b:
+                if bench:
+                    b = compute_forward_returns("0050", smp["date"], 0, bench, [MODEL_DAYS, strategy.HOLD])
+                    if MODEL_DAYS in rets and MODEL_DAYS in b:
                         smp["excess"] = round(rets[MODEL_DAYS] - b[MODEL_DAYS], 2)
+                    if strategy.HOLD in rets and strategy.HOLD in b:
+                        smp["excess20"] = round(rets[strategy.HOLD] - b[strategy.HOLD], 2)
                 results.append(smp)
 
-    log(f"成功計算 AI {len(results)} 筆、左側 {len(left_results)} 筆（其餘因資料不足或非交易日略過）")
-    if not results and not left_results:
+    log(f"成功計算 AI {len(results)} 筆、左側 {len(left_results)} 筆、候選股 {len(cand_results)} 筆"
+        f"（其餘因未到期、資料不足或非交易日略過）")
+    tuning = run_tuning(cand_recs, cand_results)
+    if not results and not left_results and not cand_results:
         log(f"  ⚠️ 全部沒算出來：FinMind 呼叫 {_fm['calls']} 次、沒資料 {_fm.get('empty', 0)} 次、"
             f"重用 AI 股價 {_fm['reused']} 檔、額度用盡={_fm['quota_out']}")
         return
-    save_perf_cache(results + left_results, horizons)
+    save_perf_cache(results + left_results + cand_results, horizons)
 
     # ── 彙總統計 ──
     summary = {"generated": today, "sample_count": len(results), "by_hold": {}}
@@ -447,6 +585,23 @@ def run():
             })
         by_model[m] = st
 
+    # ── 每天前 5 名，追蹤 20 個交易日（約一個月），對 0050 ──
+    H = strategy.HOLD
+    top_all = [s for s in samples if s.get("rank", 99) < strategy.TOP_PICKS]
+    top_done = [r for r in results if r.get("rank", 99) < strategy.TOP_PICKS and H in r["returns"]]
+    st = {"total": len(top_all), "n": len(top_done), "pending": len(top_all) - len(top_done), "days": H,
+          "first_date": min((s["date"] for s in top_all), default="")}
+    if top_done:
+        r20 = [r["returns"][H] for r in top_done]
+        exc = [r["excess20"] for r in top_done if "excess20" in r]
+        st.update({
+            "win_rate":   round(len([v for v in r20 if v > 0]) / len(r20) * 100, 1),
+            "avg_return": round(sum(r20) / len(r20), 2),
+            "avg_excess": round(sum(exc) / len(exc), 2) if exc else None,
+            "beat_bench": round(len([v for v in exc if v > 0]) / len(exc) * 100, 1) if exc else None,
+        })
+    by_model["top5"] = st
+
     # ── 籌碼左側（持有 20 日；另算套用 −8% 停損的報酬）──
     done = [r for r in left_results if LEFT_DAYS in r["returns"]]
     exc = [r["excess"] for r in done if "excess" in r]
@@ -467,6 +622,7 @@ def run():
         })
     by_model["left"] = st
     summary["by_model"]   = by_model
+    summary["tuning"]     = tuning
     summary["model_days"] = MODEL_DAYS
     summary["window_days"] = WINDOW_DAYS
     summary["incomplete"] = _fm["quota_out"]
@@ -481,13 +637,17 @@ def run():
         log(f"  {k}: 樣本{st['n']} | 勝率{st['win_rate']}% | 平均報酬{st['avg_return']}%")
     log(f"──── 新舊模型對比（持有{MODEL_DAYS}日，基準 0050）────")
     for m, st in by_model.items():
-        if m == "left":
+        if m not in ("old", "new"):
             continue
         if st["n"]:
             log(f"  {'新' if m=='new' else '舊'}模型: 到期{st['n']}筆 待到期{st['pending']}筆 | 命中(≥3%){st['hit_rate']}% | "
                 f"平均報酬{st['avg_return']}% | 超額報酬{st['avg_excess']}% | 贏過0050 {st['beat_bench']}%")
         else:
             log(f"  {'新' if m=='new' else '舊'}模型: 尚無到期樣本（待到期 {st['pending']} 筆）")
+    t5 = by_model["top5"]
+    if t5["n"]:
+        log(f"──── 每天前 5 名（持有{t5['days']}日）：到期{t5['n']}筆 待到期{t5['pending']}筆 | 勝率{t5['win_rate']}% | "
+            f"平均{t5['avg_return']}% | 超額{t5['avg_excess']}% | 贏過0050 {t5['beat_bench']}%")
     lt = by_model["left"]
     if lt["n"]:
         log(f"──── 籌碼左側（持有{LEFT_DAYS}日）：到期{lt['n']}筆 待到期{lt['pending']}筆 | 勝率{lt['win_rate']}% | "
