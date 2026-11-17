@@ -10,6 +10,29 @@ import requests
 import notify
 
 TOKEN = os.environ.get("FINMIND_TOKEN", "").strip()
+SITE_URL = os.environ.get("SITE_URL", "https://taiwan-stock-screener-783z.onrender.com").rstrip("/")
+# 各次更新加入的網址：回得出來＝網站已部署到那一版
+SITE_CHECKS = [
+    ("/api/left/latest", "左側選股（10/23）"),
+    ("/api/performance", "實戰績效 API（11/17）"),
+    ("/api/strategy", "選股條件自動調整（11/17）"),
+    ("/api/etf-wave/latest", "正2波浪（11/17）"),
+]
+
+
+def check_site():
+    """Render 有沒有部署到最新版：免費方案休眠時第一次要等約 1 分鐘喚醒"""
+    out, all_ok = [], True
+    for i, (path, label) in enumerate(SITE_CHECKS):
+        try:
+            r = requests.get(SITE_URL + path, timeout=120 if i == 0 else 30)
+            ok = r.status_code == 200
+        except Exception as e:
+            ok, r = False, None
+            print(f"   {path}: {e}")
+        all_ok &= ok
+        out.append(f"{'✅' if ok else '❌'} {label}" + ("" if ok else f"（HTTP {r.status_code if r is not None else '—'}）"))
+    return all_ok, out
 
 
 def check_finmind():
@@ -48,10 +71,17 @@ def check_finmind():
 def main():
     fm_ok, fm_msg = check_finmind()
     print(("✅ FinMind 正常：" if fm_ok else "❌ FinMind 失敗：") + fm_msg, flush=True)
+    site_ok, site_lines = check_site()
+    print("網站（Render）部署狀態：", flush=True)
+    for line in site_lines:
+        print("   " + line, flush=True)
+    if not site_ok:
+        print("   ⚠️ 有功能回不出來：Render 可能還沒部署最新版（Render → Manual Deploy → Deploy latest commit）", flush=True)
     tg_ok = notify.configured()
     if tg_ok:
         sent = notify.send("🔌 <b>台股選股系統・連線測試</b>\n"
                            f"{'✅' if fm_ok else '❌'} FinMind：{notify.esc(fm_msg)}\n"
+                           "網站：\n" + "\n".join(notify.esc(x) for x in site_lines) + "\n"
                            "✅ Telegram：收得到這則就代表設定正確")
         print("✅ Telegram 已推播" if sent else "❌ Telegram 推播失敗（token 或 chat id 有誤，見上方訊息）")
         tg_ok = sent
