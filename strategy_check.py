@@ -40,7 +40,7 @@ CASES = [  # (代號, 名稱, 買進日, 買進價)
     ("5381", "光譜", "2026-07-09", 27.35),
     ("1410", "南染", "2026-07-06", 26.1),
 ]
-N_EXTRA = int(os.environ.get("CHECK_EXTRA_N", "200"))     # 在實驗室 200 支之外再抽幾支
+N_EXTRA = int(os.environ.get("CHECK_EXTRA_N", "180"))     # 在實驗室 200 支之外再抽幾支
 HORIZONS = [5, 20, 60]
 VOL_STRICT, VOL_LOOSE = 2000, 500
 
@@ -67,7 +67,7 @@ def ohlc_rows(rows):
     return out
 
 
-def features(seq, inst, margin, rev_events):
+def features(seq, inst, margin, rev_events, per=None):
     """
     seq：ohlc_rows 結果；inst {日期:(外資, 投信)}；margin {日期: 融資餘額}；rev_events 見 signal_lab.revenue_events
     → 每天一個 dict（訊號判斷與過濾用的特徵）；法人、融資用前一個交易日（收盤後才公布）
@@ -107,6 +107,7 @@ def features(seq, inst, margin, rev_events):
             "mchg5": (m1 / m6 - 1) if m1 and m6 else None,
             "yoy": yoy, "yoy3": sum(yoy3) / 3 if yoy3 else None,
             "rev_hot": bool(ri >= 0 and rev_events[ri][2] and (yoy or 0) >= 20),
+            "per": (per or {}).get(seq[j]["d"]),
         }
     return out
 
@@ -132,12 +133,17 @@ FILTERS = {
     "rev3_pos":  ("近 3 個月營收平均年增 > 0", lambda x: x["yoy3"] is not None and x["yoy3"] > 0),
     "rev_hot":   ("月營收創 12 個月新高且年增 ≥ 20%", lambda x: x["rev_hot"]),
     "no_limit":  ("訊號日不是漲停（漲幅 < 9.5%）", lambda x: x["ret1"] < 0.095),
+    "rev3_10":   ("近 3 個月營收平均年增 ≥ 10%", lambda x: x["yoy3"] is not None and x["yoy3"] >= 10),
     "not_ext":   ("訊號前 20 日漲幅 < 25%（不追急漲）", lambda x: x["r20"] < 0.25),
+    "not_ext60": ("訊號前 60 日漲幅 < 30%（不買在波段末端）", lambda x: x["r60"] < 0.30),
+    "pe_ok":     ("本益比 0~25 倍（有獲利、不過貴）", lambda x: x["per"] is not None and 0 < x["per"] <= 25),
     "inst_buy":  ("外資＋投信前 5 日合計買超", lambda x: x["inst5"] > 0),
     "margin_ok": ("融資前 5 日增加 < 5%（散戶沒有追進）", lambda x: x["mchg5"] is None or x["mchg5"] < 0.05),
     "normal_liq": ("平常就有量（20日均量 < 120日均量 3 倍）", lambda x: x["vol20"] < 3 * x["vol120"]),
     "combo":     ("組合：近3月營收年增＋法人買超＋不是漲停", lambda x: (x["yoy3"] or -1) > 0 and x["inst5"] > 0
                   and x["ret1"] < 0.095),
+    "combo2":    ("組合：近3月營收年增≥10%＋60日漲幅<30%＋本益比≤25", lambda x: (x["yoy3"] or -1) >= 10
+                  and x["r60"] < 0.30 and x["per"] is not None and 0 < x["per"] <= 25),
 }
 
 
@@ -166,7 +172,7 @@ def _near(dct, day, back=True):
 
 def case_report(code, name, buy_date, buy_px, S):
     seq = S["seq"]
-    f = features(seq, S["inst"], S["margin"], S["rev"])
+    f = features(seq, S["inst"], S["margin"], S["rev"], {d: v[0] for d, v in S.get("per", {}).items()})
     dates = [x["d"] for x in seq]
     b = bisect.bisect_left(dates, buy_date)
     if b >= len(dates) or b < 125:
@@ -403,8 +409,9 @@ def build_backtest():
         ins = L.fm_get("TaiwanStockInstitutionalInvestorsBuySell", code)
         mg = L.fm_get("TaiwanStockMarginPurchaseShortSale", code)
         rv = L.fm_get("TaiwanStockMonthRevenue", code, "2016-12-01")
+        pe = {r["date"][:10]: _f(r.get("PER")) for r in L.fm_get("TaiwanStockPER", code)}
         seq = ohlc_rows(pr)
-        stocks[code] = {"seq": seq, "f": features(seq, L.inst_series(ins), L.margin_series(mg), L.revenue_events(rv))}
+        stocks[code] = {"seq": seq, "f": features(seq, L.inst_series(ins), L.margin_series(mg), L.revenue_events(rv), pe)}
         if (k + 1) % 25 == 0:
             log(f"   已抓 {k + 1}/{len(universe)} 支（{(time.time() - t0) / 60:.0f} 分）")
     log(f"資料完成：{len(stocks)} 支，開始回測")
