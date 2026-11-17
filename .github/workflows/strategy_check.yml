@@ -14,6 +14,10 @@ on:
         description: "案例（代號,名稱,買進日,價格;…）空白＝預設清單"
         required: false
         default: ""
+      light:
+        description: "1＝回測不抓法人、融資（較快）"
+        required: false
+        default: "0"
 
 concurrency:
   group: strategy-check-${{ github.event.inputs.mode }}   # 案例檢查不用等回測跑完
@@ -43,6 +47,7 @@ jobs:
           PYTHONUNBUFFERED: "1"
           CHECK_MODE: ${{ github.event.inputs.mode }}
           CHECK_CASES: ${{ github.event.inputs.cases }}
+          CHECK_LIGHT: ${{ github.event.inputs.light }}
         run: python strategy_check.py
 
       - name: 保存結果檔

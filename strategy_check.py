@@ -156,6 +156,10 @@ FILTERS = {
     "normal_liq": ("平常就有量（20日均量 < 120日均量 3 倍）", lambda x: x["vol20"] < 3 * x["vol120"]),
     "combo":     ("組合：近3月營收年增＋法人買超＋不是漲停", lambda x: (x["yoy3"] or -1) > 0 and x["inst5"] > 0
                   and x["ret1"] < 0.095),
+    "combo3":    ("組合：本益比≤25＋不是漲停＋20日漲幅<25%＋60日漲幅<30%", lambda x: x["per"] is not None
+                  and 0 < x["per"] <= 25 and x["ret1"] < 0.095 and x["r20"] < 0.25 and x["r60"] < 0.30),
+    "pe_nolim":  ("組合：本益比≤25＋不是漲停", lambda x: x["per"] is not None and 0 < x["per"] <= 25
+                  and x["ret1"] < 0.095),
     "combo2":    ("組合：近3月營收年增≥10%＋60日漲幅<30%＋本益比≤25", lambda x: (x["yoy3"] or -1) >= 10
                   and x["r60"] < 0.30 and x["per"] is not None and 0 < x["per"] <= 25),
 }
@@ -400,6 +404,19 @@ def run_backtest(stocks, master, names):
             if x["vol20"] > VOL_STRICT:
                 base_ev["strict"].append((code, i, True, x))
     out["baseline"] = {k: stats(v, "任一股票（同樣成交量門檻）") for k, v in base_ev.items()}
+    # 逐筆訊號（之後要測新的組合不用重抓資料）
+    ev_rows = []
+    for code, i, strict, x in events:
+        p = path_stats(code, i)
+        r20, r60 = fwd(code, i, 20), fwd(code, i, 60)
+        ev_rows.append({"c": code, "d": master[i], "s": strict, "per": x["per"], "ret1": round(x["ret1"], 4),
+                        "r20": round(x["r20"], 4), "r60": round(x["r60"], 4), "yoy": x["yoy"], "yoy3": x["yoy3"],
+                        "inst5": round(x["inst5"]), "mchg5": x["mchg5"] and round(x["mchg5"], 4),
+                        "vr": round(x["vol20"] / x["vol120"], 2) if x["vol120"] else None,
+                        "f20": r20 and round(r20 * 100, 2), "f60": r60 and round(r60 * 100, 2),
+                        "m20": mean[20][i] and round(mean[20][i] * 100, 2),
+                        "mdd60": p and round(p["mdd60"] * 100, 2), "stop8": p and round(p["stop8"] * 100, 2)})
+    out["events"] = ev_rows
     out["recent"] = sorted(({"date": master[i], "code": c, "name": names.get(c, c), "strict": s}
                             for c, i, s, _ in events if i >= n - 30), key=lambda r: r["date"], reverse=True)
     out["period"] = [master[start_i], master[-1]]
@@ -420,8 +437,9 @@ def build_backtest():
         pr = L.fm_get("TaiwanStockPrice", code)
         if len(pr) < 300:
             continue
-        ins = L.fm_get("TaiwanStockInstitutionalInvestorsBuySell", code)
-        mg = L.fm_get("TaiwanStockMarginPurchaseShortSale", code)
+        light = os.environ.get("CHECK_LIGHT") == "1"     # 不抓法人、融資（這兩項回測沒有幫助），快 40%
+        ins = [] if light else L.fm_get("TaiwanStockInstitutionalInvestorsBuySell", code)
+        mg = [] if light else L.fm_get("TaiwanStockMarginPurchaseShortSale", code)
         rv = L.fm_get("TaiwanStockMonthRevenue", code, "2016-12-01")
         pe = {r["date"][:10]: _f(r.get("PER")) for r in L.fm_get("TaiwanStockPER", code)}
         seq = ohlc_rows(pr)
