@@ -235,7 +235,7 @@ def _from_shared(code, start, end):
     if not rows or rows[0][0] > start:          # 快取沒涵蓋到起始日 → 照舊向 FinMind 抓
         return None
     out = []
-    for d, cl, sp in rows:
+    for d, cl, sp, *_ in rows:                      # 之後的欄位（開高低量）給買進訊號用
         if start <= d <= end and cl and cl > 0:
             ref = (cl - sp) if sp is not None else None
             out.append((d, cl, ref if ref and ref > 0 else None))

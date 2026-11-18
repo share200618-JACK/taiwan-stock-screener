@@ -898,7 +898,8 @@ def dump_price_cache(keep_days=200):
     if not _price_dump:
         return
     cut = (datetime.utcnow() + timedelta(hours=8) - timedelta(days=keep_days)).strftime("%Y-%m-%d")
-    out = {code: [[r["date"], r["close"], r.get("chg")] for r in raw if r["date"] >= cut]
+    out = {code: [[r["date"], r["close"], r.get("chg"), r.get("open"), r.get("high"), r.get("low"), r.get("vol")]
+                  for r in raw if r["date"] >= cut]
            for code, raw in _price_dump.items()}
     try:
         with open(PRICE_CACHE_FILE, "w", encoding="utf-8") as f:
