@@ -61,9 +61,15 @@ def chat_id():
         elif r.status_code == 200:
             me = ""
             try:
-                me = "@" + requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getMe", timeout=10).json()["result"]["username"]
-            except Exception:
-                pass
+                gm = requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getMe", timeout=10)
+                body = gm.json()
+                me = "@" + body["result"]["username"] if body.get("ok") else ""
+                if not me:
+                    print(f"   getMe {gm.status_code}: {str(body)[:120]}", flush=True)
+            except Exception as e:
+                print(f"   getMe 例外：{e}", flush=True)
+            import re
+            print(f"   Token 格式：長度 {len(TG_BOT_TOKEN)}、{'正確（數字:英數）' if re.fullmatch(r'[0-9]{6,12}:[A-Za-z0-9_-]{30,}', TG_BOT_TOKEN) else '看起來不對'}", flush=True)
             print(f"ℹ️ 機器人 {me} 還沒收到你的訊息（共 {len(ups)} 筆更新）：請在 Telegram 打開 {me}，按「開始」或傳任何一句話", flush=True)
         else:
             print(f"❌ Telegram Token 可能有誤：{str((r.json() or {}).get('description', ''))[:100]}", flush=True)
