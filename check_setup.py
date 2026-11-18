@@ -87,7 +87,7 @@ def main():
         print("✅ Telegram 已推播" if sent else "❌ Telegram 推播失敗（token 或 chat id 有誤，見上方訊息）")
         tg_ok = sent
     else:
-        print("❌ Telegram 尚未設定：GitHub Secrets 缺 TG_BOT_TOKEN 或 TG_CHAT_ID")
+        print("❌ Telegram 尚未設定：GitHub Secrets 缺 TG_BOT_TOKEN，或還沒傳訊息給你的機器人（傳一句話後再執行一次）")
     sys.exit(0 if fm_ok and tg_ok else 1)
 
 
