@@ -55,7 +55,7 @@ def load_holdings():
     try:
         r = SESSION.get(f"{SUPABASE_URL}/rest/v1/trade_journal",
             params={"user_token": f"eq.{USER_TOKEN}", "sell_price": "is.null",
-                    "select": "id,code,name,buy_price,buy_date,stop_loss,stop_loss_pct,source"},
+                    "select": "id,code,name,buy_price,buy_date,stop_loss,stop_loss_pct,source,note"},
             headers=sb_headers(), timeout=15)
         return r.json() if r.status_code == 200 else []
     except Exception as e:
@@ -111,6 +111,7 @@ def fetch_price_info(code):
                       key=lambda x: x.get("date", ""))
         closes = [safe_float(x.get("close", 0)) for x in rows]
         dates = [x.get("date", "")[:10] for x in rows]
+        _series[code] = (closes, [x.get("spread") for x in rows])
         if len(closes) < 20:
             return (closes[-1] if closes else None), None, dates
         cur = closes[-1]
@@ -119,6 +120,41 @@ def fetch_price_info(code):
     except Exception as e:
         log(f"⚠️ {code} 抓價失敗: {e}")
         return None, None, []
+
+
+_series = {}          # code → (收盤list, 漲跌價差list)，給書的出場規則用
+NOMAD_SOURCE = "遊牧民"
+NOMAD_HOLD_DAYS = 5
+
+
+def book_reasons(h, cur, dates):
+    """
+    《社畜的財務自由計畫》作者的出場原則（所有持倉都檢查單日大跌與融資；遊牧民來源再加短線規則）
+      單日跌 ≥ 5% → 減碼一半；遊牧民短線單：收盤破 5 日線、或持有滿 5 天 → 出場
+      備註有「融資」：估計維持率（借 5 成），接近 130% 追繳線就提醒
+    """
+    code = h.get("code", "")
+    closes, spreads = _series.get(code, ([], []))
+    buy = safe_float(h.get("buy_price", 0))
+    out = []
+    if len(closes) >= 2:
+        sp = spreads[-1]
+        ref = closes[-1] - safe_float(sp) if sp not in (None, "") else closes[-2]
+        day = closes[-1] / ref - 1 if ref > 0 else 0
+        if day <= -0.05:
+            out.append(f"今天跌 {day * 100:.1f}%（書：單日跌 5% 以上先減碼一半）")
+    if (h.get("source") or "") == NOMAD_SOURCE:
+        if len(closes) >= 5 and cur < sum(closes[-5:]) / 5:
+            out.append(f"收盤跌破 5 日線（{sum(closes[-5:]) / 5:.2f}）")
+        held = trading_days_held(str(h.get("buy_date") or "")[:10], dates)
+        if held is not None and held >= NOMAD_HOLD_DAYS:
+            out.append(f"已持有 {held} 個交易日（書：短線最多 5 天）")
+    if "融資" in str(h.get("note") or "") and buy > 0:
+        mr = cur / (buy * 0.5) * 100
+        call = buy * 0.5 * 1.3
+        if mr < 165:
+            out.append(f"融資維持率估計 {mr:.0f}%（跌到 {call:.2f}，再跌 {(1 - call / cur) * 100:.0f}% 會被追繳）")
+    return out
 
 
 def trading_days_held(buy_date, dates):
@@ -183,8 +219,9 @@ def run():
             continue
 
         is_left = (h.get("source") or "") == LEFT_SOURCE
+        extra = book_reasons(h, cur, dates)
         if is_left:
-            reasons = left_reasons(h, cur, ma20, dates)
+            reasons = left_reasons(h, cur, ma20, dates) + extra
             if reasons:
                 pnl_pct = round((cur - buy) / buy * 100, 1) if buy > 0 else 0
                 alerts.append({"name": name, "code": code, "cur": cur, "buy": buy,
@@ -203,6 +240,7 @@ def run():
         # 條件3：跌破停損價
         if stop and cur < stop:
             reasons.append(f"跌破停損價({stop})")
+        reasons += extra
 
         if reasons:
             pnl_pct = round((cur - buy) / buy * 100, 1) if buy > 0 else 0
@@ -227,6 +265,8 @@ def run():
         lines.append(f"　現價 {a['cur']} / 成本 {a['buy']} {pnl_icon}{a['pnl_pct']:+.1f}%")
         lines.append(f"　訊號：{' + '.join(a['reasons'])}")
     lines.append("")
+    if any(a["pnl_pct"] < 0 for a in alerts):
+        lines.append("📌 虧損中的持股：明天若開低，9:30 前出清（書的原則），不要攤平")
     lines.append("⚠️ 僅供參考，請依自身紀律判斷")
 
     msg = "\n".join(lines)

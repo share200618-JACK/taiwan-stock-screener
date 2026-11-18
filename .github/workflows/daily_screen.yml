@@ -13,6 +13,7 @@ on:
       - 'auto_analysis.py'
       - 'left_side.py'
       - 'strategy.py'
+      - 'signal_alert.py'
       - 'revenue.py'
       - 'notify.py'
       - 'daily_report.py'
@@ -74,6 +75,19 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python sell_alert.py
 
+      - name: 買進訊號（Telegram）
+        id: signals
+        if: ${{ !cancelled() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          NOMAD_ON: ${{ vars.NOMAD_ON }}
+          PYTHONUNBUFFERED: "1"
+        run: python signal_alert.py
+
       - name: 還原績效快取（已到期的樣本不用重抓）
         if: ${{ !cancelled() }}
         uses: actions/cache/restore@v4
@@ -118,6 +132,7 @@ jobs:
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
           AI_OUTCOME: ${{ steps.ai.outcome }}
           SELL_OUTCOME: ${{ steps.sell.outcome }}
+          SIGNALS_OUTCOME: ${{ steps.signals.outcome }}
           PERF_OUTCOME: ${{ steps.perf.outcome }}
           WAVE_OUTCOME: ${{ steps.wave.outcome }}
         run: python daily_report.py

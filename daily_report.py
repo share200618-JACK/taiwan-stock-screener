@@ -17,7 +17,7 @@ from notify import esc
 
 SITE_URL = os.environ.get("SITE_URL", "https://taiwan-stock-screener-783z.onrender.com").rstrip("/")
 WEEK = "一二三四五六日"
-STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "PERF_OUTCOME": "績效計算",
+STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "SIGNALS_OUTCOME": "買進訊號", "PERF_OUTCOME": "績效計算",
               "WAVE_OUTCOME": "正2 波浪分析"}
 
 
@@ -61,6 +61,12 @@ def build(status, outcomes, now=None):
         L.append("今天沒有執行")
 
     # 持倉
+    sig = status.get("signals", {})
+    if sig and not sig.get("error"):
+        L += ["", f"📣 <b>買進訊號</b>：改良版條件 {sig.get('buys', 0)} 檔"
+                  f"{'（已另外推播）' if sig.get('sent') else ''}"
+                  + (f"：{esc('、'.join(sig.get('names') or []))}" if sig.get("names") else "")
+                  + (f"｜遊牧民爆量 {sig.get('watch', 0)}、量縮陰線 {sig.get('pullback', 0)}" if sig.get("nomad_on") else "")]
     if sell:
         if not sell.get("holdings"):
             L += ["", "🔔 <b>持倉</b>：目前沒有持倉中的交易"]
