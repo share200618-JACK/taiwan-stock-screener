@@ -492,6 +492,11 @@ def main():
         if mode == "cases":
             res = run_cases()
             key = "strategy_cases"
+        elif mode == "nomad":
+            import nomad_check
+            res = nomad_check.build()
+            nomad_check.report(res)
+            key = "strategy_nomad"
         else:
             res = build_backtest()
             report_backtest(res)
