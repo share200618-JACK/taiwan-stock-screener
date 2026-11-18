@@ -39,6 +39,13 @@ jobs:
       - name: Install dependencies
         run: pip install requests
 
+      - name: 還原研究資料快取（重跑不用再抓 FinMind）
+        uses: actions/cache/restore@v4
+        with:
+          path: fm_cache
+          key: fm-cache-${{ github.run_id }}
+          restore-keys: fm-cache-
+
       - name: 選股條件體檢
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -48,7 +55,15 @@ jobs:
           CHECK_MODE: ${{ github.event.inputs.mode }}
           CHECK_CASES: ${{ github.event.inputs.cases }}
           CHECK_LIGHT: ${{ github.event.inputs.light }}
+          FM_CACHE_DIR: fm_cache
         run: python strategy_check.py
+
+      - name: 保存研究資料快取
+        if: ${{ !cancelled() && hashFiles('fm_cache/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: fm_cache
+          key: fm-cache-${{ github.run_id }}
 
       - name: 保存結果檔
         if: ${{ !cancelled() }}
