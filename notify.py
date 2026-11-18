@@ -59,7 +59,12 @@ def chat_id():
                 requests.post(f"{url}/rest/v1/analysis_store", headers=h, timeout=10,
                               json={"key": "tg_chat", "date": today, "payload": {"chat_id": _chat["id"]}})
         elif r.status_code == 200:
-            print("ℹ️ 機器人還沒收到你的訊息：請在 Telegram 打開你的機器人，按「開始」或傳任何一句話", flush=True)
+            me = ""
+            try:
+                me = "@" + requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getMe", timeout=10).json()["result"]["username"]
+            except Exception:
+                pass
+            print(f"ℹ️ 機器人 {me} 還沒收到你的訊息（共 {len(ups)} 筆更新）：請在 Telegram 打開 {me}，按「開始」或傳任何一句話", flush=True)
         else:
             print(f"❌ Telegram Token 可能有誤：{str((r.json() or {}).get('description', ''))[:100]}", flush=True)
     except Exception as e:
