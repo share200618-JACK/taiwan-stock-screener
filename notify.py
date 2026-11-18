@@ -19,6 +19,19 @@ LIMIT = 4000   # Telegram 單則上限 4096 字
 _chat = {"id": TG_CHAT_ID, "tried": bool(TG_CHAT_ID)}
 
 
+def _tg_get(method, tries=4):
+    """Telegram API GET，連線被重設時重試（GitHub 主機偶爾連不上）"""
+    import time as _t
+    last = None
+    for k in range(tries):
+        try:
+            return requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/{method}", timeout=20)
+        except Exception as e:
+            last = e
+            _t.sleep(3 * (k + 1))
+    raise last
+
+
 def _sb():
     url, key = os.environ.get("SUPABASE_URL", ""), os.environ.get("SUPABASE_KEY", "")
     return (url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json",
@@ -46,7 +59,7 @@ def chat_id():
         except Exception:
             pass
     try:
-        r = requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates", timeout=15)
+        r = _tg_get("getUpdates")
         ups = (r.json() or {}).get("result") or []
         chats = [u.get("message", {}).get("chat", {}) for u in ups if u.get("message")]
         chats = [c for c in chats if c.get("type") == "private" and c.get("id")]
@@ -61,7 +74,7 @@ def chat_id():
         elif r.status_code == 200:
             me = ""
             try:
-                gm = requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getMe", timeout=10)
+                gm = _tg_get("getMe")
                 body = gm.json()
                 me = "@" + body["result"]["username"] if body.get("ok") else ""
                 if not me:
@@ -102,28 +115,36 @@ def _chunks(msg):
 
 
 def send(msg, silent=False):
-    """回傳 True/False；沒設定時印提示並回 False（不會讓排程失敗）"""
+    """回傳 True/False；沒設定時印提示並回 False（不會讓排程失敗）；連線被重設時重試"""
     if not configured():
         print("ℹ️ Telegram 還沒設定好（缺 TG_BOT_TOKEN，或機器人還沒收到你的訊息），略過推播", flush=True)
         return False
+    import time as _t
     ok = True
     for part in _chunks(msg):
-        try:
-            r = requests.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-                              json={"chat_id": chat_id(), "text": part, "parse_mode": "HTML",
-                                    "disable_web_page_preview": True, "disable_notification": silent},
-                              timeout=15)
-            body = {}
+        done, err = False, ""
+        for k in range(3):
             try:
-                body = r.json()
-            except Exception:
-                pass
-            if r.status_code != 200 or not body.get("ok"):
-                ok = False
-                print(f"❌ Telegram 推播失敗 {r.status_code}: {str(body.get('description', r.text))[:150]}", flush=True)
-        except Exception as e:
+                r = requests.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
+                                  json={"chat_id": chat_id(), "text": part, "parse_mode": "HTML",
+                                        "disable_web_page_preview": True, "disable_notification": silent},
+                                  timeout=20)
+                try:
+                    body = r.json()
+                except Exception:
+                    body = {}
+                if r.status_code == 200 and body.get("ok"):
+                    done = True
+                    break
+                err = f"{r.status_code}: {str(body.get('description', r.text))[:150]}"
+                if r.status_code < 500 and r.status_code != 429:
+                    break                                    # 參數錯誤（例如 chat id 不對）不用重試
+            except Exception as e:
+                err = f"例外 {e}"
+            _t.sleep(3 * (k + 1))
+        if not done:
             ok = False
-            print(f"❌ Telegram 推播例外: {e}", flush=True)
+            print(f"❌ Telegram 推播失敗 {err}", flush=True)
     if ok:
         print("✅ Telegram 已推播", flush=True)
     return ok
