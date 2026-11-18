@@ -10,3 +10,4 @@ rev_cache.json
 strategy_cases_result.json
 strategy_check_result.json
 strategy_nomad_result.json
+fm_cache/

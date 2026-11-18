@@ -89,7 +89,39 @@ class TokenBad(Exception):
 _last = [0.0]
 
 
+FM_CACHE_DIR = os.environ.get("FM_CACHE_DIR", "")      # 研究用：原始資料存硬碟（GitHub Actions cache 保存），重跑不用再抓
+FM_CACHE_DAYS = float(os.environ.get("FM_CACHE_DAYS", "7"))
+
+
+def _cache_path(dataset, data_id, start):
+    import hashlib
+    key = hashlib.md5(f"{dataset}|{data_id}|{start}".encode()).hexdigest()[:16]
+    return os.path.join(FM_CACHE_DIR, f"{dataset}_{data_id or 'all'}_{key}.json.gz")
+
+
 def fm_get(dataset, data_id=None, start=DATA_START):
+    if FM_CACHE_DIR:
+        import gzip
+        path = _cache_path(dataset, data_id, start)
+        try:
+            if os.path.exists(path) and time.time() - os.path.getmtime(path) < FM_CACHE_DAYS * 86400:
+                with gzip.open(path, "rt", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        rows = _fm_fetch(dataset, data_id, start)
+        if rows:
+            try:
+                os.makedirs(FM_CACHE_DIR, exist_ok=True)
+                with gzip.open(path, "wt", encoding="utf-8") as f:
+                    json.dump(rows, f)
+            except Exception:
+                pass
+        return rows
+    return _fm_fetch(dataset, data_id, start)
+
+
+def _fm_fetch(dataset, data_id=None, start=DATA_START):
     wait = FINMIND_MIN_INTERVAL - (time.time() - _last[0])
     if wait > 0:
         time.sleep(wait)
