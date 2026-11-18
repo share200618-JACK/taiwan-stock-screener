@@ -16,8 +16,59 @@ STATUS_FILE  = os.environ.get("RUN_STATUS_FILE",
 LIMIT = 4000   # Telegram 單則上限 4096 字
 
 
+_chat = {"id": TG_CHAT_ID, "tried": bool(TG_CHAT_ID)}
+
+
+def _sb():
+    url, key = os.environ.get("SUPABASE_URL", ""), os.environ.get("SUPABASE_KEY", "")
+    return (url, {"apikey": key, "Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                  "Prefer": "return=minimal"}) if url and key else (None, None)
+
+
+def chat_id():
+    """
+    TG_CHAT_ID 沒設定時自動找：
+      1. Supabase analysis_store（key=tg_chat）存過的
+      2. 機器人最近收到的私訊（使用者傳過任何一句話給機器人就找得到，24 小時內）→ 找到就存進 Supabase
+    """
+    if _chat["id"] or _chat["tried"] or not TG_BOT_TOKEN:
+        return _chat["id"]
+    _chat["tried"] = True
+    url, h = _sb()
+    if url:
+        try:
+            r = requests.get(f"{url}/rest/v1/analysis_store", params={"select": "payload", "key": "eq.tg_chat",
+                             "order": "date.desc", "limit": "1"}, headers=h, timeout=10)
+            rows = r.json() if r.status_code == 200 else []
+            if rows and (rows[0].get("payload") or {}).get("chat_id"):
+                _chat["id"] = str(rows[0]["payload"]["chat_id"])
+                return _chat["id"]
+        except Exception:
+            pass
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates", timeout=15)
+        ups = (r.json() or {}).get("result") or []
+        chats = [u.get("message", {}).get("chat", {}) for u in ups if u.get("message")]
+        chats = [c for c in chats if c.get("type") == "private" and c.get("id")]
+        if chats:
+            _chat["id"] = str(chats[-1]["id"])
+            print(f"✅ 找到你的 Telegram Chat ID：{_chat['id']}（已記住，不用再設定）", flush=True)
+            if url:
+                from datetime import datetime, timedelta
+                today = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+                requests.post(f"{url}/rest/v1/analysis_store", headers=h, timeout=10,
+                              json={"key": "tg_chat", "date": today, "payload": {"chat_id": _chat["id"]}})
+        elif r.status_code == 200:
+            print("ℹ️ 機器人還沒收到你的訊息：請在 Telegram 打開你的機器人，按「開始」或傳任何一句話", flush=True)
+        else:
+            print(f"❌ Telegram Token 可能有誤：{str((r.json() or {}).get('description', ''))[:100]}", flush=True)
+    except Exception as e:
+        print(f"⚠️ 查詢 Telegram Chat ID 失敗：{e}", flush=True)
+    return _chat["id"]
+
+
 def configured():
-    return bool(TG_BOT_TOKEN and TG_CHAT_ID)
+    return bool(TG_BOT_TOKEN and chat_id())
 
 
 def esc(s):
@@ -42,13 +93,13 @@ def _chunks(msg):
 def send(msg, silent=False):
     """回傳 True/False；沒設定時印提示並回 False（不會讓排程失敗）"""
     if not configured():
-        print("ℹ️ 未設定 TG_BOT_TOKEN / TG_CHAT_ID，略過 Telegram 推播", flush=True)
+        print("ℹ️ Telegram 還沒設定好（缺 TG_BOT_TOKEN，或機器人還沒收到你的訊息），略過推播", flush=True)
         return False
     ok = True
     for part in _chunks(msg):
         try:
             r = requests.post(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage",
-                              json={"chat_id": TG_CHAT_ID, "text": part, "parse_mode": "HTML",
+                              json={"chat_id": chat_id(), "text": part, "parse_mode": "HTML",
                                     "disable_web_page_preview": True, "disable_notification": silent},
                               timeout=15)
             body = {}
