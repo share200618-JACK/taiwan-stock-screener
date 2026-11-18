@@ -492,6 +492,11 @@ def main():
         if mode == "cases":
             res = run_cases()
             key = "strategy_cases"
+        elif mode == "xq":
+            import xq_check
+            res = xq_check.build()
+            xq_check.report(res)
+            key = "strategy_xq"
         elif mode == "nomad":
             import nomad_check
             res = nomad_check.build()
