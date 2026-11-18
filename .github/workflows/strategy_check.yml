@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "cases、backtest 或 nomad"
+        description: "cases、backtest、nomad 或 xq"
         required: true
         default: "cases"
       cases:
