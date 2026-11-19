@@ -713,7 +713,7 @@ window.addEventListener('DOMContentLoaded', () => {
   // 先執行頁面功能，背景驗證登入
   checkAutoResultStatus();
   updateCustomHistoryCount();
-  loadWatchingCodes().then(loadLeftSide);
+  Promise.all([loadWatchingCodes(), loadMargin()]).then(loadLeftSide);
 
   // 已移除登入，固定顯示 Jack
   const avatar = document.getElementById('userAvatar');
@@ -1251,6 +1251,34 @@ async function toggleWatch(code, name, price, sector, btn, note) {
 const _esc = v => String(v ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 const _sg  = v => v == null ? '—' : (v >= 0 ? '+' : '') + v;
 
+// ── 個股融資維持率（估計，每晚 21:30 更新）──────────────
+let MARGIN = {}, MARGIN_DATE = '';
+async function loadMargin() {
+  try {
+    const d = await (await fetch(`${API}/api/margin/latest`)).json();
+    if (d.ok) { MARGIN = d.all || {}; MARGIN_DATE = d.date || ''; }
+  } catch (e) {}
+  fillMargin();
+}
+function marginColor(r) { return r < 130 ? '#ff8a3d' : r < 150 ? 'var(--gold)' : 'var(--dim)'; }
+function fillMargin() {
+  document.querySelectorAll('[data-mr]').forEach(el => {
+    const m = MARGIN[el.dataset.mr];
+    if (!m) { el.style.display = 'none'; return; }
+    const [ratio, callPx] = m, c = marginColor(ratio);
+    const tip = `融資維持率（估計，${MARGIN_DATE}）＝ 收盤 ÷（融資平均成本 × 融資成數）。低於 130% 融資戶會被追繳，2 天內沒補錢可能被斷頭。`;
+    el.title = tip;
+    el.style.display = '';
+    if (el.dataset.mrStyle === 'line') {
+      el.innerHTML = `🧯 融資維持率 <b style="color:${c};">${ratio}%</b>${ratio < 130 ? ' ⚠️ 已低於追繳線' : `（約跌到 ${callPx} 會被追繳）`}<br>`;
+    } else {
+      el.innerHTML = `🧯 融資維持 ${ratio}%${ratio < 130 ? ' ⚠️' : ''}`;
+      el.style.color = c;
+      el.style.borderColor = c;
+    }
+  });
+}
+
 async function loadLeftSide() {
   const st = document.getElementById('leftStatus'), grid = document.getElementById('leftGrid');
   try {
@@ -1274,6 +1302,7 @@ async function loadLeftSide() {
     st.innerHTML = `${head}・符合 <strong style="color:var(--blu);">${stocks.length}</strong> 支（依法人買超佔成交量排序）`;
     grid.style.display = 'grid';
     grid.innerHTML = stocks.map((s, i) => leftCard(s, i, d.exit || {})).join('');
+    fillMargin();
   } catch (e) {
     st.textContent = `左側名單讀取失敗：${e.message}`;
   }
@@ -1296,6 +1325,7 @@ function leftCard(s, i, ex) {
       ${cell('MA20乖離 / RSI6', `${_sg(s.bias20)}% / ${s.rsi6 ?? '—'}`)}
     </div>
     <div style="font-size:.72rem;color:var(--dim);line-height:1.75;">
+      <span data-mr="${_esc(s.code)}" data-mr-style="line" style="display:none;"></span>
       🛑 停損 <b style="color:var(--grn);">${s.stop}</b>（−${ex.stop_pct || 8}%）<br>
       🎯 回到 MA20 <b style="color:var(--red);">${s.target}</b>${up !== null ? `（${_sg(Number(up))}%）先出一半` : ''}<br>
       ⏱ 持有滿 ${days} 個交易日沒反彈就出場
@@ -1481,6 +1511,7 @@ function renderResults(data) {
         </div>
       </div>`;
     }).join('');
+    fillMargin();
     return;
   }
 
@@ -1534,6 +1565,7 @@ function renderResults(data) {
       </div>` : ''}
       ${prec ? `<span class="acc-badge" style="background:rgba(61,139,255,.12);color:var(--blu);border-color:rgba(61,139,255,.2);">精確率 ${prec}%</span>` : ''}
       <span class="acc-badge" style="background:rgba(168,85,247,.12);color:var(--pur);border-color:rgba(168,85,247,.2);">訓練 ${s.data_years||'?'} 年</span>
+      <span class="acc-badge" data-mr="${s.code}" style="display:none;background:rgba(240,180,41,.08);"></span>
       ${s.rev_hot ? `<span class="acc-badge" title="最新月營收創 12 個月新高且年增 ≥ 20%（個股勝率實驗室：之後勝率較高）" style="background:rgba(255,77,94,.12);color:var(--red);border-color:rgba(255,77,94,.25);">📈 營收創高 ${s.rev_yoy != null ? '年增 ' + s.rev_yoy + '%' : ''}</span>` : ''}
     ` : '';
 
@@ -1633,6 +1665,7 @@ function renderResults(data) {
 
     </div>`;
   }).join('');
+  fillMargin();
 }
 
 </script>

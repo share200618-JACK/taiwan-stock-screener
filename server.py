@@ -1999,6 +1999,34 @@ def etf_wave_latest():
 def signal_lab_page():
     return send_from_directory(".", "signal_lab.html")
 
+_margin_cache = {"t": 0, "data": None}
+
+@app.route("/api/margin/latest")
+def margin_latest():
+    """個股融資維持率（估計）：margin_watch.py 每晚寫入 analysis_store, key=margin_watch"""
+    import time as _t
+    if _margin_cache["data"] and _t.time() - _margin_cache["t"] < 600:
+        return jsonify(_margin_cache["data"])
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return jsonify({"ok": False, "error": "未設定 Supabase"})
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_store",
+                         params={"select": "date,payload", "key": "eq.margin_watch", "order": "date.desc", "limit": "1"},
+                         headers=_sb_headers(), timeout=20)
+        rows = r.json() if r.status_code == 200 else []
+        if not rows:
+            return jsonify({"ok": False, "error": "尚無資料"})
+        p = rows[0].get("payload") or {}
+        if isinstance(p, str):
+            p = json.loads(p)
+        data = {"ok": True, "date": p.get("date") or rows[0].get("date"), "all": p.get("all") or {},
+                "low": p.get("low") or [], "loan": p.get("loan")}
+        _margin_cache.update({"t": _t.time(), "data": data})
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 _signal_lab_cache = {"t": 0, "data": None}
 
 @app.route("/api/signal-lab/latest")
