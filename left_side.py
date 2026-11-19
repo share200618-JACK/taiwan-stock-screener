@@ -1,7 +1,7 @@
 """
 籌碼左側策略（散戶退場、法人承接）
 ====================================
-純計算模組，不連網、不讀寫資料庫。每日排程（auto_analysis.py）與因子實驗室（server.py）
+純計算模組，不連網、不讀寫資料庫。每日排程（auto_analysis.py）與網站（server.py）
 共用同一份規則，確保「驗證的」和「實際推薦的」是同一件事。
 
 進場條件（決策點：當日收盤後）
@@ -190,7 +190,7 @@ def compute_series(records, inst_hist=None, margin_hist=None):
 
 
 def factor_value(metrics, factor):
-    """因子實驗室用：從當日指標取出單一因子值（缺值回 None）"""
+    """從當日指標取出單一因子值（缺值回 None）"""
     if not metrics:
         return None
     if factor == "left_chip":
