@@ -51,13 +51,13 @@ def _f(x, d=0.0):
 
 
 # ── 全市場行情與本益比 ─────────────────────────────────
-def fetch_quotes():
-    """{代號: {name, o, h, l, c, chg, pct, vol(張), amt(億)}}"""
-    out = {}
+def fetch_quotes(extra=()):
+    """{代號: {name, o, h, l, c, chg, pct, vol(張), amt(億)}}；預設只收 4 碼個股，extra 可另外指定（例如 ETF）"""
+    out, extra = {}, set(extra or ())
     try:
         for r in SESSION.get("https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL", timeout=20).json():
             code, c, chg = r.get("Code", ""), _f(r.get("ClosingPrice")), _f(r.get("Change"))
-            if len(code) == 4 and code.isdigit() and c > 0:
+            if ((len(code) == 4 and code.isdigit()) or code in extra) and c > 0:
                 prev = c - chg
                 out[code] = {"name": r.get("Name", ""), "o": _f(r.get("OpeningPrice"), c), "h": _f(r.get("HighestPrice"), c),
                              "l": _f(r.get("LowestPrice"), c), "c": c, "chg": chg,
@@ -69,7 +69,7 @@ def fetch_quotes():
         for r in SESSION.get("https://www.tpex.org.tw/openapi/v1/tpex_mainboard_quotes", timeout=30).json():
             code = r.get("SecuritiesCompanyCode", "") or r.get("code", "")
             c, chg = _f(r.get("Close")), _f(r.get("Change"))
-            if len(code) == 4 and code.isdigit() and c > 0:
+            if ((len(code) == 4 and code.isdigit()) or code in extra) and c > 0:
                 prev = c - chg
                 out[code] = {"name": r.get("CompanyName", ""), "o": _f(r.get("Open"), c), "h": _f(r.get("High"), c),
                              "l": _f(r.get("Low"), c), "c": c, "chg": chg,

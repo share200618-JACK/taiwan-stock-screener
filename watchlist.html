@@ -129,6 +129,16 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
 }
 .bi-item{font-size:.68rem;color:var(--muted);}
 .bi-val{color:var(--txt);font-weight:600;font-family:'JetBrains Mono',monospace;}
+/* 追蹤提醒 */
+.al-btn{margin-left:4px;padding:1px 8px;border-radius:5px;border:1px solid rgba(240,180,41,.4);background:rgba(240,180,41,.1);
+  color:var(--gold);font-size:.64rem;font-weight:600;cursor:pointer;}
+.al-form{display:none;padding:10px 14px;border-top:1px solid var(--bdr);background:var(--bg2);}
+.al-form input{width:84px;padding:5px 7px;border-radius:6px;border:1px solid var(--bdr);background:var(--bg);color:var(--txt);
+  font-family:'JetBrains Mono',monospace;font-size:.75rem;}
+.al-form button{padding:5px 12px;border-radius:6px;border:1px solid var(--bdr);background:var(--bg3);color:var(--txt);font-size:.72rem;cursor:pointer;}
+.al-form button.primary{border-color:var(--gold);background:rgba(240,180,41,.15);color:var(--gold);font-weight:700;}
+.sig-recent{padding:0 14px 10px;font-size:.66rem;color:var(--muted);line-height:1.7;}
+.watch-hint{font-size:.7rem;color:var(--muted);line-height:1.6;padding:2px 4px 12px;}
 
 /* 展開區塊 */
 .card-detail{display:none;border-top:1px solid var(--bdr);padding:14px;}
@@ -250,6 +260,7 @@ body{background:var(--bg);color:var(--txt);font-family:'Noto Sans TC',sans-serif
 
 <!-- 清單 -->
 <div class="container">
+  <div class="watch-hint">🔔 每天收盤後（約 14:40）自動檢查追蹤股：出現<b style="color:var(--txt);">買進訊號</b>（改良版條件、存股＋營運動能、AI 前 5 名、營收創新高）或碰到你設的<b style="color:var(--gold);">提醒價</b>，就發 Telegram 通知。</div>
   <div id="stockList"></div>
 </div>
 
@@ -302,6 +313,8 @@ const API = location.hostname==='localhost' ? 'http://localhost:5000' : '';
 const JACK_TOKEN = 'default';
 
 let _cache = [];
+let _alerts = {};   // {code: {below, above, below_hit, above_hit}}
+let _recent = [];   // 最近的追蹤提醒紀錄
 let _prices = {};
 let _sort = 'time';
 let _chartInst = {};
@@ -319,7 +332,7 @@ function showApp() {
 // ── 讀取追蹤清單 ─────────────────────────────────────
 async function loadWatchlist() {
   try {
-    const r = await fetch(`${API}/api/watchlist?token=${JACK_TOKEN}`);
+    const [r] = await Promise.all([fetch(`${API}/api/watchlist?token=${JACK_TOKEN}`), loadAlerts()]);
     const d = await r.json();
     _cache = d.stocks || [];
     renderList();
@@ -480,7 +493,10 @@ function renderCard(s) {
       <div class="bi-item">買進價 <span class="bi-val">${s.add_price||'—'}</span></div>
       ${price&&s.add_price?`<div class="bi-item">vs買進 <span class="bi-val" style="color:${retCol};">${ret>=0?'+':''}${ret}%</span> <span style="font-size:.6rem;color:var(--dim);">(每股${ret>=0?'+':''}${Math.round((price-s.add_price)*100)/100})</span></div>`:''}
       <div class="bi-item">備註 <span class="bi-val">${s.note||'—'}</span></div>
+      <div class="bi-item">🔔 提醒 <span class="bi-val" id="alTxt_${s.code}">${alertText(s.code)}</span><button class="al-btn" onclick="toggleAlertForm('${s.code}')">設定</button></div>
     </div>
+    ${alertForm(s.code, price)}
+    ${recentSignals(s.code)}
     <div class="card-detail" id="detail_${s.code}">
       <div class="detail-tabs">
         <button class="dtab active" id="tab_chart_${s.code}" onclick="switchTab('${s.code}','chart')">📈 技術線圖</button>
@@ -510,6 +526,85 @@ function renderCard(s) {
       </div>
     </div>
   </div>`;
+}
+
+// ── 追蹤提醒（價格提醒＋買進訊號）───────────────────────
+function _esc(t) {
+  return String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function _md(d) { return (d||'').slice(5).replace('-','/'); }
+
+async function loadAlerts() {
+  try {
+    const r = await fetch(`${API}/api/watch-alerts`);
+    const d = await r.json();
+    _alerts = d.alerts || {};
+    _recent = d.recent || [];
+  } catch(e) { console.log('提醒設定載入失敗', e); }
+}
+
+function alertText(code) {
+  const a = _alerts[code];
+  if (!a || (!a.below && !a.above)) return '<span style="color:var(--dim);font-weight:400;">只通知買進訊號</span>';
+  const done = d => d ? ` <span style="color:var(--dim);font-weight:400;">(${_md(d)} 已通知)</span>` : '';
+  const parts = [];
+  if (a.below) parts.push(`跌到 <span style="color:var(--grn);">${a.below}</span>${done(a.below_hit)}`);
+  if (a.above) parts.push(`漲到 <span style="color:var(--red);">${a.above}</span>${done(a.above_hit)}`);
+  return parts.join('｜');
+}
+
+function alertForm(code, price) {
+  const a = _alerts[code] || {};
+  const hint = v => price ? `例 ${Math.round(price * v * 100) / 100}` : '';
+  return `<div class="al-form" id="alForm_${code}">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:.72rem;color:var(--muted);">
+      跌到 <input id="alB_${code}" type="number" step="0.01" min="0" value="${a.below||''}" placeholder="${hint(0.92)}">
+      漲到 <input id="alA_${code}" type="number" step="0.01" min="0" value="${a.above||''}" placeholder="${hint(1.1)}">
+      <button class="primary" onclick="saveAlert('${code}')">儲存</button>
+      <button onclick="saveAlert('${code}', true)">清除</button>
+    </div>
+    <div id="alMsg_${code}" style="font-size:.66rem;color:var(--dim);margin-top:6px;line-height:1.6;">
+      收盤後看當天最低／最高價，碰到就通知一次（只填一個也可以）；要再收到就按一次儲存重新啟用。
+    </div>
+  </div>`;
+}
+
+function recentSignals(code) {
+  const r = _recent.filter(x => x.code === code).slice(0, 3);
+  if (!r.length) return '';
+  return `<div class="sig-recent">${r.map(x => `<div>📣 ${_md(x.date)} ${_esc(x.text)}</div>`).join('')}</div>`;
+}
+
+function toggleAlertForm(code) {
+  const f = document.getElementById('alForm_' + code);
+  if (f) f.style.display = f.style.display === 'block' ? 'none' : 'block';
+}
+
+async function saveAlert(code, clear) {
+  const val = id => { const v = parseFloat(document.getElementById(id).value); return v > 0 ? v : null; };
+  const below = clear ? null : val('alB_' + code);
+  const above = clear ? null : val('alA_' + code);
+  const msg = document.getElementById('alMsg_' + code);
+  const show = (t, col) => { msg.textContent = t; msg.style.color = col; };
+  if (below && above && below >= above) return show('「跌到」要低於「漲到」', 'var(--red)');
+  const p = (_prices[code] || {}).price;
+  let warn = '';
+  if (p && below && below >= p) warn = `（現價 ${p} 已經在「跌到」價之下，下一次收盤檢查就會通知）`;
+  if (p && above && above <= p) warn = `（現價 ${p} 已經在「漲到」價之上，下一次收盤檢查就會通知）`;
+  show('儲存中…', 'var(--dim)');
+  try {
+    const r = await fetch(`${API}/api/watch-alerts/${code}`, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                              body: JSON.stringify({below, above})});
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || '儲存失敗');
+    if (d.alert) _alerts[code] = d.alert; else delete _alerts[code];
+    document.getElementById('alTxt_' + code).innerHTML = alertText(code);
+    if (clear) { document.getElementById('alB_' + code).value = ''; document.getElementById('alA_' + code).value = ''; }
+    show((clear ? '✅ 已清除價格提醒（買進訊號照常通知）' : '✅ 已儲存') + warn, warn ? 'var(--gold)' : 'var(--grn)');
+    if (!warn) setTimeout(() => { const f = document.getElementById('alForm_' + code); if (f) f.style.display = 'none'; }, 1500);
+  } catch(e) {
+    show('❌ ' + e.message, 'var(--red)');
+  }
 }
 
 // ── 展開/收合 ─────────────────────────────────────────
