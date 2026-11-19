@@ -220,8 +220,9 @@ def run(today=None, fetch=fetch_day, days_fn=trading_days, send=True):
     for r in low:
         r["chg"] = int(r["bal"] - prev_bal.get(r["code"], r["bal"]))
     log(f"資料日 {last_ok}：融資餘額 ≥ {MIN_BAL} 張 {len(rows)} 檔；維持率 < 130% {len(low)} 檔、130～140% {len(warn)} 檔")
+    every = {r["code"]: [r["ratio"], r["call_px"], r["bal"]] for r in ratios(state, min_bal=1)}   # 網頁個股卡片用
     payload = {"date": last_ok, "low": low, "warn": [{k: r[k] for k in ("code", "name", "ratio")} for r in warn],
-               "n_all": len(rows), "loan": LOAN}
+               "n_all": len(rows), "loan": LOAN, "all": every}
     save_store(last_ok, payload)
     msg = compose(last_ok, low, warn, len(rows), today)
     sent = notify.send(msg) if send else False
