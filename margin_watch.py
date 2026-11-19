@@ -206,7 +206,7 @@ def run(today=None, fetch=fetch_day, days_fn=trading_days, send=True):
         prev_bal = {c: v[0] for c, v in state.get("s", {}).items()}      # 最後一個有資料的交易日前的餘額（算今日增減）
         update(state, d, data)
         last_ok = d
-        if (k + 1) % 20 == 0:
+        if (k + 1) % 10 == 0:
             log(f"   已處理 {k + 1}/{len(todo)} 天（{d}）")
             save_state(state)
     save_state(state)

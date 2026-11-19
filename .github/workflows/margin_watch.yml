@@ -14,7 +14,7 @@ concurrency:
 jobs:
   margin:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 170
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +32,7 @@ jobs:
           restore-keys: margin-state-
 
       - name: 估計個股融資維持率
+        timeout-minutes: 150         # 超時只讓這一步失敗，下面仍會保存已處理的進度
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
@@ -41,7 +42,7 @@ jobs:
         run: python margin_watch.py
 
       - name: 保存融資平均成本狀態
-        if: ${{ !cancelled() && hashFiles('margin_state.json') != '' }}
+        if: ${{ always() && hashFiles('margin_state.json') != '' }}
         uses: actions/cache/save@v4
         with:
           path: margin_state.json
