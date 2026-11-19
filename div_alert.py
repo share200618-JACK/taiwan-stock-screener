@@ -306,6 +306,7 @@ def run(quotes=None, yields=None, cache=None, today=None, send=True, picks_hist=
     msg = compose(today, new, picks, summary, fresh)
     sent = notify.send(msg) if (send and (new or fresh)) else False
     notify.record("div", {"picks": len(picks), "new": len(new), "names": [f"{p['name']}({p['code']})" for p in new[:8]],
+                          "codes": [p["code"] for p in picks],
                           "sent": sent, "track": summary})
     return {"picks": picks, "new": new, "summary": summary, "fresh": fresh, "msg": msg}
 

@@ -468,7 +468,78 @@ def api_watchlist_remove(code):
     body  = request.get_json(silent=True) or {}
     token = body.get("user_token") or request.args.get("token","default")
     ok    = sb_watchlist_remove(code, token)
+    if ok and token == "default":
+        try:
+            if code in (_store_get("watch_alerts").get("alerts") or {}):
+                _watch_alert_set(code, None, None)      # 取消追蹤 → 價格提醒一起移除
+        except Exception:
+            pass
     return jsonify({"ok": ok, "code": code})
+
+# ── 追蹤股提醒（watch_alert.py 每天收盤後檢查；設定與通知紀錄存在 analysis_store）──
+def _store_get(key):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {}
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_store",
+                         params={"select": "payload", "key": f"eq.{key}", "order": "date.desc", "limit": "1"},
+                         headers=_sb_headers(), timeout=10)
+        rows = r.json() if r.status_code == 200 else []
+        p = (rows[0].get("payload") or {}) if rows else {}
+        return json.loads(p) if isinstance(p, str) else p
+    except Exception as e:
+        print(f"[store] 讀取 {key} 失敗: {e}")
+        return {}
+
+
+def _store_put(key, payload):
+    """一個 key 只留一列（先刪再寫）"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    url = f"{SUPABASE_URL}/rest/v1/analysis_store"
+    day = (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+    try:
+        requests.delete(url, params={"key": f"eq.{key}"}, headers=_sb_headers(), timeout=10)
+        r = requests.post(url, json={"key": key, "date": day, "payload": payload}, headers=_sb_headers(), timeout=10)
+        return r.status_code in (200, 201, 204)
+    except Exception as e:
+        print(f"[store] 寫入 {key} 失敗: {e}")
+        return False
+
+
+def _watch_alert_set(code, below, above):
+    p = _store_get("watch_alerts")
+    a = p.setdefault("alerts", {})
+    if below is None and above is None:
+        a.pop(code, None)
+    else:   # 儲存＝重新啟用（觸發紀錄清掉）
+        a[code] = {"below": below, "above": above, "below_hit": None, "above_hit": None}
+    return _store_put("watch_alerts", p), a.get(code)
+
+
+@app.route("/api/watch-alerts")
+def api_watch_alerts():
+    lg = _store_get("watch_log")
+    return jsonify({"ok": True, "alerts": _store_get("watch_alerts").get("alerts") or {},
+                    "recent": (lg.get("recent") or [])[:80]})
+
+
+@app.route("/api/watch-alerts/<code>", methods=["POST"])
+def api_watch_alert_save(code):
+    body = request.get_json(silent=True) or {}
+
+    def num(v):
+        try:
+            x = round(float(v), 2)
+            return x if x > 0 else None
+        except (TypeError, ValueError):
+            return None
+    below, above = num(body.get("below")), num(body.get("above"))
+    if below and above and below >= above:
+        return jsonify({"ok": False, "error": "「跌到」要低於「漲到」"}), 400
+    ok, alert = _watch_alert_set(code.strip(), below, above)
+    return jsonify({"ok": ok, "alert": alert})
+
 
 @app.route("/api/watchlist/<code>/note", methods=["PATCH"])
 def api_watchlist_note(code):

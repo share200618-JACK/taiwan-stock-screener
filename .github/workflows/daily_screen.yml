@@ -15,6 +15,7 @@ on:
       - 'strategy.py'
       - 'signal_alert.py'
       - 'div_alert.py'
+      - 'watch_alert.py'
       - 'revenue.py'
       - 'notify.py'
       - 'daily_report.py'
@@ -102,6 +103,18 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: python div_alert.py
 
+      - name: 追蹤股提醒（Telegram）
+        id: watch
+        if: ${{ !cancelled() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: python watch_alert.py
+
       - name: 保存存股快取
         if: ${{ !cancelled() && hashFiles('div_cache.json') != '' }}
         uses: actions/cache/save@v4
@@ -162,6 +175,7 @@ jobs:
           SELL_OUTCOME: ${{ steps.sell.outcome }}
           SIGNALS_OUTCOME: ${{ steps.signals.outcome }}
           DIV_OUTCOME: ${{ steps.div.outcome }}
+          WATCH_OUTCOME: ${{ steps.watch.outcome }}
           PERF_OUTCOME: ${{ steps.perf.outcome }}
           WAVE_OUTCOME: ${{ steps.wave.outcome }}
         run: python daily_report.py
