@@ -17,7 +17,8 @@ from notify import esc
 
 SITE_URL = os.environ.get("SITE_URL", "https://taiwan-stock-screener-783z.onrender.com").rstrip("/")
 WEEK = "一二三四五六日"
-STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "SIGNALS_OUTCOME": "買進訊號", "PERF_OUTCOME": "績效計算",
+STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "SIGNALS_OUTCOME": "買進訊號",
+              "DIV_OUTCOME": "存股＋營運動能", "PERF_OUTCOME": "績效計算",
               "WAVE_OUTCOME": "正2 波浪分析"}
 
 
@@ -67,6 +68,13 @@ def build(status, outcomes, now=None):
                   f"{'（已另外推播）' if sig.get('sent') else ''}"
                   + (f"：{esc('、'.join(sig.get('names') or []))}" if sig.get("names") else "")
                   + (f"｜遊牧民爆量 {sig.get('watch', 0)}、量縮陰線 {sig.get('pullback', 0)}" if sig.get("nomad_on") else "")]
+    dv = status.get("div", {})
+    if dv and not dv.get("error"):
+        tr = dv.get("track") or {}
+        L += ["", f"🏦 <b>存股＋營運動能</b>：今天符合 {dv.get('picks', 0)} 檔、新推薦 {dv.get('new', 0)} 檔"
+                  + (f"：{esc('、'.join(dv.get('names') or []))}" if dv.get("names") else "")
+                  + (f"｜累計 {tr['n']} 筆到期 勝率 {tr['win']}% 平均 {tr['avg']:+}%（0050 {tr['bench']}%）" if tr.get("n")
+                     else "｜實際成績：第一批推薦約 3 個月後到期")]
     if sell:
         if not sell.get("holdings"):
             L += ["", "🔔 <b>持倉</b>：目前沒有持倉中的交易"]

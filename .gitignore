@@ -12,3 +12,4 @@ strategy_check_result.json
 strategy_nomad_result.json
 fm_cache/
 strategy_xq_result.json
+div_cache.json
