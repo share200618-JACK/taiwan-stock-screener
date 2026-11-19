@@ -13,3 +13,4 @@ strategy_nomad_result.json
 fm_cache/
 strategy_xq_result.json
 div_cache.json
+margin_state.json
