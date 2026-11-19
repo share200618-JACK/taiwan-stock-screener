@@ -1,0 +1,48 @@
+name: 個股融資維持率
+
+# 每個交易日晚上 21:30（台灣）更新：維持率 < 130%（估計）的個股推 Telegram、存 Supabase（analysis_store, key=margin_watch）
+# 第一次執行會回補 130 個交易日（約 25 分鐘），之後每天幾十秒
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 13 * * 1-5"
+
+concurrency:
+  group: margin-watch
+  cancel-in-progress: false
+
+jobs:
+  margin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install requests
+
+      - name: 還原融資平均成本狀態
+        uses: actions/cache/restore@v4
+        with:
+          path: margin_state.json
+          key: margin-state-${{ github.run_id }}
+          restore-keys: margin-state-
+
+      - name: 估計個股融資維持率
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: python margin_watch.py
+
+      - name: 保存融資平均成本狀態
+        if: ${{ !cancelled() && hashFiles('margin_state.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: margin_state.json
+          key: margin-state-${{ github.run_id }}
