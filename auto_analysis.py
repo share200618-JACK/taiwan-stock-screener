@@ -31,7 +31,7 @@ from collections import defaultdict
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 try:
-    import left_side          # 籌碼左側策略（與因子實驗室共用同一份規則）
+    import left_side          # 籌碼左側策略
 except ImportError:
     left_side = None
 import strategy                # AI 選股條件（門檻＋排序），每月依實際成績自動調整
