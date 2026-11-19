@@ -14,6 +14,7 @@ on:
       - 'left_side.py'
       - 'strategy.py'
       - 'signal_alert.py'
+      - 'div_alert.py'
       - 'revenue.py'
       - 'notify.py'
       - 'daily_report.py'
@@ -57,13 +58,6 @@ jobs:
           FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
         run: python auto_analysis.py
 
-      - name: 保存月營收快取
-        if: ${{ !cancelled() && hashFiles('rev_cache.json') != '' }}
-        uses: actions/cache/save@v4
-        with:
-          path: rev_cache.json
-          key: rev-cache-${{ github.run_id }}-${{ github.run_attempt }}
-
       - name: 持倉賣出提醒（Telegram）
         id: sell
         if: ${{ !cancelled() }}   # 前一步失敗也照跑
@@ -87,6 +81,40 @@ jobs:
           NOMAD_ON: ${{ vars.NOMAD_ON }}
           PYTHONUNBUFFERED: "1"
         run: python signal_alert.py
+
+      - name: 還原存股日K與財報快取
+        if: ${{ !cancelled() }}
+        uses: actions/cache/restore@v4
+        with:
+          path: div_cache.json
+          key: div-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: div-cache-
+
+      - name: 存股＋營運動能（Telegram）
+        id: div
+        if: ${{ !cancelled() }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          FINMIND_TOKEN: ${{ secrets.FINMIND_TOKEN }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          PYTHONUNBUFFERED: "1"
+        run: python div_alert.py
+
+      - name: 保存存股快取
+        if: ${{ !cancelled() && hashFiles('div_cache.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: div_cache.json
+          key: div-cache-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: 保存月營收快取
+        if: ${{ !cancelled() && hashFiles('rev_cache.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: rev_cache.json
+          key: rev-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: 還原績效快取（已到期的樣本不用重抓）
         if: ${{ !cancelled() }}
@@ -133,6 +161,7 @@ jobs:
           AI_OUTCOME: ${{ steps.ai.outcome }}
           SELL_OUTCOME: ${{ steps.sell.outcome }}
           SIGNALS_OUTCOME: ${{ steps.signals.outcome }}
+          DIV_OUTCOME: ${{ steps.div.outcome }}
           PERF_OUTCOME: ${{ steps.perf.outcome }}
           WAVE_OUTCOME: ${{ steps.wave.outcome }}
         run: python daily_report.py
