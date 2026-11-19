@@ -125,6 +125,46 @@ def fetch_day(day):
     return out
 
 
+def fetch_summary(day):
+    """
+    證交所公布的「融資金額」總額（元）與未追蹤的 ETF（6 碼）融資市值，用來校正估計的平均成本
+    （回補只從 130 天前開始，更早買進、成本較低的部位會被高估成本 → 維持率被低估）
+    """
+    ymd = day.replace("-", "")
+    j = get("twse", "https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN",
+            {"date": ymd, "selectType": "ALL", "response": "json"})
+    if not j or str(j.get("date")) != ymd:
+        return None
+    t0 = _table(j, ["項目", "今日餘額"])
+    loan = None
+    for r in (t0 or {}).get("data", []):
+        if str(r[0]).startswith("融資金額"):
+            loan = (_num(r[5]) or 0) * 1000
+    t = _table(j, ["代號", "今日餘額"])
+    other = {r[0]: _num(r[6]) or 0 for r in (t or {}).get("data", []) if not re.fullmatch(r"\d{4}", r[0])}
+    jp = get("twse", "https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX",
+             {"date": ymd, "type": "ALLBUT0999", "response": "json"})
+    tp = _table(jp, ["證券代號", "收盤價"])
+    val = 0.0
+    if tp:
+        ci = next(i for i, f in enumerate(tp["fields"]) if "收盤價" in f)
+        for r in tp["data"]:
+            if r[0] in other:
+                val += other[r[0]] * 1000 * (_num(r[ci]) or 0)
+    return {"loan": loan, "other_val": val} if loan else None
+
+
+def calibration(state, summ):
+    """k ＝ 證交所融資金額（扣掉未追蹤 ETF）÷ 估計的融資金額；之後成本 × k"""
+    if not summ:
+        return 1.0
+    implied = sum(v[0] * 1000 * v[1] * LOAN["twse"] for v in state.get("s", {}).values() if v[3] == "twse" and v[1] > 0)
+    target = summ["loan"] - LOAN["twse"] * summ["other_val"]
+    if implied <= 0 or target <= 0:
+        return 1.0
+    return max(0.5, min(1.5, target / implied))
+
+
 # ── 平均成本 ──────────────────────────────────────────
 def update(state, day, data):
     """把一天的融資變化套進狀態：s[代號] = [餘額, 平均成本, 名稱, 市場, 前收盤]"""
@@ -151,14 +191,16 @@ def update(state, day, data):
     return state
 
 
-def ratios(state, min_bal=MIN_BAL):
+def ratios(state, min_bal=MIN_BAL, k=None):
+    k = state.get("k", 1.0) if k is None else k
     out = []
     for code, (bal, cost, name, m, px) in state.get("s", {}).items():
-        if bal < min_bal or cost <= 0 or not px:
+        if bal < min_bal or cost <= 0 or not px or code.startswith("0"):          # 0 開頭是 ETF，不列
             continue
-        out.append({"code": code, "name": name, "m": m, "close": px, "bal": int(bal), "cost": round(cost, 2),
-                    "ratio": round(px / (cost * LOAN[m]) * 100, 1),
-                    "call_px": round(cost * LOAN[m] * 1.3, 2)})
+        c = cost * k
+        out.append({"code": code, "name": name, "m": m, "close": px, "bal": int(bal), "cost": round(c, 2),
+                    "ratio": round(px / (c * LOAN[m]) * 100, 1),
+                    "call_px": round(c * LOAN[m] * 1.3, 2)})
     return sorted(out, key=lambda r: r["ratio"])
 
 
@@ -189,7 +231,7 @@ def save_store(day, payload):
         pass
 
 
-def run(today=None, fetch=fetch_day, days_fn=trading_days, send=True):
+def run(today=None, fetch=fetch_day, days_fn=trading_days, send=True, summary_fn=fetch_summary):
     today = today or (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
     state = load_state()
     days = days_fn(today, SEED_DAYS)
@@ -214,15 +256,25 @@ def run(today=None, fetch=fetch_day, days_fn=trading_days, send=True):
         log("❌ 沒有任何融資資料")
         notify.record("margin", {"error": "no_data"})
         return None
-    rows = ratios(state)
+    summ = summary_fn(last_ok)
+    k = calibration(state, summ)
+    if summ:
+        state["k"] = k
+        save_state(state)
+        log(f"校正：證交所融資金額 {summ['loan'] / 1e8:,.0f} 億（未追蹤 ETF 約 {LOAN['twse'] * summ['other_val'] / 1e8:,.0f} 億），"
+            f"估計成本 × {k:.3f}")
+    else:
+        k = state.get("k", 1.0)
+        log(f"⚠️ 抓不到證交所融資金額，沿用上次校正 × {k:.3f}")
+    rows = ratios(state, k=k)
     low = [r for r in rows if r["ratio"] < THRESH]
     warn = [r for r in rows if THRESH <= r["ratio"] < 140]
     for r in low:
         r["chg"] = int(r["bal"] - prev_bal.get(r["code"], r["bal"]))
     log(f"資料日 {last_ok}：融資餘額 ≥ {MIN_BAL} 張 {len(rows)} 檔；維持率 < 130% {len(low)} 檔、130～140% {len(warn)} 檔")
-    every = {r["code"]: [r["ratio"], r["call_px"], r["bal"]] for r in ratios(state, min_bal=1)}   # 網頁個股卡片用
+    every = {r["code"]: [r["ratio"], r["call_px"], r["bal"]] for r in ratios(state, min_bal=1, k=k)}   # 網頁個股卡片用
     payload = {"date": last_ok, "low": low, "warn": [{k: r[k] for k in ("code", "name", "ratio")} for r in warn],
-               "n_all": len(rows), "loan": LOAN, "all": every}
+               "n_all": len(rows), "loan": LOAN, "all": every, "k": round(k, 3)}
     save_store(last_ok, payload)
     msg = compose(last_ok, low, warn, len(rows), today)
     sent = notify.send(msg) if send else False
@@ -243,7 +295,7 @@ def compose(day, low, warn, n_all, today):
             L.append(f"…另有 {len(low) - 30} 檔")
     else:
         L.append("今天沒有（融資餘額 300 張以上的股票）")
-    L.append(f"130～140%（接近追繳）{len(warn)} 檔；共檢查 {n_all} 檔")
+    L.append(f"130～140%（接近追繳）{len(warn)} 檔；共檢查 {n_all} 檔（成本已用證交所融資總金額校正）")
     L += ["", "說明：維持率 ＝ 收盤 ÷（融資平均成本 × 融資成數），上市 6 成、上櫃 5 成；低於 130% 代表很多融資戶被追繳，"
               "2 天內沒補錢可能被斷頭賣出，短線賣壓大。這是估計值，個別券商、個別股票成數可能不同。"]
     return "\n".join(L)
