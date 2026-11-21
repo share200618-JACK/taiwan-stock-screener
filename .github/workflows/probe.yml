@@ -6,6 +6,10 @@ on:
       urls:
         description: "要檢查的網址（空白分隔）"
         required: true
+      follow:
+        description: "網頁的話順著 script 找 API（1＝是）"
+        required: false
+        default: "1"
 
 jobs:
   probe:
@@ -20,4 +24,5 @@ jobs:
       - name: 檢查
         env:
           PROBE_URLS: ${{ github.event.inputs.urls }}
+          PROBE_FOLLOW: ${{ github.event.inputs.follow }}
         run: python probe_api.py
