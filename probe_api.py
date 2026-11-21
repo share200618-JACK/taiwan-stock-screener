@@ -11,7 +11,8 @@ import requests
 
 URLS = [u for u in os.environ.get("PROBE_URLS", "").split() if u]
 FOLLOW = os.environ.get("PROBE_FOLLOW", "") == "1"
-GREP = os.environ.get("PROBE_GREP", "")   # 網頁／JS：印出符合的字附近 160 字
+GREP = os.environ.get("PROBE_GREP", "")
+FULL = os.environ.get("PROBE_FULL", "") == "1"     # JSON 整份印出（每行一筆，FULLJSON 開頭）   # 網頁／JS：印出符合的字附近 160 字
 H = {"User-Agent": "Mozilla/5.0"}
 API_RE = re.compile(r"""["'`]((?:https?://[^"'`\s]+)?/[^"'`\s]*(?:api|rwd|json|data|dashboard|credit|margin)[^"'`\s]*)["'`]""", re.I)
 
@@ -51,7 +52,10 @@ for u in URLS:
         r = requests.get(u, headers=H, timeout=30)
         print(f"==== {u}\n status {r.status_code}  bytes {len(r.content)}  type {r.headers.get('content-type')}")
         try:
-            show_json(r.json())
+            j = r.json()
+            if FULL:
+                print("FULLJSON " + json.dumps({"url": u, "json": j}, ensure_ascii=False))
+            show_json(j)
             continue
         except Exception:
             pass

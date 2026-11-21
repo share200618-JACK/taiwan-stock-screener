@@ -14,6 +14,10 @@ on:
         description: "網頁／JS 內要找的字（正規表示式，可空白）"
         required: false
         default: ""
+      full:
+        description: "JSON 整份印出（1＝是）"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -30,4 +34,5 @@ jobs:
           PROBE_URLS: ${{ github.event.inputs.urls }}
           PROBE_FOLLOW: ${{ github.event.inputs.follow }}
           PROBE_GREP: ${{ github.event.inputs.grep }}
+          PROBE_FULL: ${{ github.event.inputs.full }}
         run: python probe_api.py
