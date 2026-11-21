@@ -11,6 +11,7 @@ import requests
 
 URLS = [u for u in os.environ.get("PROBE_URLS", "").split() if u]
 FOLLOW = os.environ.get("PROBE_FOLLOW", "") == "1"
+GREP = os.environ.get("PROBE_GREP", "")   # 網頁／JS：印出符合的字附近 160 字
 H = {"User-Agent": "Mozilla/5.0"}
 API_RE = re.compile(r"""["'`]((?:https?://[^"'`\s]+)?/[^"'`\s]*(?:api|rwd|json|data|dashboard|credit|margin)[^"'`\s]*)["'`]""", re.I)
 
@@ -58,6 +59,9 @@ for u in URLS:
         t = r.text
         print(" text:", t[:400].replace("\n", " "))
         print(" endpoints:", endpoints(t)[:60])
+        if GREP:
+            for m in list(re.finditer(GREP, t))[:40]:
+                print(" grep:", t[max(0, m.start() - 160): m.end() + 160].replace("\n", " "))
         if FOLLOW:
             host = urlparse(u).netloc
             for src in re.findall(r"""<script[^>]+src=["']([^"']+)["']""", t, re.I):

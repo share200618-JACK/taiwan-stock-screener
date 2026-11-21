@@ -10,6 +10,10 @@ on:
         description: "網頁的話順著 script 找 API（1＝是）"
         required: false
         default: "1"
+      grep:
+        description: "網頁／JS 內要找的字（正規表示式，可空白）"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -25,4 +29,5 @@ jobs:
         env:
           PROBE_URLS: ${{ github.event.inputs.urls }}
           PROBE_FOLLOW: ${{ github.event.inputs.follow }}
+          PROBE_GREP: ${{ github.event.inputs.grep }}
         run: python probe_api.py
