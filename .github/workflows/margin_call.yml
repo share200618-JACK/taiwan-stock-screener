@@ -1,0 +1,36 @@
+name: 融資追繳／斷頭統計（早上）
+
+on:
+  schedule:
+    - cron: "20 23 * * 0-4"      # 台灣時間週一～週五 07:20（開盤前，抓前一個交易日的官方數據）
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "不管壓力大小都推播（1＝是）"
+        required: false
+        default: "1"
+
+concurrency:
+  group: margin-call
+  cancel-in-progress: false
+
+jobs:
+  mcall:
+    runs-on: ubuntu-latest
+    timeout-minutes: 80
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: 追繳／斷頭統計＋推播
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          MCALL_MODE: push
+          MCALL_FORCE: ${{ github.event.inputs.force }}
+          PYTHONUNBUFFERED: "1"
+        run: python margin_call.py

@@ -16,6 +16,7 @@ on:
       - 'signal_alert.py'
       - 'div_alert.py'
       - 'watch_alert.py'
+      - 'margin_call.py'
       - 'revenue.py'
       - 'notify.py'
       - 'daily_report.py'
@@ -103,6 +104,17 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: python div_alert.py
 
+      - name: 融資追繳／斷頭統計（給日報）
+        id: mcall
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          MCALL_MODE: report
+          PYTHONUNBUFFERED: "1"
+        run: python margin_call.py
+
       - name: 追蹤股提醒（Telegram）
         id: watch
         if: ${{ !cancelled() }}
@@ -176,6 +188,7 @@ jobs:
           SIGNALS_OUTCOME: ${{ steps.signals.outcome }}
           DIV_OUTCOME: ${{ steps.div.outcome }}
           WATCH_OUTCOME: ${{ steps.watch.outcome }}
+          MCALL_OUTCOME: ${{ steps.mcall.outcome }}
           PERF_OUTCOME: ${{ steps.perf.outcome }}
           WAVE_OUTCOME: ${{ steps.wave.outcome }}
         run: python daily_report.py

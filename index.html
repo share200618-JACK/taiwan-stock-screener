@@ -269,6 +269,23 @@ body{
 .rank-sub{font-size:.6rem;color:var(--muted);margin-top:1px;}
 .rank-chg{font-size:.72rem;font-weight:700;font-family:'JetBrains Mono',monospace;text-align:right;}
 
+/* 融資追繳／斷頭 */
+.mc-panel{background:var(--bg2);border:1px solid var(--bdr);border-radius:14px;padding:16px;margin-bottom:16px;}
+.mc-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;}
+.mc-kpi{background:var(--bg3);border:1px solid var(--bdr);border-radius:10px;padding:10px 8px;text-align:center;}
+.mc-kpi .v{font-family:'JetBrains Mono',monospace;font-size:1.05rem;font-weight:800;color:var(--white);line-height:1.2;}
+.mc-kpi .l{font-size:.6rem;color:var(--muted);margin-top:3px;}
+.mc-kpi .s{font-size:.58rem;color:var(--dim);margin-top:2px;font-family:'JetBrains Mono',monospace;}
+.mc-legend{display:flex;gap:12px;font-size:.6rem;color:var(--muted);margin:2px 0 4px;flex-wrap:wrap;}
+.mc-legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px;}
+.mc-sch{margin-top:12px;border-top:1px solid var(--bdr);padding-top:10px;}
+.mc-row{display:grid;grid-template-columns:86px 1fr;gap:8px;padding:6px 0;border-bottom:1px dashed var(--bdr);font-size:.72rem;}
+.mc-row:last-child{border-bottom:none;}
+.mc-row .d{color:var(--txt);font-weight:600;}
+.mc-row .n{color:var(--white);font-weight:700;font-family:'JetBrains Mono',monospace;}
+.mc-row .x{font-size:.62rem;color:var(--muted);margin-top:2px;line-height:1.5;}
+.mc-note{font-size:.6rem;color:var(--dim);margin-top:8px;line-height:1.6;}
+@media(max-width:480px){.mc-kpis{grid-template-columns:repeat(2,1fr);}}
 @media(max-width:768px){
   .indices-grid{grid-template-columns:repeat(3,1fr);}
   .main-grid{grid-template-columns:1fr;}
@@ -333,6 +350,13 @@ body{
     </div>
     <div id="riskUpdated" style="font-size:.62rem;color:var(--dim);text-align:right;margin-top:8px;"></div>
   </div>
+
+  <!-- 融資追繳／斷頭（證交所臺股儀表板）-->
+  <div class="section-hd" style="margin-top:6px;">
+    <div class="section-title">融資追繳／斷頭</div>
+    <button class="refresh-btn" onclick="loadMarginCall()">↻ 刷新</button>
+  </div>
+  <div id="mcPanel" class="mc-panel"><div style="font-size:.72rem;color:var(--dim);">載入中...</div></div>
 
   <!-- 大盤指數 -->
   <div class="section-hd" style="margin-top:6px;">
@@ -537,6 +561,84 @@ async function loadRisk() {
     document.getElementById('riskUpdated').textContent = '更新：' + (d.updated||'');
   } catch(e) {
     document.getElementById('riskLabel').textContent = '載入失敗';
+  }
+}
+
+// ── 融資追繳／斷頭 ──────────────────────────────────
+const _WD = '日一二三四五六';
+function _mcDay(d, wd = true) {
+  const s = `${+d.slice(5, 7)}/${+d.slice(8, 10)}`;
+  return wd ? `${s}（${_WD[new Date(d + 'T12:00:00Z').getUTCDay()]}）` : s;
+}
+const _yi = x => (x / 1e8).toLocaleString('zh-TW', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + ' 億';
+const _n = x => (x ?? 0).toLocaleString('zh-TW');
+
+function mcChart(trend) {
+  // 上：全市場維持率（含 130% 追繳線）；下：追繳戶數（黃）＋處分戶數（紅）
+  const rows = trend.slice(-30), W = 640, R = 46, L = 6;
+  if (!rows.length) return '';
+  const K = {t: 14, b: 64}, B = {t: 84, b: 168}, H = 186;
+  const bw = (W - L - R) / rows.length, cx = i => L + i * bw + bw / 2;
+  const ks = rows.map(r => r.keep), kmin = Math.min(...ks, 130) - 2, kmax = Math.max(...ks) + 2;
+  const yk = v => K.t + (K.b - K.t) * (1 - (v - kmin) / (kmax - kmin));
+  const maxB = Math.max(...rows.map(r => r.below), 1);
+  const yb = v => B.b - (B.b - B.t) * v / maxB;
+  let g = '';
+  rows.forEach((r, i) => {
+    const x = L + i * bw;
+    g += `<rect x="${x + bw * .12}" y="${yb(r.below)}" width="${bw * .76}" height="${B.b - yb(r.below)}" fill="#f0b429" opacity=".55"><title>${r.date} 追繳 ${_n(r.below)} 戶</title></rect>`;
+    if (r.exe) g += `<rect x="${x + bw * .3}" y="${yb(r.exe)}" width="${bw * .4}" height="${B.b - yb(r.exe)}" fill="#f03e4d"><title>${r.date} 處分 ${_n(r.exe)} 戶</title></rect>`;
+  });
+  const last = rows[rows.length - 1];
+  const lab = i => `<text x="${cx(i)}" y="${H - 4}" fill="#5a6888" font-size="10" text-anchor="middle">${_mcDay(rows[i].date, false)}</text>`;
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:760px;height:auto;display:block;margin:0 auto;">
+    <line x1="${L}" x2="${W - R}" y1="${yk(130)}" y2="${yk(130)}" stroke="#f03e4d" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="${W - R + 4}" y="${yk(130) + 3}" fill="#f03e4d" font-size="10">130%</text>
+    <polyline points="${rows.map((r, i) => `${cx(i)},${yk(r.keep)}`).join(' ')}" fill="none" stroke="#3d8bff" stroke-width="2"/>
+    <circle cx="${cx(rows.length - 1)}" cy="${yk(last.keep)}" r="3" fill="#3d8bff"/>
+    <text x="${W - R + 4}" y="${Math.min(yk(last.keep) + 3, yk(130) - 9)}" fill="#3d8bff" font-size="10" font-weight="700">${last.keep.toFixed(1)}%</text>
+    <line x1="${L}" x2="${W - R}" y1="${B.b}" y2="${B.b}" stroke="#1a2235"/>
+    ${g}
+    <text x="${W - R + 4}" y="${B.t + 8}" fill="#5a6888" font-size="10">${_n(maxB)}</text>
+    <text x="${W - R + 4}" y="${B.t + 20}" fill="#5a6888" font-size="10">戶</text>
+    ${lab(0)}${lab(Math.floor(rows.length / 2))}${lab(rows.length - 1)}
+  </svg>`;
+}
+
+async function loadMarginCall() {
+  const el = document.getElementById('mcPanel');
+  try {
+    const r = await fetch(`${API}/api/margin-call/latest`);
+    const d = await r.json();
+    if (!d.ok) { el.innerHTML = `<div style="font-size:.72rem;color:var(--dim);">${d.error || '尚無資料'}（每天早上 7:20 後更新）</div>`; return; }
+    const col = d.keep < 150 ? 'var(--red)' : d.keep < 160 ? '#ff8a3d' : d.keep < 170 ? 'var(--gold)' : 'var(--grn)';
+    const chg = d.keep_chg == null ? '' : `${d.keep_chg > 0 ? '+' : ''}${d.keep_chg.toFixed(2)}`;
+    const exeDay = (d.schedule || [])[0];
+    let html = `<div class="mc-kpis">
+      <div class="mc-kpi"><div class="v" style="color:${col};">${d.keep.toFixed(2)}%</div><div class="l">全市場擔保維持率</div><div class="s">${chg}｜追繳線 130%</div></div>
+      <div class="mc-kpi"><div class="v" style="color:var(--gold);">${_n(d.below)}</div><div class="l">追繳戶數</div><div class="s">${d.below_prev != null ? '前一日 ' + _n(d.below_prev) : ''}</div></div>
+      <div class="mc-kpi"><div class="v">${_yi(d.call_amt)}</div><div class="l">當天應補繳</div><div class="s">當天通知 ${_n(d.call)} 戶</div></div>
+      <div class="mc-kpi"><div class="v" style="color:var(--red);">${_n(d.exe)}</div><div class="l">${exeDay ? _mcDay(exeDay.date, false) + ' 開盤斷頭' : '處分戶數'}</div><div class="s">${_yi(d.exe_amt)}</div></div>
+    </div>
+    <div class="mc-legend"><span><i style="background:#f0b429;opacity:.55"></i>追繳戶數</span><span><i style="background:#f03e4d"></i>處分（隔天斷頭）戶數</span><span><i style="background:#3d8bff;height:3px;vertical-align:2px"></i>全市場維持率</span></div>
+    ${mcChart(d.trend || [])}
+    <div class="mc-sch"><div style="font-size:.75rem;font-weight:700;color:var(--txt);margin-bottom:4px;">📅 未來一週斷頭時程</div>`;
+    for (const s of (d.schedule || [])) {
+      if (s.kind === 'exe') html += `<div class="mc-row"><div class="d">${_mcDay(s.date)}</div><div><span class="n" style="color:var(--red);">${_n(s.n)} 戶</span>　${_yi(s.amt)}<div class="x">已確定：開盤由券商賣出</div></div></div>`;
+      else if (s.kind === 'pending') {
+        const est = [s.est_down != null ? `續跌約 ${_n(s.est_down)}` : '', s.est_up != null ? `反彈約 ${_n(s.est_up)}` : ''].filter(Boolean).join('、');
+        html += `<div class="mc-row"><div class="d">${_mcDay(s.date)}</div><div><span class="n">最多 ${_n(s.n)} 戶</span>${est ? `<span style="font-size:.66rem;color:var(--muted);">　估 ${est}</span>` : ''}<div class="x">${_mcDay(s.src, false)} 被追繳、${_mcDay(s.deadline, false)} 收盤前沒補且整戶仍低於 130%</div></div></div>`;
+      }
+    }
+    const unk = (d.schedule || []).find(s => s.kind === 'unknown');
+    if (unk) html += `<div class="mc-row"><div class="d">${_mcDay(unk.date)} 起</div><div><div class="x" style="margin-top:0;">要看 ${_mcDay(unk.src, false)} 之後的新追繳（每天早上更新）</div></div></div>`;
+    const c = d.conv || {};
+    const pc = o => `${Math.round(o.min * 100)}–${Math.round(o.max * 100)}%`;
+    html += `</div><div class="mc-note">${c.all ? `過去 ${c.all.n} 次大量追繳（單日 ≥300 戶）後被斷頭的比例：${c.down ? '續跌時 ' + pc(c.down) : ''}${c.down && c.up ? '、' : ''}${c.up ? '反彈時 ' + pc(c.up) : ''}。` : ''}
+      戶數≈人數（同一人在不同券商開戶算多戶）。資料：證交所臺股儀表板（全市場、整戶），${_mcDay(d.date)} 收盤後。</div>`;
+    el.innerHTML = html;
+  } catch (e) {
+    el.innerHTML = '<div style="font-size:.72rem;color:var(--dim);">載入失敗</div>';
   }
 }
 
@@ -768,6 +870,7 @@ async function loadSectorHeatmap() {
 // ── 初始化 ────────────────────────────────────────────
 loadIndices();
 loadRisk();
+loadMarginCall();
 loadAISummary();
 loadNews();
 loadSectorHeatmap();

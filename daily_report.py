@@ -18,7 +18,7 @@ from notify import esc
 SITE_URL = os.environ.get("SITE_URL", "https://taiwan-stock-screener-783z.onrender.com").rstrip("/")
 WEEK = "一二三四五六日"
 STEP_NAMES = {"AI_OUTCOME": "AI 選股分析", "SELL_OUTCOME": "持倉賣出提醒", "SIGNALS_OUTCOME": "買進訊號",
-              "DIV_OUTCOME": "存股＋營運動能", "WATCH_OUTCOME": "追蹤股提醒", "PERF_OUTCOME": "績效計算",
+              "DIV_OUTCOME": "存股＋營運動能", "WATCH_OUTCOME": "追蹤股提醒", "MCALL_OUTCOME": "融資追繳統計", "PERF_OUTCOME": "績效計算",
               "WAVE_OUTCOME": "正2 波浪分析"}
 
 
@@ -75,6 +75,13 @@ def build(status, outcomes, now=None):
                   + (f"：{esc('、'.join(dv.get('names') or []))}" if dv.get("names") else "")
                   + (f"｜累計 {tr['n']} 筆到期 勝率 {tr['win']}% 平均 {tr['avg']:+}%（0050 {tr['bench']}%）" if tr.get("n")
                      else "｜實際成績：第一批推薦約 3 個月後到期")]
+    mc = status.get("mcall", {})
+    if mc.get("date") and not mc.get("error"):
+        d = lambda x: f"{int(x[5:7])}/{int(x[8:10])}"
+        L += ["", f"🧯 <b>融資追繳</b>（{d(mc['date'])}）：全市場維持率 {mc['keep']:.2f}%"
+                  + (f"（{mc['keep_chg']:+.2f}）" if mc.get("keep_chg") is not None else "")
+                  + f"｜追繳 {mc['below']:,} 戶、應補繳 {mc['call_amt'] / 1e8:,.2f} 億"
+                  + f"｜{d(mc['exe_day'])} 開盤斷頭 {mc['exe']:,} 戶、{mc['exe_amt'] / 1e8:,.2f} 億"]
     wt = status.get("watch", {})
     if wt.get("n") and not wt.get("error"):
         L += ["", f"👁️ <b>追蹤股</b>：{wt['n']} 檔中 {wt.get('hits', 0)} 檔有提醒"
