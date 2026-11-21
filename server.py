@@ -517,6 +517,23 @@ def _watch_alert_set(code, below, above):
     return _store_put("watch_alerts", p), a.get(code)
 
 
+_mcall_cache = {"t": 0, "d": None}
+
+
+@app.route("/api/margin-call/latest")
+def api_margin_call_latest():
+    """融資追繳／斷頭統計（margin_call.py 每天早上與收盤後寫入）"""
+    import time as _t
+    if _mcall_cache["d"] is None or _t.time() - _mcall_cache["t"] > 600:
+        p = _store_get("margin_call")
+        if p:
+            _mcall_cache.update(t=_t.time(), d=p)
+    p = _mcall_cache["d"]
+    if not p:
+        return jsonify({"ok": False, "error": "尚無資料"})
+    return jsonify({"ok": True, **p})
+
+
 @app.route("/api/watch-alerts")
 def api_watch_alerts():
     lg = _store_get("watch_log")
