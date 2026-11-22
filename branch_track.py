@@ -384,6 +384,8 @@ def groups(ev):
     g = {"全部": ev,
          "漲停買": [e for e in ev if e["limit"]],
          "非漲停": [e for e in ev if not e["limit"]],
+         "大跌買(跌≥5%)": [e for e in ev if e["pct"] <= -5],
+         "跌停買": [e for e in ev if e["pct"] <= -9.4],
          "大額(≥5000萬)": [e for e in ev if e["net_amt"] >= 50000],
          "占成交≥5%": [e for e in ev if (e.get("share") or 0) >= 5],
          "隔天有倒貨": [e for e in ev if e.get("sold1", 0) > 0],
@@ -550,6 +552,7 @@ def daily_picks(br, q, min_amt=MIN_AMT):
             o, h, l, c, ref, vol, tamt, mkt = x
             pct = (c / ref - 1) * 100
             it.update(pct=round(pct, 2), close=c, limit=bool(c >= round(ref * 1.1, 2) - 0.011 or pct >= 9.4),
+                      limit_dn=bool(pct <= -9.4),
                       at_high=bool(h and c >= h - 1e-9), share=round(amt * 1000 / tamt * 100, 1) if tamt else None)
         out.append(it)
     return sorted(out, key=lambda x: -x["amt"])
@@ -579,7 +582,7 @@ def compose(day, picks, fu, mine, study=None, n_prev=None):
     md = f"{int(day[5:7])}/{int(day[8:10])}"
     L = [f"🏦 <b>{BNAME} 今日買超</b>（{md}，個股 ≥1,000 萬 共 {len(picks)} 檔）"]
     for p in picks[:TOP_N]:
-        tag = " 🔺漲停" if p.get("limit") else " ⬆收最高" if p.get("at_high") else ""
+        tag = " 🔺漲停" if p.get("limit") else " 🔻跌停" if p.get("limit_dn") else " ⬆收最高" if p.get("at_high") else ""
         pct = f"｜{p['pct']:+.1f}%" if p.get("pct") is not None else ""
         sh = f"｜占成交 {p['share']:.0f}%" if p.get("share") and p["share"] >= 5 else ""
         L.append(f"• {e(p['name'])} {p['code']} 買超 {yi(p['amt'])}{pct}{tag}{sh}")
@@ -591,6 +594,13 @@ def compose(day, picks, fu, mine, study=None, n_prev=None):
         if s.get("gap") and s.get("o1c5"):
             hint = f"（過去：隔天開盤平均 {s['gap']['mean']:+.1f}%，隔天開盤跟進 5 天後平均輸大盤 {-s['o1c5']['mean']:.1f}%）"
         L += ["", f"⚡ <b>漲停買進</b>（最像隔日沖）：" + "、".join(e(p["name"]) for p in lim[:8]) + hint]
+    dip = [p for p in picks if (p.get("pct") or 0) <= -5]
+    if len(dip) >= 3:
+        s = (g.get("大跌買(跌≥5%)") or {}).get("ret") or {}
+        hint = ""
+        if s.get("o1c5"):
+            hint = f"（過去：隔天開盤跟進 5 天後平均{'輸' if s['o1c5']['mean'] < 0 else '贏'}大盤 {abs(s['o1c5']['mean']):.1f}%、勝率 {s['o1c5']['win']:.0f}%）"
+        L += ["", f"🛒 <b>逢低承接</b>（當天跌 ≥5% 還買超）{len(dip)} 檔" + hint]
     hit = [p for p in picks if p["code"] in mine]
     if hit:
         L += ["", "⚠️ <b>你的股票在名單內</b>：" + "、".join(f"{e(p['name'])}（{mine[p['code']]}）" for p in hit)]
