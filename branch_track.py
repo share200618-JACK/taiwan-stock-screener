@@ -409,12 +409,26 @@ def run_study(end=None, n=DAYS):
     ev = study(days, B, Q)
     ev_all = study(days, B, Q, min_amt=0)
     res = {"branch": BRANCH, "name": BNAME, "from": days[25], "to": days[-1], "base": base_rates(days, Q),
-           "groups": groups(ev), "n_all": len(ev_all),
+           "groups": groups(ev), "n_all": len(ev_all), "halves": halves(ev),
            "top_names": _top_names(ev), "etf_share": _etf_share(days, B)}
     print_report(res)
     print("STUDYJSON " + json.dumps(res, ensure_ascii=False))
-    print("EVENTSJSON " + json.dumps(ev, ensure_ascii=False))
+    save_store(f"branch_{BRANCH}_study", days[-1], res)
     return res, ev
+
+
+def halves(ev):
+    """前後半段是否一致（避免只是某一段行情造成）"""
+    ds = sorted({e["day"] for e in ev})
+    if len(ds) < 20:
+        return {}
+    mid = ds[len(ds) // 2]
+    out = {}
+    for nm, g in (("前半", [e for e in ev if e["day"] < mid]), ("後半", [e for e in ev if e["day"] >= mid])):
+        lim = [e for e in g if e["limit"]]
+        out[nm] = {"from": min(e["day"] for e in g), "to": max(e["day"] for e in g),
+                   "all": returns(g), "limit": returns(lim) if len(lim) >= 5 else None}
+    return out
 
 
 def _top_names(ev, k=15):
@@ -455,15 +469,181 @@ def print_report(res):
             s = r.get(k)
             if s:
                 log(f"      {lab:<18} 平均 {s['mean']:+.2f}% 中位 {s['med']:+.2f}% 勝率 {s['win']}% t={s['t']}（{s['n']}）")
+    for nm, h in (res.get("halves") or {}).items():
+        a, l_ = h["all"], h.get("limit") or {}
+        f = lambda x: f"{x['mean']:+.2f}%（勝率 {x['win']}%）" if x else "—"
+        log(f"{nm} {h['from']}～{h['to']}：跟單 T+1開→T+1收 {f(a.get('o1c1'))}、→T+5收 {f(a.get('o1c5'))}"
+            f"｜漲停買 隔天跳空 {f(l_.get('gap'))}、→T+5收 {f(l_.get('o1c5'))}")
     log("最常買（金額）：" + "、".join(f"{n}({c}) {k}次" for c, n, k, a in res["top_names"][:12]))
 
 
+# ── Supabase ──────────────────────────────────────────
+def _h():
+    return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json",
+            "Prefer": "return=minimal"}
+
+
+def save_store(key, day, payload):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    url = f"{SUPABASE_URL}/rest/v1/analysis_store"
+    try:
+        requests.delete(url, params={"key": f"eq.{key}", "date": f"eq.{day}"}, headers=_h(), timeout=15)
+        r = requests.post(url, json={"key": key, "date": day, "payload": payload}, headers=_h(), timeout=15)
+        return r.status_code in (200, 201, 204)
+    except Exception as e:
+        log(f"⚠️ 寫入 {key} 失敗：{e}")
+        return False
+
+
+def load_store(key, before=None):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    params = {"select": "date,payload", "key": f"eq.{key}", "order": "date.desc", "limit": "1"}
+    if before:
+        params["date"] = f"lt.{before}"
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_store", params=params, headers=_h(), timeout=15)
+        rows = r.json() if r.status_code == 200 else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def load_mine():
+    """{代號: '持股'/'追蹤'}（交易日誌未賣出＋追蹤清單）"""
+    out = {}
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return out
+    for table, params, tag in (("watchlist", {"select": "code", "user_token": "eq.default"}, "追蹤"),
+                               ("trade_journal", {"select": "code", "user_token": "eq.default", "sell_price": "is.null"}, "持股")):
+        try:
+            r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", params=params, headers=_h(), timeout=15)
+            for x in (r.json() if r.status_code == 200 else []):
+                c = str(x.get("code") or "").strip()
+                if c and (tag == "持股" or c not in out):
+                    out[c] = tag
+        except Exception:
+            pass
+    return out
+
+
 # ── 每日模式 ──────────────────────────────────────────
+TOP_N = 10
+MIN_AMT = 10000          # 千元＝1,000 萬
+
+
+def today_tw():
+    return (datetime.utcnow() + timedelta(hours=8)).strftime("%Y-%m-%d")
+
+
+def daily_picks(br, q, min_amt=MIN_AMT):
+    """當天個股買超（≥1,000 萬），附漲幅／漲停／收最高／占成交比"""
+    out = []
+    for r in br.get("buy", []):
+        code, amt = r[0], r[7]
+        if not is_stock(code) or not amt or amt < min_amt:
+            continue
+        x = q.get(code)
+        it = {"code": code, "name": r[1], "lots": r[4], "amt": amt}
+        if x and x[4]:
+            o, h, l, c, ref, vol, tamt, mkt = x
+            pct = (c / ref - 1) * 100
+            it.update(pct=round(pct, 2), close=c, limit=bool(c >= round(ref * 1.1, 2) - 0.011 or pct >= 9.4),
+                      at_high=bool(h and c >= h - 1e-9), share=round(amt * 1000 / tamt * 100, 1) if tamt else None)
+        out.append(it)
+    return sorted(out, key=lambda x: -x["amt"])
+
+
+def follow_up(prev, br):
+    """昨天買超的個股，今天出現在賣超（倒貨）的"""
+    if not prev:
+        return []
+    sells = {r[0]: r for r in br.get("sell", []) if r[7]}
+    out = []
+    for p in prev.get("picks", []):
+        s = sells.get(p["code"])
+        if s:
+            out.append({"code": p["code"], "name": p["name"], "bought": p["amt"], "sold": -s[7],
+                        "ratio": round(-s[7] / p["amt"], 2), "limit": p.get("limit")})
+    return sorted(out, key=lambda x: -x["sold"])
+
+
+def yi(k):
+    """千元 → 億／萬"""
+    return f"{k / 1e5:.1f} 億" if k >= 1e5 else f"{k / 10:,.0f} 萬"
+
+
+def compose(day, picks, fu, mine, study=None, n_prev=None):
+    e = notify.esc
+    md = f"{int(day[5:7])}/{int(day[8:10])}"
+    L = [f"🏦 <b>{BNAME} 今日買超</b>（{md}，個股 ≥1,000 萬 共 {len(picks)} 檔）"]
+    for p in picks[:TOP_N]:
+        tag = " 🔺漲停" if p.get("limit") else " ⬆收最高" if p.get("at_high") else ""
+        pct = f"｜{p['pct']:+.1f}%" if p.get("pct") is not None else ""
+        sh = f"｜占成交 {p['share']:.0f}%" if p.get("share") and p["share"] >= 5 else ""
+        L.append(f"• {e(p['name'])} {p['code']} 買超 {yi(p['amt'])}{pct}{tag}{sh}")
+    lim = [p for p in picks if p.get("limit")]
+    g = ((study or {}).get("groups") or {})
+    if lim:
+        s = (g.get("漲停買") or {}).get("ret") or {}
+        hint = ""
+        if s.get("gap") and s.get("o1c5"):
+            hint = f"（過去：隔天開盤平均 {s['gap']['mean']:+.1f}%，隔天開盤跟進 5 天後平均輸大盤 {-s['o1c5']['mean']:.1f}%）"
+        L += ["", f"⚡ <b>漲停買進</b>（最像隔日沖）：" + "、".join(e(p["name"]) for p in lim[:8]) + hint]
+    hit = [p for p in picks if p["code"] in mine]
+    if hit:
+        L += ["", "⚠️ <b>你的股票在名單內</b>：" + "、".join(f"{e(p['name'])}（{mine[p['code']]}）" for p in hit)]
+        L.append("　明天若開高，留意隔日沖賣壓；過去跟著買進多半是虧的，持股可考慮趁開高先減碼")
+    if fu:
+        L += ["", f"↩️ 昨天買超、今天倒貨 {len(fu)} 檔：" +
+              "、".join(f"{e(x['name'])} 賣 {min(x['ratio'], 9.99) * 100:.0f}%" for x in fu[:6])]
+    a = ((g.get("全部") or {}).get("ret") or {})
+    if a.get("o1c5"):
+        L += ["", f"📊 回測（{study['from'][5:].replace('-', '/')}～{study['to'][5:].replace('-', '/')}）：看到名單隔天開盤跟買，"
+                  f"5 天後平均{'輸' if a['o1c5']['mean'] < 0 else '贏'}大盤 {abs(a['o1c5']['mean']):.1f}%、勝率 {a['o1c5']['win']:.0f}%（已扣成本）"]
+    L.append("※ 分點資料＝這個分點所有客戶的合計，不是單一主力")
+    return "\n".join(L)
+
+
+def run_daily(today=None, send=True, wait=True, fetch=None, quotes=None, prev=None, mine=None, study=None):
+    today = today or today_tw()
+    fetch = fetch or (lambda d: fetch_branch(d, use_cache=False))
+    br = None
+    for k in range(5):
+        br = fetch(today)
+        if br or not wait:
+            break
+        log(f"{today} 的分點資料還沒出來，15 分鐘後再試（{k + 1}/5）")
+        time.sleep(900)
+    if not br:
+        log("❌ 今天沒有分點資料（休市或還沒更新）")
+        notify.record("branch", {"error": "no_data"})
+        return None
+    q = quotes if quotes is not None else fetch_quotes(today, use_cache=False)
+    picks = daily_picks(br, q)
+    prev = prev if prev is not None else ((load_store(f"branch_{BRANCH}", before=today) or {}).get("payload"))
+    fu = follow_up(prev, br)
+    mine = mine if mine is not None else load_mine()
+    study = study if study is not None else ((load_store(f"branch_{BRANCH}_study") or {}).get("payload"))
+    msg = compose(today, picks, fu, mine, study)
+    log(msg.replace("<b>", "").replace("</b>", ""))
+    payload = {"date": today, "branch": BRANCH, "name": BNAME, "picks": picks[:40], "follow": fu,
+               "sells": [{"code": r[0], "name": r[1], "amt": -r[7]} for r in br.get("sell", []) if is_stock(r[0]) and r[7]][:20],
+               "mine": [p["code"] for p in picks if p["code"] in mine]}
+    save_store(f"branch_{BRANCH}", today, payload)
+    sent = notify.send(msg) if (send and picks) else False
+    notify.record("branch", {"n": len(picks), "limit": sum(1 for p in picks if p.get("limit")),
+                             "mine": payload["mine"], "sent": sent})
+    return {"payload": payload, "msg": msg, "sent": sent}
+
+
 def main():
     if MODE == "study":
         run_study()
     else:
-        log("daily 模式尚未啟用")
+        day = os.environ.get("BT_DAY", "").strip()
+        run_daily(today=day or None, wait=not day)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
 name: 分點追蹤（凱基台北）
 
 on:
+  schedule:
+    - cron: "5 12 * * 1-5"      # 台灣時間週一～週五 20:05：當天名單（資料還沒出來會每 15 分鐘再試，最多 5 次）
+    - cron: "0 2 * * 6"         # 台灣時間週六 10:00：更新回測統計
   workflow_dispatch:
     inputs:
       mode:
@@ -11,9 +14,13 @@ on:
         description: "研究天數（交易日）"
         required: false
         default: "120"
+      day:
+        description: "daily 指定日期（YYYY-MM-DD，空白＝今天）"
+        required: false
+        default: ""
 
 concurrency:
-  group: branch-track-${{ github.event.inputs.mode || 'daily' }}
+  group: branch-track-${{ github.event.inputs.mode || (github.event.schedule == '0 2 * * 6' && 'study' || 'daily') }}
   cancel-in-progress: false
 
 jobs:
@@ -39,7 +46,8 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          BT_MODE: ${{ github.event.inputs.mode || 'daily' }}
+          BT_MODE: ${{ github.event.inputs.mode || (github.event.schedule == '0 2 * * 6' && 'study' || 'daily') }}
+          BT_DAY: ${{ github.event.inputs.day }}
           BT_DAYS: ${{ github.event.inputs.days || '120' }}
           PYTHONUNBUFFERED: "1"
         run: python branch_track.py
