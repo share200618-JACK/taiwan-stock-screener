@@ -12,7 +12,8 @@ import requests
 URLS = [u for u in os.environ.get("PROBE_URLS", "").split() if u]
 FOLLOW = os.environ.get("PROBE_FOLLOW", "") == "1"
 GREP = os.environ.get("PROBE_GREP", "")
-FULL = os.environ.get("PROBE_FULL", "") == "1"     # JSON 整份印出（每行一筆，FULLJSON 開頭）   # 網頁／JS：印出符合的字附近 160 字
+FULL = os.environ.get("PROBE_FULL", "") == "1"
+RAW = os.environ.get("PROBE_RAW", "") == "1"       # 網頁原文整份印出（RAW 開頭）；big5 網頁自動解碼     # JSON 整份印出（每行一筆，FULLJSON 開頭）   # 網頁／JS：印出符合的字附近 160 字
 H = {"User-Agent": "Mozilla/5.0"}
 API_RE = re.compile(r"""["'`]((?:https?://[^"'`\s]+)?/[^"'`\s]*(?:api|rwd|json|data|dashboard|credit|margin)[^"'`\s]*)["'`]""", re.I)
 
@@ -59,8 +60,13 @@ for u in URLS:
             continue
         except Exception:
             pass
-        r.encoding = r.apparent_encoding or r.encoding
+        ct = (r.headers.get("content-type") or "").lower()
+        r.encoding = "cp950" if "big5" in ct else (r.apparent_encoding or r.encoding)
         t = r.text
+        if RAW:
+            for line in t.splitlines():
+                if line.strip():
+                    print("RAW " + line.strip()[:400])
         print(" text:", t[:400].replace("\n", " "))
         print(" endpoints:", endpoints(t)[:60])
         if GREP:

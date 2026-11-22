@@ -18,6 +18,10 @@ on:
         description: "JSON 整份印出（1＝是）"
         required: false
         default: ""
+      raw:
+        description: "網頁原文整份印出（1＝是）"
+        required: false
+        default: ""
 
 jobs:
   probe:
@@ -35,4 +39,5 @@ jobs:
           PROBE_FOLLOW: ${{ github.event.inputs.follow }}
           PROBE_GREP: ${{ github.event.inputs.grep }}
           PROBE_FULL: ${{ github.event.inputs.full }}
+          PROBE_RAW: ${{ github.event.inputs.raw }}
         run: python probe_api.py
