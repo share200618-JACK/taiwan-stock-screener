@@ -1,0 +1,51 @@
+name: 分點追蹤（凱基台北）
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "study＝回測研究、daily＝每日名單"
+        required: false
+        default: "study"
+      days:
+        description: "研究天數（交易日）"
+        required: false
+        default: "120"
+
+concurrency:
+  group: branch-track-${{ github.event.inputs.mode || 'daily' }}
+  cancel-in-progress: false
+
+jobs:
+  track:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: 還原快取
+        uses: actions/cache/restore@v4
+        with:
+          path: bt_cache
+          key: bt-cache-${{ github.run_id }}
+          restore-keys: bt-cache-
+      - name: 分點追蹤
+        timeout-minutes: 130
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          BT_MODE: ${{ github.event.inputs.mode || 'daily' }}
+          BT_DAYS: ${{ github.event.inputs.days || '120' }}
+          PYTHONUNBUFFERED: "1"
+        run: python branch_track.py
+      - name: 保存快取
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: bt_cache
+          key: bt-cache-${{ github.run_id }}
