@@ -312,6 +312,8 @@ def study(days, B, Q, min_amt=10000):
             f = features(code, i, days, Q)
             if not f:
                 continue
+            if r[7] is None:
+                continue
             e = {"day": d, "code": code, "name": r[1], "net_lots": r[4], "net_amt": r[7], **f,
                  "share": round(r[7] * 1000 / f["amt"] * 100, 2) if f["amt"] else None}
             if nxt is not None:
