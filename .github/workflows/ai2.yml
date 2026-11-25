@@ -1,0 +1,60 @@
+name: AI 2.0（全市場模型：自動重訓＋自動優化）
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "data＝只更新資料、study＝回測研究"
+        required: false
+        default: "data"
+      days:
+        description: "資料天數（交易日）"
+        required: false
+        default: "650"
+
+concurrency:
+  group: ai2-${{ github.event.inputs.mode || 'daily' }}
+  cancel-in-progress: false
+
+jobs:
+  ai2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests numpy pandas lightgbm
+      - name: 還原資料快取
+        uses: actions/cache/restore@v4
+        with:
+          path: ai2_cache
+          key: ai2-cache-${{ github.run_id }}
+          restore-keys: ai2-cache-
+      - name: 更新全市場每日資料
+        timeout-minutes: 160
+        continue-on-error: true
+        env:
+          AI2_DAYS: ${{ github.event.inputs.days || '650' }}
+          AI2_MINUTES: "150"
+          PYTHONUNBUFFERED: "1"
+        run: python ai2_data.py
+      - name: 保存資料快取
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ai2_cache
+          key: ai2-cache-${{ github.run_id }}
+      - name: 模型
+        if: ${{ github.event.inputs.mode != 'data' }}
+        timeout-minutes: 120
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          AI2_MODE: ${{ github.event.inputs.mode || 'daily' }}
+          AI2_DAYS: ${{ github.event.inputs.days || '650' }}
+          PYTHONUNBUFFERED: "1"
+        run: python ai2_model.py
