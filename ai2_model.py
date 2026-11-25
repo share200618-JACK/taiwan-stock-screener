@@ -341,8 +341,264 @@ def report(res):
         log(f"★ 前半自動挑中：h={b['h']} 特徵={b['feats']} 葉={b['leaves']} → 後半（沒參與挑選）{_fmt(b['second'], b['h'])}")
 
 
+# ══════════════════════════════════════════════════════
+# 上線：每天重訓＋選股、每週驗證＋自動接手
+# ══════════════════════════════════════════════════════
+import requests
+
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
+H_PICK, TOP = 20, 5                      # 持有 20 個交易日、每天前 5 名
+# 自動接手規則：和舊 AI 同一天、同樣「隔天開盤買、持有 20 天」比，
+# 至少 MIN_PAIR 個已到期交易日，平均每筆多賺 > 0，且月 t 值 ≥ PROMOTE_T；反過來 t ≤ −PROMOTE_T 就退回舊 AI
+MIN_PAIR, PROMOTE_T = 40, 2.0
+
+
+def _h():
+    return {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json",
+            "Prefer": "return=minimal"}
+
+
+def store_get(key):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_store", headers=_h(), timeout=20,
+                         params={"select": "date,payload", "key": f"eq.{key}", "order": "date.desc", "limit": "1"})
+        rows = r.json() if r.status_code == 200 else []
+        return rows[0] if rows else None
+    except Exception:
+        return None
+
+
+def store_put(key, day, payload):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    url = f"{SUPABASE_URL}/rest/v1/analysis_store"
+    try:
+        requests.delete(url, params={"key": f"eq.{key}", "date": f"eq.{day}"}, headers=_h(), timeout=20)
+        r = requests.post(url, json={"key": key, "date": day, "payload": payload}, headers=_h(), timeout=20)
+        return r.status_code in (200, 201, 204)
+    except Exception as e:
+        log(f"⚠️ 寫入 {key} 失敗：{e}")
+        return False
+
+
+def old_ai_top(n=TOP):
+    """舊 AI 每天前 n 名 {日期: [代號]}（analysis_results 的 stocks 已依名次排序）"""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return {}
+    try:
+        r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_results", headers=_h(), timeout=30,
+                         params={"select": "date,stocks,created_at", "order": "date.asc", "limit": "1000"})
+        rows = r.json() if r.status_code == 200 else []
+    except Exception:
+        return {}
+    out, seen = {}, set()
+    for row in sorted(rows, key=lambda x: x.get("created_at") or "", reverse=True):
+        d = str(row.get("date") or "")[:10].replace("/", "-")
+        if not d or d in seen:
+            continue
+        seen.add(d)
+        st = row.get("stocks") or []
+        if isinstance(st, str):
+            try:
+                st = json.loads(st)
+            except Exception:
+                st = []
+        codes = [str(x.get("code")) for x in st[:n] if x.get("code")]
+        if codes:
+            out[d] = codes
+    return out
+
+
+def ensemble_scores(SS):
+    return sum(S.rank(axis=1, pct=True) for S in SS) / len(SS)
+
+
+def head_to_head(E, ex, old, days, k=TOP):
+    """同一天比：AI 2.0 前 k 名 vs 舊 AI 前 k 名（都隔天開盤買、持有 H_PICK 天，用超額報酬）"""
+    rows = []
+    for d in days:
+        if d not in old or d not in E.index:
+            continue
+        e = ex.loc[d]
+        o = [c for c in old[d] if c in e.index and pd.notna(e[c])]
+        s = E.loc[d].dropna()
+        s = s[e.reindex(s.index).notna().values]
+        if len(o) < 3 or len(s) < 50:
+            continue
+        a = float(e[s.nlargest(k).index].mean())
+        b = float(e[o].mean())
+        rows.append({"day": d, "ai2": a, "old": b, "ex": a - b, "raw": np.nan, "b0050": np.nan, "ic": np.nan})
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return None, df
+    st = stats(df, H_PICK)
+    st.update(ai2=round(df["ai2"].mean() - COST, 2), old=round(df["old"].mean() - COST, 2),
+              ai2_win=round((df["ai2"] > COST).mean() * 100, 1), old_win=round((df["old"] > COST).mean() * 100, 1))
+    st["ex"] = round(df["ex"].mean(), 2)          # 差額不扣成本（兩邊都要付）
+    return st, df
+
+
+def decide(h2h, prev_promoted):
+    if not h2h or h2h["days"] < MIN_PAIR:
+        n = h2h["days"] if h2h else 0
+        return prev_promoted, f"同日對比樣本不足（{n}/{MIN_PAIR} 個已到期交易日）"
+    if not prev_promoted and h2h["ex"] > 0 and h2h["t"] >= PROMOTE_T:
+        return True, f"同日對比每筆多賺 {h2h['ex']:+.2f}%（月 t={h2h['t']}）→ AI 2.0 接手"
+    if prev_promoted and h2h["t"] <= -PROMOTE_T:
+        return False, f"同日對比每筆少賺 {h2h['ex']:+.2f}%（月 t={h2h['t']}）→ 退回舊 AI"
+    return prev_promoted, (f"同日對比每筆 {h2h['ex']:+.2f}%（月 t={h2h['t']}，要 ≥ {PROMOTE_T} 才接手）"
+                           if not prev_promoted else f"維持 AI 2.0（同日對比 {h2h['ex']:+.2f}%、t={h2h['t']}）")
+
+
+def run_weekly(send=True):
+    """每週：走動式驗證（綜合 8 組）＋和舊 AI 同日對比 → 決定誰當主力"""
+    t0 = time.time()
+    days, W = load_wide()
+    P, r, uni, X = build(W)
+    LX = to_long(X, uni, PX_FEATS + FUND_FEATS)
+    first = days[WARMUP + MIN_TRAIN_DAYS]
+    test_days = [d for d in days if d >= first]
+    mid = test_days[len(test_days) // 2]
+    SS = [walk_forward(days, W, P, uni, X, cfg, LX=LX)[0] for cfg in CONFIGS]
+    E = ensemble_scores(SS)
+    fwd, ex = excess(W, P, uni, H_PICK)
+    b0050 = forward_0050(W, H_PICK) if "0050" in W["c"].columns else None
+    df = evaluate_simple(E, fwd, ex, test_days, H_PICK, TOP, b0050)
+    oos = {"all": stats(df, H_PICK), "first": stats(df[df["day"] < mid], H_PICK),
+           "second": stats(df[df["day"] >= mid], H_PICK), "from": first, "to": days[-1]}
+    old = old_ai_top()
+    h2h, hdf = head_to_head(E, ex, old, test_days)
+    prev = (store_get("ai2_status") or {}).get("payload") or {}
+    promoted, reason = decide(h2h, bool(prev.get("promoted")))
+    pay = {"date": days[-1], "oos": oos, "h2h": h2h, "promoted": promoted, "reason": reason,
+           "since": prev.get("since") if promoted == bool(prev.get("promoted")) else days[-1],
+           "rule": f"同日對比 ≥{MIN_PAIR} 天、月 t ≥ {PROMOTE_T} 才接手", "minutes": round((time.time() - t0) / 60, 1)}
+    store_put("ai2_status", days[-1], pay)
+    log(f"走動式驗證（綜合 8 組、前 {TOP} 名、持有 {H_PICK} 天）：全期 {_fmt(oos['all'], H_PICK)}")
+    log(f"  前半 {_fmt(oos['first'], H_PICK)}｜後半 {_fmt(oos['second'], H_PICK)}")
+    if h2h:
+        log(f"同日對比舊 AI（{h2h['days']} 天）：AI 2.0 每筆 {h2h['ai2']:+.2f}%（賺錢 {h2h['ai2_win']}%）vs 舊 AI {h2h['old']:+.2f}%"
+            f"（賺錢 {h2h['old_win']}%）→ 差 {h2h['ex']:+.2f}%、月 t={h2h['t']}、贏的月份 {h2h['pos_months']:.0f}%")
+    log(f"結論：{'AI 2.0 當主力' if promoted else '舊 AI 當主力、AI 2.0 試跑'}｜{reason}")
+    if send and promoted != bool(prev.get("promoted")) and prev:
+        import notify
+        notify.send(f"🧠 <b>AI 選股自動調整</b>\n{'改由 AI 2.0（全市場模型）當主力' if promoted else '退回舊 AI'}：{reason}")
+    return pay
+
+
+def names_map():
+    try:
+        import signal_alert as S
+        return {c: q.get("name") or "" for c, q in (S.fetch_quotes() or {}).items()}
+    except Exception:
+        return {}
+
+
+def run_daily(send=True):
+    """每天收盤資料齊了以後：用全部已知結果重訓 8 組 → 平均排名 → 明天開盤的前 5 名"""
+    t0 = time.time()
+    days, W = load_wide()
+    today = days[-1]
+    P, r, uni, X = build(W)
+    LX = to_long(X, uni, PX_FEATS + FUND_FEATS)
+    rows, cols, L = LX
+    last = len(days) - 1
+    te = rows == last
+    if te.sum() < 100:
+        log(f"❌ {today} 可交易股票只有 {te.sum()} 檔，資料可能不完整，不選股")
+        return None
+    ranks = []
+    for cfg in CONFIGS:
+        h = cfg["h"]
+        A = L[feat_names(cfg)].values
+        _, ex_ = excess(W, P, uni, h)
+        y = ex_.where(uni).rank(axis=1, pct=True).values[rows, cols]
+        tr = (rows >= WARMUP) & (rows <= last - h - 1) & ~np.isnan(y) & (rows % 2 == 0)
+        m = fit_model(A[tr], y[tr], cfg["leaves"])
+        ranks.append(pd.Series(m.predict(A[te]), index=uni.columns[cols[te]]).rank(pct=True))
+    score = sum(ranks) / len(ranks)
+    top = score.nlargest(TOP)
+    nm = names_map()
+    feat = lambda k, c: X[k].loc[today, c]
+    picks = []
+    for c, sc in top.items():
+        pe = W["pe"].loc[today, c]
+        picks.append({"code": c, "name": nm.get(c, ""), "score": round(float(sc) * 100, 1),
+                      "close": float(W["c"].loc[today, c]),
+                      "r20": round(float(feat("r20", c)) * 100, 1) if pd.notna(feat("r20", c)) else None,
+                      "fi5": round(float(W["fi"][c].iloc[-5:].sum()), 0) if pd.notna(W["fi"].loc[today, c]) else None,
+                      "it5": round(float(W["it"][c].iloc[-5:].sum()), 0) if pd.notna(W["it"].loc[today, c]) else None,
+                      "pe": round(float(pe), 1) if pd.notna(pe) else None})
+    st = (store_get("ai2_status") or {}).get("payload") or {}
+    pay = {"date": today, "picks": picks, "hold": H_PICK, "n_universe": int(te.sum()),
+           "promoted": bool(st.get("promoted")), "minutes": round((time.time() - t0) / 60, 1)}
+    store_put("ai2_picks", today, pay)
+    msg = compose_daily(pay, st)
+    log(msg.replace("<b>", "").replace("</b>", ""))
+    if send:
+        import notify
+        notify.send(msg)
+    return pay
+
+
+def compose_daily(pay, st):
+    md = f"{int(pay['date'][5:7])}/{int(pay['date'][8:10])}"
+    role = "✅ 目前主力" if pay.get("promoted") else "🧪 試跑中"
+    L = [f"🧠 <b>AI 2.0 明天開盤名單</b>（{md} 收盤後｜{role}）",
+         f"全市場 {pay['n_universe']} 檔一起排名，持有 {pay['hold']} 個交易日"]
+    for i, p in enumerate(pay["picks"], 1):
+        bits = []
+        if p.get("r20") is not None:
+            bits.append(f"20日 {p['r20']:+.0f}%")
+        if p.get("fi5"):
+            bits.append(f"外資5日 {p['fi5']:+,.0f}張")
+        if p.get("it5"):
+            bits.append(f"投信5日 {p['it5']:+,.0f}張")
+        if p.get("pe"):
+            bits.append(f"本益比 {p['pe']:.0f}")
+        L.append(f"{i}. <b>{p['name'] or p['code']}</b> {p['code']} 收 {p['close']:g}｜" + "、".join(bits))
+    h = st.get("h2h")
+    o = (st.get("oos") or {}).get("all")
+    if o:
+        L += ["", f"📊 回測（模型沒看過的資料）：每筆平均{'贏' if o['ex'] >= 0 else '輸'}大盤 {abs(o['ex']):.1f}%、"
+                  f"賺錢月份 {o['pos_months']:.0f}%（已扣成本）"]
+    if h:
+        L.append(f"🆚 同一天和舊 AI 比（{h['days']} 天）：每筆 {h['ex']:+.1f}%")
+    if st.get("reason"):
+        L.append(f"⚙️ {st['reason']}")
+    L.append("※ 名單隔天開盤才買；開盤就漲停買不到就跳過")
+    return "\n".join(L)
+
+
+def update_data(wait=True):
+    """抓最新交易日；法人資料還沒出來就等（最多 3 次、每次 15 分鐘）"""
+    import ai2_data as D
+    end = (datetime.utcnow() + timedelta(hours=8) - timedelta(hours=18)).strftime("%Y-%m-%d")
+    days = D.trading_days(end, DAYS)
+    for k in range(4):
+        D.backfill(days)
+        x = D.load_day(days[-1]) or {}
+        stk = [v for c, v in x.items() if len(c) == 4]
+        cov = sum(1 for v in stk if v[D.IDX["fi"]] is not None) / max(len(stk), 1)
+        if cov >= 0.8 or not wait:
+            return days[-1], cov
+        log(f"{days[-1]} 法人資料覆蓋率 {cov:.0%}，15 分鐘後重抓（{k + 1}/3）")
+        if k < 3:
+            os.remove(D._path(days[-1]))
+            time.sleep(900)
+    return days[-1], cov
+
+
 if __name__ == "__main__":
     if MODE == "study":
         run_study()
+    elif MODE == "weekly":
+        run_weekly()
+    elif MODE == "daily":
+        update_data()
+        run_daily()
     else:
-        log(f"模式 {MODE} 尚未啟用")
+        log(f"未知模式 {MODE}")

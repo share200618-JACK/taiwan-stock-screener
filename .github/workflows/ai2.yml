@@ -1,10 +1,13 @@
 name: AI 2.0（全市場模型：自動重訓＋自動優化）
 
 on:
+  schedule:
+    - cron: "10 10 * * 1-5"     # 台灣時間週一～週五 18:10：更新當天資料 → 重訓 → 明天開盤名單
+    - cron: "0 3 * * 6"         # 台灣時間週六 11:00：走動式驗證＋和舊 AI 同日對比 → 自動決定誰當主力
   workflow_dispatch:
     inputs:
       mode:
-        description: "data＝只更新資料、study＝回測研究"
+        description: "daily＝每日名單、weekly＝每週驗證／自動接手、study＝回測研究、data＝只更新資料"
         required: false
         default: "data"
       days:
@@ -13,13 +16,15 @@ on:
         default: "650"
 
 concurrency:
-  group: ai2-${{ github.event.inputs.mode || 'daily' }}
+  group: ai2-${{ github.event.inputs.mode || (github.event.schedule == '0 3 * * 6' && 'weekly' || 'daily') }}
   cancel-in-progress: false
 
 jobs:
   ai2:
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    env:
+      MODE: ${{ github.event.inputs.mode || (github.event.schedule == '0 3 * * 6' && 'weekly' || 'daily') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,6 +38,7 @@ jobs:
           key: ai2-cache-${{ github.run_id }}
           restore-keys: ai2-cache-
       - name: 更新全市場每日資料
+        if: ${{ env.MODE != 'daily' }}
         timeout-minutes: 160
         continue-on-error: true
         env:
@@ -40,21 +46,21 @@ jobs:
           AI2_MINUTES: "150"
           PYTHONUNBUFFERED: "1"
         run: python ai2_data.py
-      - name: 保存資料快取
-        if: always()
-        uses: actions/cache/save@v4
-        with:
-          path: ai2_cache
-          key: ai2-cache-${{ github.run_id }}
       - name: 模型
-        if: ${{ github.event.inputs.mode != 'data' }}
+        if: ${{ env.MODE != 'data' }}
         timeout-minutes: 120
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-          AI2_MODE: ${{ github.event.inputs.mode || 'daily' }}
+          AI2_MODE: ${{ env.MODE }}
           AI2_DAYS: ${{ github.event.inputs.days || '650' }}
           PYTHONUNBUFFERED: "1"
         run: python ai2_model.py
+      - name: 保存資料快取
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ai2_cache
+          key: ai2-cache-${{ github.run_id }}
