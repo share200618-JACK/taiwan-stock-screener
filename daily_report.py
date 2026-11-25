@@ -36,9 +36,24 @@ def build(status, outcomes, now=None):
     elif ai.get("minutes") is not None:
         L.append(f"✅ 排程完成・AI 分析 {ai['minutes']} 分鐘（{ai.get('analyzed', 0)}/{ai.get('planned', 0)} 支）")
 
+    # AI 2.0（全市場模型）：每週和舊 AI 同日對比，夠好就自動接手
+    a2 = status.get("ai2") or {}
+    md = lambda x: f"{int(x[5:7])}/{int(x[8:10])}" if x else ""
+    if a2.get("promoted") and a2.get("picks"):
+        L += ["", f"🧠 <b>AI 前 5 名・AI 2.0</b>（{md(a2.get('date'))} 收盤後產生、持有 20 天｜已自動接手）"]
+        for i, p in enumerate(a2["picks"][:5], 1):
+            L.append(f"{i}. {esc(p.get('code'))} {esc(p.get('name'))} {p.get('close')} 元")
+        if a2.get("reason"):
+            L.append(f"<i>{esc(a2['reason'])}</i>")
+    elif a2.get("h2h") or a2.get("reason"):
+        h = a2.get("h2h") or {}
+        L += ["", "🧠 <b>AI 2.0 試跑中</b>：" + (f"同日對比舊 AI {h['days']} 天、每筆 {h['ex']:+.2f}%（月 t={h['t']}）"
+                                              if h.get("days") else esc(a2.get("reason") or ""))
+              + "，要 t ≥ 2 才自動接手"]
+
     # AI 前 5 名
     top = ai.get("top5") or []
-    L += ["", "🤖 <b>AI 前 5 名</b>（漲機率｜勝率優勢）"]
+    L += ["", "🤖 <b>AI 前 5 名</b>（漲機率｜勝率優勢）" + ("｜舊 AI 參考" if a2.get("promoted") and a2.get("picks") else "")]
     if top:
         for i, s in enumerate(top, 1):
             L.append(f"{i}. {esc(s.get('code'))} {esc(s.get('name'))} {s.get('price')} 元｜"

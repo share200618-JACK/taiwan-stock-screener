@@ -302,6 +302,20 @@ header{padding:20px 0 16px;border-bottom:1px solid var(--bd);margin-bottom:24px;
   </div>
 </div>
 
+<!-- AI 2.0（全市場模型，每天自動重訓；每週和舊 AI 同日對比，夠好就自動接手） -->
+<div id="ai2Panel" style="background:var(--s1);border:1px solid rgba(168,85,247,.35);border-radius:12px;padding:16px 18px;margin-bottom:18px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+    <div style="font-size:.88rem;font-weight:700;color:var(--pur);">🧠 AI 2.0 全市場模型 <span id="ai2Role" class="obs-badge">試跑中</span></div>
+    <div id="ai2Date" style="font-size:.7rem;color:var(--dim);"></div>
+  </div>
+  <div style="font-size:.74rem;color:var(--dim);margin-top:3px;line-height:1.6;">
+    一個模型學全市場約 750 檔（價量、估值、三大法人），每天收盤後用最新資料重訓；名單是<strong style="color:var(--txt);">隔天開盤買、持有 20 個交易日</strong>。
+    每週六和舊 AI 用同一天的名單比，<strong style="color:var(--gold);">贏得夠明顯（月 t ≥ 2）才自動接手</strong>。
+  </div>
+  <div id="ai2Picks" style="margin-top:10px;font-size:.78rem;color:var(--dim);">載入中…</div>
+  <div id="ai2Stats" style="margin-top:10px;font-size:.7rem;color:var(--dim);line-height:1.7;"></div>
+</div>
+
 <!-- 籌碼左側名單（每日排程產生，觀察中） -->
 <div id="leftPanel" style="background:var(--s1);border:1px solid rgba(61,139,255,.3);border-radius:12px;padding:16px 18px;margin-bottom:18px;">
   <div style="font-size:.88rem;font-weight:700;color:var(--blu);">🪃 籌碼左側名單 <span class="obs-badge">觀察中</span></div>
@@ -708,7 +722,40 @@ async function loadLatestResult() {
 }
 
 // 頁面載入後自動檢查狀態
+async function loadAI2() {
+  const box = document.getElementById('ai2Picks');
+  try {
+    const r = await fetch(`${API}/api/ai2/latest`);
+    const d = await r.json();
+    if (!d.ok) { box.textContent = '尚無資料（每天 18:10 後更新）'; return; }
+    const p = d.picks || {}, st = d.status || {};
+    const md = x => x ? `${+x.slice(5, 7)}/${+x.slice(8, 10)}` : '';
+    const role = document.getElementById('ai2Role');
+    if (st.promoted) { role.textContent = '✅ 目前主力'; role.style.background = 'rgba(39,217,129,.15)'; role.style.color = 'var(--grn)'; }
+    document.getElementById('ai2Date').textContent = p.date ? `${md(p.date)} 收盤後產生` : '';
+    const esc = t => String(t ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    box.innerHTML = (p.picks || []).map((x, i) => {
+      const bits = [];
+      if (x.r20 != null) bits.push(`20日 ${x.r20 > 0 ? '+' : ''}${x.r20}%`);
+      if (x.fi5) bits.push(`外資5日 ${x.fi5 > 0 ? '+' : ''}${Math.round(x.fi5).toLocaleString()}張`);
+      if (x.it5) bits.push(`投信5日 ${x.it5 > 0 ? '+' : ''}${Math.round(x.it5).toLocaleString()}張`);
+      if (x.pe) bits.push(`本益比 ${Math.round(x.pe)}`);
+      return `<div style="padding:6px 0;border-bottom:1px dashed var(--bd);display:flex;gap:8px;align-items:baseline;flex-wrap:wrap;">
+        <span style="color:var(--pur);font-weight:800;font-family:'JetBrains Mono',monospace;">${i + 1}</span>
+        <a href="https://tw.stock.yahoo.com/quote/${esc(x.code)}" target="_blank" style="color:var(--txt);font-weight:700;text-decoration:none;">${esc(x.name || x.code)} <span style="color:var(--dim);font-weight:400;">${esc(x.code)}</span></a>
+        <span style="color:var(--txt);font-family:'JetBrains Mono',monospace;">${x.close}</span>
+        <span style="font-size:.68rem;">${esc(bits.join('、'))}</span></div>`;
+    }).join('') || '今天沒有名單';
+    const o = (st.oos || {}).all, h = st.h2h, L = [];
+    if (o) L.push(`📊 回測（模型沒看過的資料，${md(st.oos.from)}～${md(st.oos.to)}）：每筆平均${o.ex >= 0 ? '贏' : '輸'}大盤 ${Math.abs(o.ex).toFixed(1)}%、賺錢月份 ${Math.round(o.pos_months)}%、比 0050 ${o.vs0050 >= 0 ? '+' : ''}${(o.vs0050 ?? 0).toFixed(1)}%（已扣成本）`);
+    if (h) L.push(`🆚 同一天和舊 AI 比（${h.days} 天）：AI 2.0 每筆 ${h.ai2 >= 0 ? '+' : ''}${h.ai2}% vs 舊 AI ${h.old >= 0 ? '+' : ''}${h.old}%（差 ${h.ex >= 0 ? '+' : ''}${h.ex}%、月 t=${h.t}）`);
+    if (st.reason) L.push(`⚙️ ${esc(st.reason)}`);
+    document.getElementById('ai2Stats').innerHTML = L.join('<br>');
+  } catch (e) { box.textContent = '載入失敗'; }
+}
+
 window.addEventListener('DOMContentLoaded', () => {
+  loadAI2();
   // 先執行頁面功能，背景驗證登入
   checkAutoResultStatus();
   updateCustomHistoryCount();
