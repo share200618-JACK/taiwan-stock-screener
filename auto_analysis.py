@@ -93,6 +93,24 @@ def save_to_supabase(data):
     except Exception as e:
         print(f"[Supabase] ❌ 例外: {e}")
 
+def load_ai2():
+    """AI 2.0（ai2_model.py 每天 18:10 產生、每週六驗證）：最新名單與是否已自動接手"""
+    out = {}
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return out
+    for key, name in (("ai2_picks", "picks"), ("ai2_status", "status")):
+        try:
+            r = requests.get(f"{SUPABASE_URL}/rest/v1/analysis_store", headers=_sb_headers(), timeout=15,
+                             params={"select": "payload", "key": f"eq.{key}", "order": "date.desc", "limit": "1"})
+            rows = r.json() if r.status_code == 200 else []
+            out[name] = (rows[0].get("payload") or {}) if rows else {}
+        except Exception:
+            out[name] = {}
+    st = out.get("status") or {}
+    return {"date": (out.get("picks") or {}).get("date"), "picks": (out.get("picks") or {}).get("picks") or [],
+            "promoted": bool(st.get("promoted")), "reason": st.get("reason"), "h2h": st.get("h2h")}
+
+
 def load_strategy_config():
     """讀取最新的選股條件（每月自動調整後寫在 strategy_config）；讀不到就用預設"""
     if SUPABASE_URL and SUPABASE_KEY:
@@ -1283,6 +1301,7 @@ def run():
                          "strategy": strategy.describe(cfg), "model_ver": output["model_ver"],
                          "top5": [{k: r.get(k) for k in ("code", "name", "price", "rise_prob", "edge", "precision", "rev_hot")}
                                   for r in top[:5]]})
+    notify.record("ai2", load_ai2())       # AI 2.0 的最新名單與「是否接手」（日報用）
 
     # AI 結果存好後才跑左側選股；左側出錯不影響 AI 推薦
     try:

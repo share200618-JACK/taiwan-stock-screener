@@ -517,6 +517,23 @@ def _watch_alert_set(code, below, above):
     return _store_put("watch_alerts", p), a.get(code)
 
 
+_ai2_cache = {"t": 0, "d": None}
+
+
+@app.route("/api/ai2/latest")
+def api_ai2_latest():
+    """AI 2.0（全市場模型）：最新名單＋每週驗證／自動接手狀態"""
+    import time as _t
+    if _ai2_cache["d"] is None or _t.time() - _ai2_cache["t"] > 600:
+        d = {"picks": _store_get("ai2_picks"), "status": _store_get("ai2_status")}
+        if d["picks"] or d["status"]:
+            _ai2_cache.update(t=_t.time(), d=d)
+    d = _ai2_cache["d"]
+    if not d:
+        return jsonify({"ok": False, "error": "尚無資料"})
+    return jsonify({"ok": True, **d})
+
+
 _mcall_cache = {"t": 0, "d": None}
 
 
