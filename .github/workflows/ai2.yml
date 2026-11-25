@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install requests numpy pandas lightgbm
+      - run: pip install requests numpy pandas lightgbm scikit-learn
       - name: 還原資料快取
         uses: actions/cache/restore@v4
         with:
