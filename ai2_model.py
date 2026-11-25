@@ -371,7 +371,21 @@ def store_get(key):
         return None
 
 
+def clean(x):
+    """JSON 不接受 NaN／numpy 型別 → 轉成一般數字或 None"""
+    if isinstance(x, dict):
+        return {str(k): clean(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [clean(v) for v in x]
+    if isinstance(x, (np.integer,)):
+        return int(x)
+    if isinstance(x, (float, np.floating)):
+        return None if (math.isnan(x) or math.isinf(x)) else float(x)
+    return x
+
+
 def store_put(key, day, payload):
+    payload = clean(payload)
     if not SUPABASE_URL or not SUPABASE_KEY:
         return False
     url = f"{SUPABASE_URL}/rest/v1/analysis_store"
