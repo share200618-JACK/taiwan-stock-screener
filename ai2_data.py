@@ -262,6 +262,12 @@ def backfill(days, deadline=None):
         t.join()
     ok = sum(1 for d in days if load_day(d) is not None)
     log(f"完成：{ok}/{len(days)} 天有資料")
+    for d in (days[0], days[len(days) // 2], days[-1]):
+        x = load_day(d)
+        if x:
+            stk = [v for k, v in x.items() if len(k) == 4]
+            cov = {f: round(sum(1 for v in stk if v[i] is not None) / len(stk) * 100) for i, f in enumerate(F)}
+            log(f"  {d}：個股 {len(stk)} 檔（上櫃 {sum(1 for v in stk if v[IDX['mkt']] == 1)}），欄位覆蓋率 {cov}")
     return ok
 
 
