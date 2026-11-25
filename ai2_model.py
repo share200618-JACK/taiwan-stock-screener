@@ -224,9 +224,12 @@ def run_study():
     log(f"測試期 {first} ～ {days[-1]}；前半（挑設定）到 {mid}、後半（驗收）{mid} 之後")
     b0050 = {h: forward_0050(W, h) for h in (5, 20)} if "0050" in W["c"].columns else {}
     res = {"from": first, "mid": mid, "to": days[-1], "configs": [], "baselines": []}
-    best = None
+    best = best_ic = None
+    SS, FX = {}, {}
     for cfg in CONFIGS:
         S, fwd, ex = walk_forward(days, W, P, uni, X, cfg, LX=LX)
+        SS[cfg_key(cfg)] = S
+        FX.setdefault(cfg["h"], (fwd, ex))
         for k in (5, 10):
             df = evaluate_simple(S, fwd, ex, test_days, cfg["h"], k, b0050.get(cfg["h"]))
             a, b = df[df["day"] < mid], df[df["day"] >= mid]
@@ -234,7 +237,26 @@ def run_study():
             res["configs"].append(row)
             if k == 5 and row["first"] and (best is None or row["first"]["ex"] / cfg["h"] > best["first"]["ex"] / best["h"]):
                 best = row
+            if k == 5 and row["first"] and (best_ic is None or row["first"]["ic"] > best_ic["first"]["ic"]):
+                best_ic = row
         log(f"  設定 {cfg} 完成（{(time.time() - t0) / 60:.0f} 分鐘）")
+    # 綜合（多組設定的排名平均）：不挑單一設定，降低「挑到剛好最好」的風險
+    res["ensembles"] = []
+    ens = {"綜合(全部8組)": list(SS), "綜合(持有20天4組)": [k for k in SS if k.startswith("h20")],
+           "綜合(持有5天4組)": [k for k in SS if k.startswith("h5")]}
+    for name, keys in ens.items():
+        E = sum(SS[k].rank(axis=1, pct=True) for k in keys) / len(keys)
+        for h in (5, 20):
+            fwd, ex = FX[h]
+            for k in (5, 10, 20, 50):
+                df = evaluate_simple(E, fwd, ex, test_days, h, k, b0050.get(h))
+                a, b = df[df["day"] < mid], df[df["day"] >= mid]
+                res["ensembles"].append({"name": name, "h": h, "k": k, "all": stats(df, h), "first": stats(a, h),
+                                         "second": stats(b, h)})
+            sp = spread(E, ex, test_days)
+            res["ensembles"].append({"name": name, "h": h, "k": "前10%−後10%", "all": stats(sp, h),
+                                     "first": stats(sp[sp["day"] < mid], h), "second": stats(sp[sp["day"] >= mid], h)})
+    res["best_ic"] = best_ic
     for name in BASELINES:
         S = baseline_scores(X, uni, name)
         for h in (5, 20):
@@ -246,6 +268,26 @@ def run_study():
     report(res)
     print("AI2STUDY " + json.dumps(res, ensure_ascii=False, default=float))
     return res
+
+
+def cfg_key(cfg):
+    return f"h{cfg['h']}_{cfg['feats']}_{cfg['leaves']}"
+
+
+def spread(S, ex, days):
+    """前 10% 減後 10% 的超額（不扣成本，看模型排序力）"""
+    rows = []
+    for d in days:
+        s = S.loc[d].dropna()
+        e = ex.loc[d].reindex(s.index)
+        s = s[e.notna().values]
+        if len(s) < 100:
+            continue
+        n = max(len(s) // 10, 1)
+        top, bot = s.nlargest(n).index, s.nsmallest(n).index
+        rows.append({"day": d, "ex": float(ex.loc[d, top].mean() - ex.loc[d, bot].mean()) + COST, "raw": np.nan,
+                     "b0050": np.nan, "ic": float(s.corr(e.reindex(s.index), method="spearman"))})
+    return pd.DataFrame(rows)
 
 
 def evaluate_simple(S, fwd, ex, days, h, k, b0050=None):
@@ -280,9 +322,17 @@ def report(res):
     log(f"===== AI 2.0 走動式驗證 {res['from']} ～ {res['to']}（已扣來回成本 {COST}%）=====")
     log("── 模型設定（每天前 k 檔，持有 h 天）")
     for c in res["configs"]:
-        log(f"  h={c['h']:>2} 特徵={c['feats']:<3} 葉={c['leaves']:<2} 前{c['k']:>2}：全期 {_fmt(c['all'], c['h'])}")
-        log(f"        前半 {_fmt(c['first'], c['h'])}")
+        if c["k"] != 5:
+            continue
+        log(f"  h={c['h']:>2} 特徵={c['feats']:<3} 葉={c['leaves']:<2} 前5：前半 {_fmt(c['first'], c['h'])}")
         log(f"        後半 {_fmt(c['second'], c['h'])}")
+    log("── 綜合模型（不挑設定，多組平均）")
+    for e in res.get("ensembles", []):
+        log(f"  {e['name']:<14} 持有{e['h']:>2}天 前{e['k']}：全期 {_fmt(e['all'], e['h'])}")
+        log(f"        前半 {_fmt(e['first'], e['h'])}｜後半 {_fmt(e['second'], e['h'])}")
+    bi = res.get("best_ic")
+    if bi:
+        log(f"★ 前半用 IC 挑中：h={bi['h']} 特徵={bi['feats']} 葉={bi['leaves']} → 後半 {_fmt(bi['second'], bi['h'])}")
     log("── 簡單因子（前 5 檔）")
     for b in res["baselines"]:
         log(f"  {b['name']:<10} h={b['h']:>2}：全期 {_fmt(b['all'], b['h'])}｜後半 {_fmt(b['second'], b['h'])}")
